@@ -20,6 +20,10 @@ go build -ldflags "-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT -X $PKG
 description = "Unit tests"
 run = "go test ./..."
 
+[tasks."test:live"]
+description = "Live tests against qemu:///system (docs/TESTING.md)"
+run = "go test -count=1 -tags=live -timeout 25m ./..."
+
 [tasks.fmt]
 description = "Format Go source (goimports)"
 run = "goimports -local github.com/hk9890/werft -w cmd internal"
@@ -32,7 +36,7 @@ if [ -n "$OUT" ]; then echo "unformatted:"; echo "$OUT"; exit 1; fi
 """
 
 [tasks.vet]
-run = "go vet ./..."
+run = "go vet ./... && go vet -tags=live ./..."
 
 [tasks.lint]
 description = "golangci-lint at the pinned version"

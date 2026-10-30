@@ -16,7 +16,7 @@ Each row is a proposal until the user accepts it.
 | URI | `qemu:///system` | NAT network and DHCP leases exist only there. The user is in group `libvirt`, so the socket needs no sudo and no polkit. |
 | Reset points | Native libvirt internal snapshots, NVRAM in qcow2 format | Disk and firmware in one atomic operation. No sudo, no `.bak` files. |
 | Leases | Linked clone: thin qcow2 overlay on a flat, immutable stock file | Created in milliseconds. The stock file never changes. |
-| Lease identity | systemd credentials over SMBIOS type 11 | Nothing per lease is written into the stock image. No libguestfs. |
+| Lease identity | systemd credentials over SMBIOS type 11 | Nothing per lease is written into the stock image. No libguestfs. fw_cfg is no option: QEMU limits its names to 55 characters. |
 | Lease address | AF_VSOCK first, DHCP lease by MAC as fallback | Unique per domain, no DNS race. mDNS is not used for leases. |
 | SSH | OpenSSH `ssh`/`scp` as child processes | The agent gets the same command werft used. vsock works through `systemd-ssh-proxy`. |
 | Clone | Domain XML generated in Go | `virt-clone` goes away, and with it the mise-python `gi` failure. |
@@ -193,7 +193,8 @@ The two tools run side by side, one per domain.
    is flat, with no internal snapshots.
 2. Boot a temporary domain on the copy. As root, run the embedded seal script: empty
    `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the key `prepare`
-   installed; add the host-key regeneration drop-in, passwordless sudo, and the tmpfiles line for
+   installed; add the host-key regeneration drop-in (required: a guest without host keys accepts the
+   vsock connection and closes it at once), passwordless sudo, and the tmpfiles line for
    `werft.ssh.authorized_keys`.
 3. Power off from inside the guest. Undefine the temporary domain, keep the volumes under
    the stock name, write the image record.
@@ -309,7 +310,7 @@ Exit codes are part of the contract:
 ## Testing
 
 The reset-point design depends on a live test that a revert of a shut-off domain restores a changed
-UEFI variable. Write that test first.
+UEFI variable. It exists and passes; see [TESTING.md](TESTING.md).
 
 ## Migration from `vm`
 
@@ -325,9 +326,10 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 - **go-libvirt has no release tags.** Pin the pseudo-version. The `internal/virt` interface keeps a
   `virsh` adapter possible. Live tests catch protocol drift.
-- **qcow2 NVRAM snapshots are unproven on this host.** All firmware descriptors in
-  `/usr/share/qemu/firmware/` are raw, so firmware autoselection can reject `format='qcow2'`. Use an
-  explicit loader path, and prove revert with the live test before the first real migration.
+- **Firmware autoselection.** All firmware descriptors in `/usr/share/qemu/firmware/` are raw, so
+  autoselection can reject `format='qcow2'`. Use an explicit loader path. The live test
+  `TestUEFIResetPointRestoresNVRAMAndDisk` proves revert of disk and NVRAM on libvirt 12.0 with an
+  explicit loader.
 - **systemd versions.** vsock SSH and `ssh.ephemeral-authorized_keys-all` need systemd 256.
   Ubuntu 24.04 has 255 and uses the TCP fallback. A static `/etc/hostname` overrides the hostname
   credential, so seal must delete it.

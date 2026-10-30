@@ -2,7 +2,7 @@
 
 ## Repository purpose
 
-werft is a Go CLI that hands out disposable test VMs from stock images on one libvirt host, for agents first and humans second. It replaces the bash tool `vm` in the setup repo. Only the entry point exists in code; the docs below hold the target.
+werft is a Go CLI that hands out disposable test VMs from stock images on one libvirt host, for agents first and humans second. It replaces the bash tool `vm` in the setup repo. Only the entry point and one live test exist in code; the docs below hold the target.
 
 ## Use-case routing
 
@@ -15,6 +15,10 @@ Every route below is **mandatory, not advisory**. Load the document BEFORE the f
 ### Architecture and implementation
 
 **MUST read [docs/DESIGN.md](docs/DESIGN.md) before creating or editing ANY file under `cmd/` or `internal/`.** It owns the package layout, the libvirt and SSH boundaries, the lease and reset-point mechanics, and the exit-code contract.
+
+### Testing and verification
+
+**MUST read [docs/TESTING.md](docs/TESTING.md) before writing a test** or judging whether a change is verified. It owns the live layer against `qemu:///system`, what a run creates, and the checks a PR needs.
 
 ### Writing project docs
 
