@@ -23,6 +23,13 @@ func (System) HasDisplay() bool {
 	return os.Getenv("DISPLAY")+os.Getenv("WAYLAND_DISPLAY") != ""
 }
 
+// ViewerCommand is a command a person runs on the desktop to watch domain.
+// It changes nothing: it waits for the domain to start and follows it
+// across reboots.
+func ViewerCommand(domain string) string {
+	return "virt-viewer -c qemu:///system --wait --reconnect " + domain
+}
+
 // OpenViewer starts virt-viewer in a session of its own, so it outlives
 // werft unless stop closes it. The hotkeys are set because virt-manager's
 // console defines no fullscreen key, which is how a guest ends up holding

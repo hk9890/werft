@@ -43,7 +43,7 @@ func (w *window) show(r *pipeline.Run) {
 			return
 		}
 	}
-	r.Printf("  Open the window on the desktop: werft start --view %s", r.Domain)
+	r.Printf("  Open the window on the desktop: %s", ViewerCommand(r.Domain))
 }
 
 // PrepareBoot starts the domain and waits for its address. An encrypted

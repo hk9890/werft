@@ -135,8 +135,10 @@ storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception
 (`/var/lib/libvirt/qemu/nvram` is `0755`) to find the `.bak` files of `vm`. werft creates the
 `werft` pool on first use with `StoragePoolDefineXML` and builds it through the libvirt API, with no
 sudo. libvirt keeps the NVRAM files in no pool by itself. When no pool lists an NVRAM file in
-`/var/lib/libvirt/qemu/nvram`, `clone` and `migrate` define the pool `nvram` on that directory the
-same way, refresh it, and look again (`virt.NVRAMVolume`).
+`/var/lib/libvirt/qemu/nvram`, `clone` and `migrate` refresh the pool on that directory, or define
+the pool `nvram` on it the same way when no pool has that target, and look again
+(`virt.NVRAMVolume`). libvirt allows one pool per directory. They do this only in their run, after
+the questions: a check and the plan of `migrate` change nothing (`virt.FindNVRAM`).
 
 ## Lease lifecycle
 
@@ -230,7 +232,8 @@ labels are equal, so migration keeps one label per domain:
 
 `vm` took its `qemu-img` snapshots of the first disk only, and marks each with
 `<nvram>.<label>.bak`. migrate finds the labels in the volume list of the NVRAM pool, after a pool
-refresh. It needs no root:
+refresh. When no pool lists the NVRAM yet, it finds them in a listing of the NVRAM directory, and
+makes the pool only after the confirmation. It needs no root:
 
 - libvirt accepts the metadata of a `qemu-img` snapshot that exists in the disk
   (`DomainSnapshotCreateXML` with the redefine flag). It then reverts and deletes the snapshot
@@ -307,7 +310,9 @@ changes. Seal removes no secrets: a `full` lease holds them by design
   On success, failure and SIGINT the runner pops the stack in reverse. Each cleanup must be safe
   to run twice. `undo` takes a cleanup off the stack only when it succeeds, so a failed one is
   tried again at the end. The `viewer` cleanup runs only through `undo` and after a successful
-  run; a failed run leaves the window open on the VM it leaves running.
+  run; a failed run leaves the window open on the VM it leaves running. With no display, or when
+  the viewer fails, a step names `virt-viewer -c qemu:///system --wait --reconnect <name>` to run
+  on the desktop. That command changes nothing; `werft start --view` would start the VM.
 
 The runner catches SIGINT and SIGTERM only after preflight and the secrets. An interrupt during a
 question, a secret prompt or `pass` ends werft before any change. After that, the runner checks
@@ -353,10 +358,13 @@ The clone gets a copy of each writable disk and of the NVRAM, made with `Storage
 in the pool of the original (the NVRAM in the `nvram` pool). An NVRAM template does not work:
 firmware autoselection refuses a qcow2 template. A read-only or shareable disk, such as an
 installer ISO, stays shared. Preflight finds the volume of each writable disk and of the NVRAM; one
-outside every storage pool fails there, before anything changes. A copy that fails deletes the
-copies made so far. Before `clone` removes the old `<name>-full`, it checks again that it is shut
-off. It deletes the old NVRAM through the storage API: an undefine that deletes the NVRAM unlinks
-the file, but its pool keeps the name, and the new copy under that name fails.
+outside every storage pool fails there, before anything changes. An NVRAM in the NVRAM directory
+that no pool lists yet passes preflight; the run makes a pool list it before it removes the old
+clone. A copy that fails deletes the copies made so far. Before `clone` removes the old
+`<name>-full`, it checks again that it is shut off. It deletes the old NVRAM through the storage
+API: an undefine that deletes the NVRAM unlinks the file, but its pool keeps the name, and the new
+copy under that name fails. It also deletes the `.bak` NVRAM copies of the old clone's `vm` reset
+points, as `vm` did.
 
 The guest login is `$USER` with the werft key and `~/.ssh/id_ed25519`, through the werft
 `ssh_config`. It sets `IdentitiesOnly`, so no other agent key uses up sshd's `MaxAuthTries`.

@@ -2,6 +2,7 @@ package steps_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -100,6 +101,25 @@ func TestProvisionAsksEverythingBeforeItChangesAnything(t *testing.T) {
 		"^CreateVolumeFrom testvm-full.qcow2", "^CreateVolumeFrom testvm-full_VARS.qcow2", "^DefineDomain testvm-full$")
 }
 
+// vm made the old clone and its reset points: copies of its NVRAM next to
+// it. They go with the clone, as in vm's remove_full_image.
+func TestProvisionDeletesTheNVRAMCopiesOfTheOldClone(t *testing.T) {
+	w := newWorld(t)
+	w.defineClone()
+	for _, name := range []string{"testvm-full_VARS.qcow2.clean.bak", "testvm_VARS.qcow2.clean-install.bak"} {
+		_, err := w.fake.CreateVolume("nvram", "<volume><name>"+name+"</name><capacity>1</capacity></volume>")
+		must(t, err)
+	}
+	if _, err := provision(t, w, true); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	names, err := w.fake.Volumes("nvram")
+	must(t, err)
+	if slices.Contains(names, "testvm-full_VARS.qcow2.clean.bak") || !slices.Contains(names, "testvm_VARS.qcow2.clean-install.bak") {
+		t.Errorf("nvram pool = %q, want only the copy of the old clone gone", names)
+	}
+}
+
 func TestProvisionReplacesACloneTwice(t *testing.T) {
 	w := newWorld(t)
 	for range 2 {
@@ -134,13 +154,35 @@ func TestProvisionRefusesACloneStartedDuringTheRun(t *testing.T) {
 
 func TestProvisionRefusesAnNVRAMOutsideEveryPool(t *testing.T) {
 	w := newWorld(t)
-	must(t, w.fake.DeleteVolume("nvram", "testvm_VARS.qcow2"))
-	_, err := provision(t, w, true)
+	text, err := w.fake.DomainXML(vm, true)
+	must(t, err)
+	_, err = w.fake.DefineDomain(strings.Replace(text, "/var/lib/libvirt/qemu/nvram/", "/elsewhere/", 1))
+	must(t, err)
+	_, err = provision(t, w, true)
 	if !failure.Is(err, failure.NotFound) || !strings.Contains(err.Error(), "is in no storage pool") {
 		t.Fatalf("err = %v", err)
 	}
 	if w.index("^RevertSnapshot") >= 0 {
 		t.Error("provision reset the build VM")
+	}
+}
+
+// An NVRAM in the NVRAM directory that no pool lists can be a new file that
+// the pool lists after a refresh. Preflight changes nothing, so the clone
+// step finds out, before it removes the old clone.
+func TestProvisionRefusesAnNVRAMNoPoolListsAfterARefresh(t *testing.T) {
+	w := newWorld(t)
+	w.defineClone()
+	must(t, w.fake.DeleteVolume("nvram", "testvm_VARS.qcow2"))
+	_, err := provision(t, w, true)
+	if !failure.Is(err, failure.NotFound) || !strings.Contains(err.Error(), "is in no storage pool") {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Contains(w.fake.Calls(), "RefreshPool nvram") {
+		t.Error("provision did not refresh the nvram pool")
+	}
+	if i := w.index("^(UndefineDomain|DeleteVolume) testvm-full"); i >= 0 {
+		t.Errorf("the old clone was touched: %q", w.entries()[i])
 	}
 }
 

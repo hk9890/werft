@@ -99,7 +99,7 @@ func TestProvisionWithoutDisplay(t *testing.T) {
 	if w.index("^viewer open") >= 0 {
 		t.Error("a window opened without a display")
 	}
-	if !strings.Contains(w.out.String(), "werft start --view testvm") {
+	if !strings.Contains(w.out.String(), "virt-viewer -c qemu:///system --wait --reconnect testvm") {
 		t.Errorf("no hint to open a window:\n%s", w.out.String())
 	}
 }
@@ -122,7 +122,7 @@ func TestConsoleThatNeverSettlesGetsNoKeys(t *testing.T) {
 	must(t, png.Encode(&black, image.NewRGBA(image.Rect(0, 0, 4, 4))))
 	w.fake.SetScreenshot(vm, "image/png", black.Bytes())
 	_, err := provision(t, w, true)
-	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "werft start --view testvm") {
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "virt-viewer -c qemu:///system --wait --reconnect testvm") {
 		t.Fatalf("err = %v", err)
 	}
 	if w.index("^SendKey") >= 0 {

@@ -163,7 +163,7 @@ func TestPrepareWithoutDisplayNamesTheViewerCommand(t *testing.T) {
 	if _, err := w.run(steps.Prepare(), false); err == nil {
 		t.Fatal("prepare succeeded")
 	}
-	if !strings.Contains(w.out.String(), "werft start --view testvm") || w.index("^viewer open") >= 0 {
+	if !strings.Contains(w.out.String(), "virt-viewer -c qemu:///system --wait --reconnect testvm") || w.index("^viewer open") >= 0 {
 		t.Errorf("want the hint and no window:\n%s", w.out.String())
 	}
 }

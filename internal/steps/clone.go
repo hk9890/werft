@@ -64,6 +64,9 @@ func (Clone) Run(r *pipeline.Run) error {
 	if err != nil {
 		return err
 	}
+	if err := src.listNVRAM(r.H); err != nil {
+		return err
+	}
 	if exists {
 		r.Printf("Removing the old %s", t)
 		if err := removeClone(r.H, t); err != nil {
@@ -108,11 +111,14 @@ type cloneSource struct {
 	domain      *libvirtxml.Domain
 	disks       []domxml.Disk
 	nvram       *poolVolume
+	nvramPath   string
 	nvramFormat string
 }
 
 // sources reads the domain and finds the volume of each writable disk and of
-// the NVRAM. A disk or NVRAM outside every storage pool fails.
+// the NVRAM, and changes nothing. A disk or NVRAM outside every storage pool
+// fails. An NVRAM in virt.NVRAMDir that no pool lists yet has no pool:
+// listNVRAM makes one list it.
 func sources(h virt.Hypervisor, name string) (cloneSource, error) {
 	text, err := h.DomainXML(name, true)
 	if err != nil {
@@ -128,13 +134,26 @@ func sources(h virt.Hypervisor, name string) (cloneSource, error) {
 	}
 	src := cloneSource{domain: d, disks: disks}
 	if nv, ok := domxml.NVRAMOf(d); ok && nv.Path != "" {
-		pool, vol, err := virt.NVRAMVolume(h, nv.Path)
+		pool, vol, err := virt.FindNVRAM(h, nv.Path)
 		if err != nil {
 			return cloneSource{}, failure.Wrap(failure.KindOf(err), err, "NVRAM %s of %s is in no storage pool", nv.Path, name)
 		}
-		src.nvram, src.nvramFormat = &poolVolume{pool, vol}, nv.Format
+		src.nvram, src.nvramPath, src.nvramFormat = &poolVolume{pool, vol}, nv.Path, nv.Format
 	}
 	return src, nil
+}
+
+// listNVRAM makes a storage pool list the NVRAM when none does yet.
+func (src *cloneSource) listNVRAM(h virt.Hypervisor) error {
+	if src.nvram == nil || src.nvram.pool != "" {
+		return nil
+	}
+	pool, vol, err := virt.NVRAMVolume(h, src.nvramPath)
+	if err != nil {
+		return failure.Wrap(failure.KindOf(err), err, "NVRAM %s of %s is in no storage pool", src.nvramPath, src.domain.Name)
+	}
+	src.nvram = &poolVolume{pool, vol}
+	return nil
 }
 
 func defineClone(h virt.Hypervisor, d *libvirtxml.Domain, name string, paths map[string]string, nvram string) error {
@@ -231,10 +250,11 @@ func copyNVRAM(h virt.Hypervisor, src cloneSource, name string, created []poolVo
 }
 
 // removeClone undefines the shut-off clone with its reset points, and
-// deletes its own disk and NVRAM volumes. An NVRAM in a pool goes through
-// the storage API: an undefine that deletes it unlinks the file behind the
-// back of the storage driver, whose pool then still holds the name, and the
-// copy of the new clone's NVRAM under that name fails.
+// deletes its own disk and NVRAM volumes and the NVRAM copies vm made for
+// its reset points. An NVRAM in a pool goes through the storage API: an
+// undefine that deletes it unlinks the file behind the back of the storage
+// driver, whose pool then still holds the name, and the copy of the new
+// clone's NVRAM under that name fails.
 func removeClone(h virt.Hypervisor, name string) error {
 	text, err := h.DomainXML(name, true)
 	if err != nil {
@@ -254,9 +274,13 @@ func removeClone(h virt.Hypervisor, name string) error {
 	}
 	flags := virt.UndefineSnapshots
 	if nv, ok := domxml.NVRAMOf(d); ok {
-		if pool, vol, err := h.VolumeByPath(nv.Path); err == nil {
+		if pool, vol, err := virt.NVRAMVolume(h, nv.Path); err == nil {
 			flags |= virt.UndefineKeepNVRAM
-			volumes = append(volumes, poolVolume{pool, vol})
+			backups, err := nvramBackups(h, pool, vol)
+			if err != nil {
+				return err
+			}
+			volumes = append(append(volumes, poolVolume{pool, vol}), backups...)
 		} else {
 			flags |= virt.UndefineNVRAM
 		}
@@ -270,6 +294,24 @@ func removeClone(h virt.Hypervisor, name string) error {
 		}
 	}
 	return nil
+}
+
+// nvramBackups is the copies of the NVRAM volume nvram that vm made in pool
+// for its reset points. vm wrote them outside the pool API, so the pool
+// lists them only after a refresh.
+func nvramBackups(h virt.Hypervisor, pool, nvram string) ([]poolVolume, error) {
+	if err := h.RefreshPool(pool); err != nil {
+		return nil, err
+	}
+	names, err := h.Volumes(pool)
+	if err != nil {
+		return nil, err
+	}
+	var out []poolVolume
+	for _, name := range resetpoint.Backups(nvram, names) {
+		out = append(out, poolVolume{pool, name})
+	}
+	return out, nil
 }
 
 // Generalize boots the clone and gives it its own machine-id, SSH host keys

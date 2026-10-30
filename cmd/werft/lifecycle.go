@@ -8,6 +8,7 @@ import (
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/lifecycle"
+	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
 
@@ -106,7 +107,7 @@ func (c *cli) cmdStart(args []string) error {
 	viewerOpen := false
 	if *view {
 		if err := c.openViewer(name); err != nil {
-			c.progress("warning: no viewer window: %v; open one on the desktop: virt-viewer -c qemu:///system %s", err, name)
+			c.progress("warning: no viewer window: %v; open one on the desktop: %s", err, steps.ViewerCommand(name))
 		} else {
 			viewerOpen = true
 			c.progress("virt-viewer attached: Shift+F11 fullscreen, Shift+F12 release cursor")

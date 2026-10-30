@@ -75,6 +75,11 @@ func checkLookup(t *testing.T, h virt.Hypervisor, g *livetest.Guest) {
 	if len(d.UUID) != 36 {
 		t.Errorf("UUID = %q", d.UUID)
 	}
+	pools, err := h.Pools()
+	livetest.Must(t, err, "list pools")
+	if !slices.Contains(pools, virt.Pool{Name: livetest.Pool, Path: livetest.PoolPath}) {
+		t.Errorf("pools = %+v, want %s on %s", pools, livetest.Pool, livetest.PoolPath)
+	}
 	all, err := h.Domains()
 	livetest.Must(t, err, "list domains")
 	if !slices.Contains(all, d) {

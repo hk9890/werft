@@ -365,6 +365,29 @@ func (a *Adapter) PoolInfo(name string) (virt.PoolInfo, error) {
 	}, nil
 }
 
+func (a *Adapter) Pools() ([]virt.Pool, error) {
+	ps, _, err := a.l.ConnectListAllStoragePools(1, 0)
+	if err != nil {
+		return nil, wrap(err, "list pools")
+	}
+	out := make([]virt.Pool, len(ps))
+	for i, p := range ps {
+		text, err := a.l.StoragePoolGetXMLDesc(p, 0)
+		if err != nil {
+			return nil, wrap(err, "XML of pool %s", p.Name)
+		}
+		var x libvirtxml.StoragePool
+		if err := x.Unmarshal(text); err != nil {
+			return nil, fmt.Errorf("XML of pool %s: %w", p.Name, err)
+		}
+		out[i] = virt.Pool{Name: p.Name}
+		if x.Target != nil {
+			out[i].Path = x.Target.Path
+		}
+	}
+	return out, nil
+}
+
 func (a *Adapter) vol(pool, name string) (golibvirt.StorageVol, error) {
 	p, err := a.pool(pool)
 	if err != nil {

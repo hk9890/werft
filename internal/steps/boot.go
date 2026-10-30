@@ -121,7 +121,7 @@ func boot(r *pipeline.Run) error {
 		if !failure.Is(err, failure.Timeout) {
 			return err
 		}
-		return failure.Wrap(failure.Timeout, err, "look at its console: werft start --view %s", r.Domain)
+		return failure.Wrap(failure.Timeout, err, "look at its console: %s", ViewerCommand(r.Domain))
 	}
 	r.Printf("Typing the disk password of %s at its console", r.Domain)
 	return console.Type(r.H, r.Domain, r.Secret(pipeline.GuestPassword))
@@ -137,7 +137,7 @@ func (WaitSSH) Run(r *pipeline.Run) error { return waitSSH(r) }
 func waitSSH(r *pipeline.Run) error {
 	err := r.PollLogin(sshTimeout, "no SSH answer from "+r.Domain, func() bool { return r.Reach("true") })
 	if err != nil && r.LUKS {
-		return failure.Wrap(failure.KindOf(err), err, "if its console asks for the disk password again, the disk refused it; nothing types it twice (werft start --view %s)", r.Domain)
+		return failure.Wrap(failure.KindOf(err), err, "if its console asks for the disk password again, the disk refused it; nothing types it twice (%s)", ViewerCommand(r.Domain))
 	}
 	if err == nil {
 		r.Printf("SSH answers in %s at %s", r.Domain, r.Addr.Host)

@@ -113,12 +113,40 @@ func TestNVRAMVolumeMakesThePool(t *testing.T) {
 	}
 }
 
+func TestNVRAMVolumeRefreshesThePoolThatCoversTheDirectory(t *testing.T) {
+	h := nvramFile{virttest.New()}
+	if err := virt.EnsurePool(h, "qemu-nvram", virt.NVRAMDir); err != nil {
+		t.Fatal(err)
+	}
+	pool, name, err := virt.NVRAMVolume(h, virt.NVRAMDir+"/x_VARS.fd")
+	if err != nil || pool != "qemu-nvram" || name != "x_VARS.fd" {
+		t.Fatalf("NVRAMVolume = %q, %q, %v", pool, name, err)
+	}
+	if _, err := h.PoolInfo(virt.NVRAMPool); !failure.Is(err, failure.NotFound) {
+		t.Errorf("NVRAMVolume made a second pool on %s: %v", virt.NVRAMDir, err)
+	}
+}
+
 func TestNVRAMVolumeElsewhereMakesNoPool(t *testing.T) {
 	f := virttest.New()
 	if _, _, err := virt.NVRAMVolume(f, "/other/x_VARS.fd"); !failure.Is(err, failure.NotFound) {
 		t.Fatalf("err = %v", err)
 	}
 	if got := f.Calls(); !reflect.DeepEqual(got, []string{"VolumeByPath /other/x_VARS.fd"}) {
+		t.Errorf("calls = %q", got)
+	}
+}
+
+func TestFindNVRAMChangesNothing(t *testing.T) {
+	f := virttest.New()
+	pool, name, err := virt.FindNVRAM(f, virt.NVRAMDir+"/x_VARS.fd")
+	if err != nil || pool != "" || name != "x_VARS.fd" {
+		t.Fatalf("FindNVRAM = %q, %q, %v", pool, name, err)
+	}
+	if _, _, err := virt.FindNVRAM(f, "/other/x_VARS.fd"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("elsewhere: %v", err)
+	}
+	if got := f.Calls(); !reflect.DeepEqual(got, []string{"VolumeByPath " + virt.NVRAMDir + "/x_VARS.fd", "VolumeByPath /other/x_VARS.fd"}) {
 		t.Errorf("calls = %q", got)
 	}
 }
