@@ -86,10 +86,15 @@ func Holders(s Stick) string {
 }
 
 func Unmount(s Stick) error {
-	if out, err := exec.Command("udisksctl", "unmount", "-b", s.Device).CombinedOutput(); err != nil {
-		return failure.Wrap(failure.Conflict, err, "could not unmount %s on the host; close what holds it and run again: %s\n%s", s.Device, bytes.TrimSpace(out), Holders(s))
+	out, err := exec.Command("udisksctl", "unmount", "-b", s.Device).CombinedOutput()
+	if err == nil {
+		return nil
 	}
-	return nil
+	msg := fmt.Sprintf("could not unmount %s on the host: %s", s.Device, bytes.TrimSpace(out))
+	if h := Holders(s); h != "" {
+		msg += "\nclose what holds it and run again:\n" + strings.TrimRight(h, "\n")
+	}
+	return failure.New(failure.Conflict, "%s", msg)
 }
 
 // OnHost reports whether the host sees the stick's file system.

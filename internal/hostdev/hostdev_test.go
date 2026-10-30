@@ -139,9 +139,17 @@ func TestUnmountAndMount(t *testing.T) {
 	}
 
 	t.Setenv("STICK_UNMOUNT_FAIL", "1")
-	t.Setenv("STICK_BUSY", "1")
 	err := hostdev.Unmount(s)
-	if !failure.Is(err, failure.Conflict) || !strings.Contains(err.Error(), "target is busy") || !strings.Contains(err.Error(), "nautilus") {
-		t.Errorf("err = %v, want the holders named", err)
+	if !failure.Is(err, failure.Conflict) || !strings.Contains(err.Error(), "target is busy") {
+		t.Errorf("err = %v, want the udisksctl reason", err)
+	}
+	if msg := err.Error(); strings.Contains(msg, "close what holds it") || strings.HasSuffix(msg, "\n") {
+		t.Errorf("err = %q, want no holder advice and no trailing newline without holders", msg)
+	}
+
+	t.Setenv("STICK_BUSY", "1")
+	err = hostdev.Unmount(s)
+	if msg := err.Error(); !strings.Contains(msg, "close what holds it and run again:\n") || !strings.Contains(msg, "nautilus") || strings.HasSuffix(msg, "\n") {
+		t.Errorf("err = %q, want the holders named", msg)
 	}
 }

@@ -59,8 +59,8 @@ func (p *PrepareBoot) Run(r *pipeline.Run) error {
 		r.Printf("%s started", r.Domain)
 	}
 	hasAddress := func() bool { return len(r.Candidates()) > 0 }
-	if r.Poll(addressTimeout, pollInterval, "", hasAddress) == nil {
-		return nil
+	if err := r.Poll(addressTimeout, pollInterval, "", hasAddress); !failure.Is(err, failure.Timeout) {
+		return err
 	}
 	r.Printf("\n%s has no address yet. If its disk asks for a password, type it in its window.\n  The run continues once it has an address.\n", r.Domain)
 	p.window.show(r)
@@ -87,7 +87,10 @@ func (p *PrepareSSH) Run(r *pipeline.Run) error {
 		}
 		return false
 	}
-	if r.PollLogin(sshdBootTimeout, "", answers) != nil {
+	if err := r.PollLogin(sshdBootTimeout, "", answers); err != nil {
+		if !failure.Is(err, failure.Timeout) {
+			return err
+		}
 		r.Printf("\n%s has no SSH server. Log in at its desktop, open a terminal and run:\n\n      sudo apt install -y openssh-server                         (Ubuntu)\n      sudo ufw allow ssh && sudo systemctl enable --now sshd     (Omarchy)\n\n  The run continues once SSH answers.\n", r.Domain)
 		p.window.show(r)
 		if err := r.PollLogin(personTimeout, "no SSH server answered in "+r.Domain, answers); err != nil {

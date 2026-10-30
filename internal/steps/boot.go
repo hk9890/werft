@@ -118,7 +118,10 @@ func boot(r *pipeline.Run) error {
 	p := console.DefaultPrompt
 	p.Sleep = r.Sleep
 	if err := console.WaitForPrompt(r.Ctx, r.H, r.Domain, p); err != nil {
-		return failure.Wrap(failure.KindOf(err), err, "open the window to look: virt-viewer -c qemu:///system %s", r.Domain)
+		if !failure.Is(err, failure.Timeout) {
+			return err
+		}
+		return failure.Wrap(failure.Timeout, err, "open the window to look: virt-viewer -c qemu:///system %s", r.Domain)
 	}
 	r.Printf("Typing the disk password of %s at its console", r.Domain)
 	return console.Type(r.H, r.Domain, r.Secret(pipeline.GuestPassword))

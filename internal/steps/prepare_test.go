@@ -1,6 +1,7 @@
 package steps_test
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -137,5 +138,18 @@ func TestPrepareRejectedPasswordTakesNoBase(t *testing.T) {
 	}
 	if w.index("^CreateSnapshot") >= 0 {
 		t.Error("a base was taken")
+	}
+}
+
+func TestPrepareInterruptedInTheSSHWaitGivesNoAdvice(t *testing.T) {
+	w := freshWorld(t)
+	var cancel context.CancelFunc
+	w.shell.onRun = func(string) { cancel() }
+	_, err := w.runWithCancel(steps.Prepare(), &cancel)
+	if err == nil || !strings.Contains(err.Error(), "interrupted while waiting") {
+		t.Fatalf("err = %v", err)
+	}
+	if w.index("^viewer open") >= 0 || strings.Contains(w.out.String(), "has no SSH server") {
+		t.Errorf("an interrupt got the advice for a guest without sshd:\n%s", w.out.String())
 	}
 }
