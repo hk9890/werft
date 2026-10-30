@@ -29,7 +29,7 @@ Technical design: [DESIGN.md](DESIGN.md).
 
 ## Users and their jobs
 
-Agents come first. The agent commands (`images`, `lease`, `leases`, `release`, `reap`, `list`,
+Agents come first. The agent commands (`images`, `lease`, `extend`, `leases`, `release`, `reap`, `list`,
 `start`, `stop`, `reset`, `snapshot`, `snapshots`) work without a TTY and give machine-readable
 output. `prepare` and `provision` need a person at the host: `prepare` waits for the sshd install
 and the disk password, and `provision` needs the physical key stick and a passphrase typed at a
@@ -101,10 +101,15 @@ Requirements:
 - No command asks a question when stdin is not a TTY. A command that needs confirmation fails and
   names the flag that gives it.
 - Secrets never appear on a command line, in a process list, or in JSON output.
-- A lease has a lifetime. werft destroys an expired lease, so an agent that crashes does not leak a
-  VM.
+- A lease lives 4 hours by default. `werft extend <lease-id>` adds time. werft destroys an expired
+  lease, so an agent that crashes does not leak a VM.
 - `werft leases --json` lists active leases with owner, image, tier, address, and expiry.
-- More than one lease can run at the same time, limited by host resources.
+- More than one lease can run at the same time. werft refuses a new lease ("no capacity") when free
+  host memory would drop below a configured budget.
+- A lease runs headless: the guest desktop runs, but no viewer window opens on the host. `--view`
+  opens one.
+- A lease of an encrypted image (Omarchy) boots like any other: werft types the disk password. The
+  agent never sees it.
 
 ## What carries over from `vm`
 
@@ -120,8 +125,8 @@ Keep these user-visible behaviors. Each one fixed a real failure in `vm`.
 The implementation invariants behind them are in [DESIGN.md](DESIGN.md#step-model).
 
 Setup-specific parts (the bootstrap repo, the key stick, the GPG passphrase, the system checks,
-GNOME autologin, keyring unlock, Omarchy update) move out of the core. See
-[Open questions](#open-questions).
+GNOME autologin, keyring unlock, Omarchy update) move out of the core into a recipe that the setup
+repo owns. werft only runs it.
 
 ## Roadmap
 
@@ -130,23 +135,12 @@ GNOME autologin, keyring unlock, Omarchy update) move out of the core. See
    reset points. `vm` and werft run side by side, one build VM at a time.
 2. **Setup-repo switch.** The setup repo adds its recipe. When `werft provision` makes a `-full`
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
-3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`,
+3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
    `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases.
 4. **Agent integration.** Stable JSON output and exit codes, a skill or guide that tells an agent how
    to use werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it.
 
 ## Open questions
 
-DESIGN.md holds a proposal for some of these. A proposal is not a decision until the question is
-closed here.
-
-- **Setup-specific steps.** Does the setup repo own the bootstrap recipe and werft only run it,
-  or does werft own it? Proposal: a recipe file that the setup repo owns.
-- **LUKS images in leases.** Does a lease of an encrypted image need disk-password typing, or are
-  lease images unencrypted?
-- **Desktop or headless.** Must a lease run a desktop session, or is headless the default?
-- **Concurrency limit.** A fixed number of leases, or a limit from free RAM and CPU?
-- **Lifetime default.** What is the default lease lifetime, and can a lease be extended?
-
-The technical questions (lease mechanism, addressing, firmware state, host access) are proposals in
+None open. The technical questions (lease mechanism, addressing, firmware state, host access) are proposals in
 [DESIGN.md](DESIGN.md#proposals-in-short).
