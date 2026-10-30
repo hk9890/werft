@@ -3,6 +3,7 @@ package resetpoint
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,9 +26,10 @@ import (
 // when it runs again.
 type Migration struct {
 	Domain string
-	// Keep is the label that becomes a native reset point. Empty when vm
-	// has no such reset point: then the domain keeps its current disk and
-	// NVRAM, and gets no reset point.
+	// Keep is the label that becomes a native reset point: KeepLabel, or
+	// clean-install when vm has no KeepLabel. Empty when vm has neither:
+	// then the domain keeps its current disk and NVRAM, and gets no reset
+	// point.
 	Keep string
 	// Delete is the other labels of vm, which go away.
 	Delete []string
@@ -103,21 +105,40 @@ func PlanMigration(h virt.Hypervisor, domain, exportPool string) (*Migration, er
 	if err != nil {
 		return nil, err
 	}
-	keep := false
-	for _, label := range labels {
-		switch label {
-		case m.Keep:
-			keep = true
-		case CleanInstall:
+	switch {
+	case slices.Contains(labels, m.Keep):
+		if slices.Contains(labels, CleanInstall) {
 			m.Export = []string{domain + "-" + CleanInstall + ".qcow2", domain + "-" + CleanInstall + "_VARS.qcow2"}
-		default:
+		}
+	case slices.Contains(labels, CleanInstall):
+		m.Keep = CleanInstall
+	default:
+		m.Keep = ""
+	}
+	for _, label := range labels {
+		if label != m.Keep && label != CleanInstall {
 			m.Delete = append(m.Delete, label)
 		}
 	}
-	if !keep {
-		m.Keep = ""
+	return m, m.refuseForeignExport(h)
+}
+
+// refuseForeignExport refuses an export volume that no earlier run of this
+// migration made. An earlier run redefines clean-install before it copies,
+// and deletes that metadata only after it deleted the NVRAM copy.
+func (m *Migration) refuseForeignExport(h virt.Hypervisor) error {
+	if len(m.Export) == 0 {
+		return nil
 	}
-	return m, nil
+	if ok, err := Has(h, m.Domain, CleanInstall); err != nil || ok {
+		return err
+	}
+	for _, name := range m.Export {
+		if ok, err := hasVolume(h, m.ExportPool, name); err != nil || ok {
+			return errOr(err, failure.New(failure.Conflict, "volume %s in pool %s is not from a migration of this %s; delete or move it: virsh -c qemu:///system vol-delete --pool %s %s", name, m.ExportPool, m.Domain, m.ExportPool, name))
+		}
+	}
+	return nil
 }
 
 // findDisks finds the writable disks. vm took its qemu-img snapshots of the
@@ -153,30 +174,44 @@ func (m *Migration) findDisks(h virt.Hypervisor) error {
 // NVRAM: the kept label is still the snapshot of vm, whose domain has the
 // raw NVRAM.
 func (m *Migration) planResume(h virt.Hypervisor, nvram string) error {
-	nothing := failure.New(failure.Conflict, "%s keeps its UEFI variables in qcow2 and has no reset points of vm; nothing to migrate", m.Domain)
-	if ok, err := Has(h, m.Domain, m.Keep); err != nil || !ok {
-		return errOr(err, nothing)
+	for _, label := range []string{m.Keep, CleanInstall} {
+		raw, err := m.legacyNVRAM(h, label)
+		if err != nil {
+			return err
+		}
+		if raw == "" {
+			continue
+		}
+		if m.nvramPool, _, err = h.VolumeByPath(nvram); err != nil {
+			return err
+		}
+		m.Keep, m.Resume, m.rawNVRAM = label, true, filepath.Base(raw)
+		return nil
 	}
-	text, err := h.SnapshotXML(m.Domain, m.Keep)
+	return failure.New(failure.Conflict, "%s keeps its UEFI variables in qcow2 and has no reset points of vm; nothing to migrate", m.Domain)
+}
+
+// legacyNVRAM is the path of the raw NVRAM that the snapshot label names
+// when it is a reset point of vm, else empty.
+func (m *Migration) legacyNVRAM(h virt.Hypervisor, label string) (string, error) {
+	if ok, err := Has(h, m.Domain, label); err != nil || !ok {
+		return "", err
+	}
+	text, err := h.SnapshotXML(m.Domain, label)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var s libvirtxml.DomainSnapshot
 	if err := s.Unmarshal(text); err != nil {
-		return failure.Wrap(failure.Failed, err, "snapshot %s of %s", m.Keep, m.Domain)
+		return "", failure.Wrap(failure.Failed, err, "snapshot %s of %s", label, m.Domain)
 	}
 	if s.Domain == nil {
-		return nothing
+		return "", nil
 	}
-	raw, ok := domxml.NVRAMOf(s.Domain)
-	if !ok || raw.Format == "qcow2" || raw.Path == "" {
-		return nothing
+	if raw, ok := domxml.NVRAMOf(s.Domain); ok && raw.Format != "qcow2" {
+		return raw.Path, nil
 	}
-	if m.nvramPool, _, err = h.VolumeByPath(nvram); err != nil {
-		return err
-	}
-	m.Resume, m.rawNVRAM = true, filepath.Base(raw.Path)
-	return nil
+	return "", nil
 }
 
 func errOr(err, otherwise error) error {
@@ -187,7 +222,8 @@ func errOr(err, otherwise error) error {
 }
 
 // legacyLabels is the label of each NVRAM copy of vm, in the order of the
-// pool listing.
+// pool listing, then each label an earlier run redefined and did not finish
+// to delete.
 func (m *Migration) legacyLabels(h virt.Hypervisor) ([]string, error) {
 	names, err := h.Volumes(m.nvramPool)
 	if err != nil {
@@ -198,6 +234,26 @@ func (m *Migration) legacyLabels(h virt.Hypervisor) ([]string, error) {
 		rest, ok := strings.CutPrefix(name, m.rawNVRAM+".")
 		if label, ok2 := strings.CutSuffix(rest, ".bak"); ok && ok2 && label != "" {
 			labels = append(labels, label)
+		}
+	}
+	snapshots, err := h.Snapshots(m.Domain)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range snapshots {
+		if slices.Contains(labels, name) {
+			continue
+		}
+		text, err := h.SnapshotXML(m.Domain, name)
+		if err != nil {
+			return nil, err
+		}
+		var s libvirtxml.DomainSnapshot
+		if err := s.Unmarshal(text); err != nil {
+			return nil, failure.Wrap(failure.Failed, err, "snapshot %s of %s", name, m.Domain)
+		}
+		if s.Description == legacyDescription {
+			labels = append(labels, name)
 		}
 	}
 	return labels, nil
@@ -211,6 +267,12 @@ func (m *Migration) QCOW2NVRAM() string { return m.Domain + "_VARS.qcow2" }
 // Run carries out the migration. progress gets a line per step.
 func (m *Migration) Run(h virt.Hypervisor, progress func(format string, args ...any)) error {
 	if !m.Resume {
+		if m.Keep != "" {
+			progress("Checking that the disk of %s has the reset point '%s'", m.Domain, m.Keep)
+			if err := m.revert(h, m.Keep); err != nil {
+				return err
+			}
+		}
 		if len(m.Export) > 0 {
 			progress("Exporting the reset point '%s' of %s to %s in pool %s", CleanInstall, m.Domain, strings.Join(m.Export, " and "), m.ExportPool)
 			if err := m.export(h); err != nil {
@@ -236,7 +298,8 @@ func (m *Migration) Run(h virt.Hypervisor, progress func(format string, args ...
 
 // export copies the disk at clean-install and its NVRAM copy to flat qcow2
 // volumes, then deletes the reset point. A volume that exists already is
-// from an earlier run: libvirt deletes a copy that fails.
+// from an earlier run (refuseForeignExport): libvirt deletes a copy that
+// fails.
 func (m *Migration) export(h virt.Hypervisor) error {
 	disk, vars := m.Export[0], m.Export[1]
 	if ok, err := hasVolume(h, m.ExportPool, disk); err != nil {
@@ -275,6 +338,8 @@ func qcow2Volume(name string, capacity uint64) string {
 	return fmt.Sprintf("<volume><name>%s</name><capacity unit='bytes'>%d</capacity><target><format type='qcow2'/></target></volume>", name, capacity)
 }
 
+const legacyDescription = "reset point of vm, found by werft migrate"
+
 // legacy makes libvirt know the qemu-img snapshot label of vm, so libvirt
 // reverts and deletes it. libvirt checks neither that the disk has it nor
 // what it holds.
@@ -289,7 +354,7 @@ func (m *Migration) legacy(h virt.Hypervisor, label string) error {
 	disks[0].Snapshot = "internal"
 	text, err := (&libvirtxml.DomainSnapshot{
 		Name:         label,
-		Description:  "reset point of vm, found by werft migrate",
+		Description:  legacyDescription,
 		State:        "shutoff",
 		CreationTime: strconv.FormatInt(time.Now().Unix(), 10),
 		Memory:       &libvirtxml.DomainSnapshotMemory{Snapshot: "no"},
@@ -314,16 +379,17 @@ func (m *Migration) revert(h virt.Hypervisor, label string) error {
 	return nil
 }
 
-// drop deletes the qemu-img snapshot label of vm and its NVRAM copy.
+// drop deletes the NVRAM copy of label, then the qemu-img snapshot of vm.
+// The redefined metadata goes last, so a new run still finds the label.
 // libvirt ignores a qemu-img snapshot that is gone already.
 func (m *Migration) drop(h virt.Hypervisor, label string) error {
 	if err := m.legacy(h, label); err != nil {
 		return err
 	}
-	if err := h.DeleteSnapshot(m.Domain, label); err != nil {
+	if err := deleteVolume(h, m.nvramPool, m.backup(label)); err != nil {
 		return err
 	}
-	return deleteVolume(h, m.nvramPool, m.backup(label))
+	return h.DeleteSnapshot(m.Domain, label)
 }
 
 func deleteVolume(h virt.Hypervisor, pool, name string) error {

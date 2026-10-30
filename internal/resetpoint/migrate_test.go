@@ -33,7 +33,8 @@ type legacyHost struct {
 }
 
 // newLegacyHost has the build VM vm with the reset points of vm in labels,
-// each NVRAM copy holding its label, and the export pool werft.
+// each qemu-img snapshot and NVRAM copy holding its label, and the export
+// pool werft.
 func newLegacyHost(t *testing.T, name string, labels ...string) *legacyHost {
 	t.Helper()
 	lh := &legacyHost{t: t, f: virttest.New()}
@@ -44,6 +45,7 @@ func newLegacyHost(t *testing.T, name string, labels ...string) *legacyHost {
 	lh.volume("nvram", name+"_VARS.fd", "vars now")
 	for _, label := range labels {
 		lh.volume("nvram", name+"_VARS.fd."+label+".bak", "vars "+label)
+		lh.must(lh.f.QemuImgSnapshot("default", name+".qcow2", label, "disk "+label))
 	}
 	_, err := lh.f.DefineDomain(legacyVM(name))
 	lh.must(err)
@@ -115,11 +117,17 @@ func (lh *legacyHost) assertMigrated() {
 	if got := lh.data("nvram", "vm_VARS.qcow2"); got != "vars provision-base" {
 		t.Errorf("qcow2 NVRAM holds %q, want the copy of provision-base", got)
 	}
+	if got := lh.data("default", "vm.qcow2"); got != "disk provision-base" {
+		t.Errorf("disk holds %q, want provision-base", got)
+	}
 	if got := lh.volumes("werft"); !slices.Equal(got, []string{"vm-clean-install.qcow2", "vm-clean-install_VARS.qcow2"}) {
 		t.Errorf("werft pool = %q", got)
 	}
 	if got := lh.data("werft", "vm-clean-install_VARS.qcow2"); got != "vars clean-install" {
 		t.Errorf("exported NVRAM holds %q", got)
+	}
+	if got := lh.data("werft", "vm-clean-install.qcow2"); got != "disk clean-install" {
+		t.Errorf("exported disk holds %q", got)
 	}
 }
 
@@ -138,11 +146,15 @@ func TestMigrate(t *testing.T) {
 
 	calls := lh.f.Calls()[since:]
 	order := []string{
+		"RedefineSnapshot vm provision-base",
+		"RevertSnapshot vm provision-base",
 		"RedefineSnapshot vm clean-install",
 		"RevertSnapshot vm clean-install",
 		"CreateVolumeFrom werft vm-clean-install.qcow2 default vm.qcow2",
 		"CreateVolumeFrom werft vm-clean-install_VARS.qcow2 nvram vm_VARS.fd.clean-install.bak",
+		"DeleteVolume nvram vm_VARS.fd.clean-install.bak",
 		"DeleteSnapshot vm clean-install",
+		"DeleteVolume nvram vm_VARS.fd.full.bak",
 		"DeleteSnapshot vm full",
 		"RevertSnapshot vm provision-base",
 		"CreateVolumeFrom nvram vm_VARS.qcow2 nvram vm_VARS.fd.provision-base.bak",
@@ -165,39 +177,112 @@ func TestMigrate(t *testing.T) {
 	}
 }
 
-// TestMigrateWithoutTheKeptLabel migrates a domain that vm never prepared:
-// it keeps its current disk and NVRAM, and gets no reset point.
+// TestMigrateWithoutTheKeptLabel migrates a domain that vm never prepared
+// and never snapshotted: it keeps its current disk and NVRAM, and gets no
+// reset point.
 func TestMigrateWithoutTheKeptLabel(t *testing.T) {
-	for _, labels := range [][]string{nil, {"clean-install"}} {
-		lh := newLegacyHost(t, "vm", labels...)
-		since := len(lh.f.Calls())
-		m, err := lh.migrate("vm")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if m.Keep != "" || len(m.Export) != len(labels)*2 {
-			t.Errorf("migration of %q = %+v", labels, m)
-		}
-		if names, _ := lh.f.Snapshots("vm"); len(names) != 0 {
-			t.Errorf("snapshots = %q, want none", names)
-		}
-		if got := lh.volumes("nvram"); !slices.Equal(got, []string{"vm_VARS.qcow2"}) || lh.data("nvram", "vm_VARS.qcow2") != "vars now" {
-			t.Errorf("nvram pool = %q, want the current NVRAM in qcow2", got)
-		}
-		if err := resetpoint.Guard(lh.f, "vm"); err != nil {
-			t.Errorf("guard after migration: %v", err)
-		}
-		for _, call := range lh.f.Calls()[since:] {
-			if strings.HasPrefix(call, "RevertSnapshot vm ") && call != "RevertSnapshot vm clean-install" {
-				t.Errorf("migration without a kept label called %q", call)
-			}
+	lh := newLegacyHost(t, "vm")
+	since := len(lh.f.Calls())
+	m, err := lh.migrate("vm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Keep != "" || m.Export != nil || m.Delete != nil {
+		t.Errorf("migration = %+v", m)
+	}
+	if names, _ := lh.f.Snapshots("vm"); len(names) != 0 {
+		t.Errorf("snapshots = %q, want none", names)
+	}
+	if got := lh.volumes("nvram"); !slices.Equal(got, []string{"vm_VARS.qcow2"}) || lh.data("nvram", "vm_VARS.qcow2") != "vars now" {
+		t.Errorf("nvram pool = %q, want the current NVRAM in qcow2", got)
+	}
+	if got := lh.data("default", "vm.qcow2"); got != "disk now" {
+		t.Errorf("disk holds %q, want its current state", got)
+	}
+	if err := resetpoint.Guard(lh.f, "vm"); err != nil {
+		t.Errorf("guard after migration: %v", err)
+	}
+	for _, call := range lh.f.Calls()[since:] {
+		if strings.HasPrefix(call, "RevertSnapshot ") {
+			t.Errorf("migration without a reset point called %q", call)
 		}
 	}
 
-	lh := newLegacyHost(t, "vm")
+	lh = newLegacyHost(t, "vm")
 	lh.f.FailOn("DeleteVolume nvram vm_VARS.fd", errors.New("boom"))
 	if _, err := lh.migrate("vm"); err == nil || !strings.Contains(err.Error(), "vol-delete --pool nvram vm_VARS.fd") {
 		t.Errorf("migrate with a failing delete of the old NVRAM = %v", err)
+	}
+}
+
+// TestMigrateKeepsCleanInstallWithoutTheKeptLabel migrates a vendor install
+// that vm snapshotted only as clean-install: clean-install becomes the
+// native reset point, disk and NVRAM both at clean-install.
+func TestMigrateKeepsCleanInstallWithoutTheKeptLabel(t *testing.T) {
+	for _, fail := range []string{"", "DeleteVolume nvram vm_VARS.fd", "DeleteSnapshot vm clean-install"} {
+		t.Run("fail "+fail, func(t *testing.T) {
+			lh := newLegacyHost(t, "vm", "clean-install", "full")
+			if fail != "" {
+				lh.f.FailOn(fail, errors.New("boom"))
+				if _, err := lh.migrate("vm"); err == nil {
+					t.Fatalf("migrate with %s failing passed", fail)
+				}
+				lh.f.FailOn(fail, nil)
+			}
+			m, err := lh.migrate("vm")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fail == "" && (m.Keep != "clean-install" || m.Export != nil || !slices.Equal(m.Delete, []string{"full"})) {
+				t.Errorf("migration = %+v", m)
+			}
+			if names, _ := lh.f.Snapshots("vm"); !slices.Equal(names, []string{"clean-install"}) {
+				t.Errorf("snapshots = %q", names)
+			}
+			if got := lh.volumes("nvram"); !slices.Equal(got, []string{"vm_VARS.qcow2"}) || lh.data("nvram", "vm_VARS.qcow2") != "vars clean-install" {
+				t.Errorf("nvram pool = %q, want the copy of clean-install in qcow2", got)
+			}
+			if got := lh.data("default", "vm.qcow2"); got != "disk clean-install" {
+				t.Errorf("disk holds %q, want clean-install", got)
+			}
+			if got := lh.volumes("werft"); len(got) != 0 {
+				t.Errorf("werft pool = %q, want nothing exported", got)
+			}
+		})
+	}
+}
+
+// TestMigrateChecksTheKeptLabelFirst migrates a domain whose disk lacks the
+// qemu-img snapshot of the kept label, and checks that nothing is deleted.
+func TestMigrateChecksTheKeptLabelFirst(t *testing.T) {
+	lh := newLegacyHost(t, "vm", "clean-install", "full")
+	lh.volume("nvram", "vm_VARS.fd.provision-base.bak", "vars provision-base")
+	since := len(lh.f.Calls())
+	if _, err := lh.migrate("vm"); err == nil || !strings.Contains(err.Error(), "'provision-base'") {
+		t.Fatalf("migrate = %v", err)
+	}
+	for _, call := range lh.f.Calls()[since:] {
+		if method := strings.Fields(call)[0]; method == "DeleteSnapshot" || method == "DeleteVolume" || method == "CreateVolumeFrom" {
+			t.Errorf("a migration that cannot restore the kept label called %q", call)
+		}
+	}
+	if got := lh.data("default", "vm.qcow2"); got != "disk now" {
+		t.Errorf("disk holds %q, want its current state", got)
+	}
+}
+
+// TestMigrateRefusesAForeignExport finds an export volume that no run of
+// this migration made, for example from a domain of the same name that was
+// built again since.
+func TestMigrateRefusesAForeignExport(t *testing.T) {
+	for _, name := range []string{"vm-clean-install.qcow2", "vm-clean-install_VARS.qcow2"} {
+		lh := newLegacyHost(t, "vm", "clean-install", "provision-base")
+		lh.volume("werft", name, "old")
+		since := len(lh.f.Calls())
+		if _, err := lh.migrate("vm"); !failure.Is(err, failure.Conflict) || !strings.Contains(err.Error(), "vol-delete --pool werft "+name) {
+			t.Errorf("migrate with an old %s = %v", name, err)
+		}
+		assertNoChange(t, lh.f, since)
 	}
 }
 
@@ -288,15 +373,16 @@ func (lh *legacyHost) redefine(name, old, new string) {
 // uninterrupted one does.
 func TestMigrateFinishesAfterAFailure(t *testing.T) {
 	steps := []string{
+		"RedefineSnapshot vm provision-base",
+		"RevertSnapshot vm provision-base",
 		"RedefineSnapshot vm clean-install",
 		"RevertSnapshot vm clean-install",
 		"CreateVolumeFrom werft vm-clean-install.qcow2",
 		"CreateVolumeFrom werft vm-clean-install_VARS.qcow2",
-		"DeleteSnapshot vm clean-install",
 		"DeleteVolume nvram vm_VARS.fd.clean-install.bak",
-		"DeleteSnapshot vm full",
+		"DeleteSnapshot vm clean-install",
 		"DeleteVolume nvram vm_VARS.fd.full.bak",
-		"RevertSnapshot vm provision-base",
+		"DeleteSnapshot vm full",
 		"CreateVolumeFrom nvram vm_VARS.qcow2",
 		"DefineDomain vm",
 		"DeleteVolume nvram vm_VARS.fd",

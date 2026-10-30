@@ -218,9 +218,15 @@ func TestMigrateLive(t *testing.T) {
 	}
 	for _, e := range exports {
 		if !slices.Contains(names, e) {
-			t.Errorf("export %s is missing", e)
+			t.Fatalf("export %s is missing", e)
 		}
 	}
+	exported := guestOn(t, h, g.Name+"-ci", exports[0], exports[1])
+	exported.Boot()
+	if got := guestState(exported); got != "clean-install\nnovar" {
+		t.Errorf("state of the export = %q, want disk and NVRAM of clean-install", got)
+	}
+	exported.Poweroff()
 
 	g.Boot()
 	if got := guestState(g); got != "provision-base\nnovar" {
@@ -235,6 +241,24 @@ func TestMigrateLive(t *testing.T) {
 	}
 	g.Poweroff()
 	werftJSON(t, 4, "migrate", "--yes", g.Name)
+}
+
+// guestOn is a scratch guest that boots from the disk and NVRAM volumes in
+// place of its own.
+func guestOn(t *testing.T, h virt.Hypervisor, name, disk, vars string) *livetest.Guest {
+	t.Helper()
+	g := livetest.NewGuest(t, h, name)
+	text, err := h.DomainXML(name, true)
+	livetest.Must(t, err, "domain XML")
+	for _, v := range [][2]string{{g.DiskVolume(), disk}, {g.VarsVolume(), vars}} {
+		if !strings.Contains(text, livetest.PoolPath+"/"+v[0]) {
+			t.Fatalf("%s is not in the domain XML of %s", v[0], name)
+		}
+		text = strings.ReplaceAll(text, livetest.PoolPath+"/"+v[0], livetest.PoolPath+"/"+v[1])
+	}
+	_, err = h.DefineDomain(text)
+	livetest.Must(t, err, "redefine "+name)
+	return g
 }
 
 // golibvirtConn is a raw go-libvirt connection, for the metadata-only

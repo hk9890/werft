@@ -222,6 +222,11 @@ func TestMigrateCommand(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, label := range []string{"clean-install", "provision-base"} {
+		if err := rh.fake.QemuImgSnapshot("default", "b.qcow2", label, label); err != nil {
+			t.Fatal(err)
+		}
+	}
 	legacy := strings.NewReplacer("<name>vm</name>", "<name>b</name>", "format='qcow2'>/nvram/vm_VARS.qcow2", "format='raw'>/nvram/b_VARS.fd", "/img/vm.qcow2", "/img/b.qcow2").Replace(rpVM)
 	if _, err := rh.fake.DefineDomain(legacy); err != nil {
 		t.Fatal(err)

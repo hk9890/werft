@@ -210,9 +210,10 @@ native reset points. Both formats use the qcow2 internal snapshot table of one d
 labels are equal, so migration keeps one label per domain:
 
 - **Kept:** `provision-base`, or `clean` on a `-full` domain. It becomes a native reset point.
-- **Exported:** `clean-install`, the untouched vendor install. It goes to two flat qcow2 volumes in
-  the `werft` pool (`pool` in `config.toml`): `<domain>-clean-install.qcow2` (disk) and
-  `<domain>-clean-install_VARS.qcow2` (NVRAM).
+  Without it, `clean-install` is kept.
+- **Exported:** `clean-install`, the untouched vendor install, when it is not kept. It goes to two
+  flat qcow2 volumes in the `werft` pool (`pool` in `config.toml`): `<domain>-clean-install.qcow2`
+  (disk) and `<domain>-clean-install_VARS.qcow2` (NVRAM).
 - **Deleted:** every other label.
 
 `vm` took its `qemu-img` snapshots of the first disk only, and marks each with
@@ -229,26 +230,30 @@ refresh. It needs no root:
 Steps:
 
 1. Check before any change: shut off, libvirt 11.4 or later, UEFI with an NVRAM, every writable
-   disk qcow2, disk and NVRAM in a storage pool, an explicit loader path. Take the domain lock, then
-   confirm.
+   disk qcow2, disk and NVRAM in a storage pool, an explicit loader path, no export volume that an
+   earlier run of this migration did not make. Take the domain lock, then confirm. Revert the disk
+   to the kept label: this proves that the disk has it, before anything is deleted.
 2. Export `clean-install`: revert the disk to it, copy the disk and the `.bak` to the `werft` pool,
-   then delete the label and its `.bak`. A copy is flat: it has no internal snapshots.
-3. Delete each other label and its `.bak`.
+   then delete the `.bak` and then the label. A copy is flat: it has no internal snapshots.
+3. Delete each other label: first its `.bak`, then the label.
 4. Revert the disk to the kept label. Make `<domain>_VARS.qcow2` in the NVRAM pool from its `.bak`.
    Redefine the domain with `format='qcow2'` and the explicit loader; libvirt fills the firmware
    features in again from the descriptor of that loader. A failed redefine deletes the new NVRAM.
 5. Delete the raw NVRAM and the `.bak` of the kept label, then the kept `qemu-img` snapshot. Take a
    native reset point with the kept label.
 
-Each step can run again. A run that stops before step 4 starts again from the `.bak` files; an
-export volume that exists is complete, because libvirt deletes a copy that fails. A run that
+Each step can run again. A run that stops before step 4 starts again from the `.bak` files and from
+the snapshot metadata it redefined; the metadata of a label goes after its `.bak`. An export volume
+that exists is complete, because libvirt deletes a copy that fails. It is from an earlier run only
+while libvirt has the redefined `clean-install`; else migrate refuses with `conflict` and names the
+volume. A run that
 stops in step 5 continues there: the kept label is still the redefined snapshot of `vm`, and its
 domain names the raw NVRAM. When the native snapshot fails, the error names
 `werft snapshot <domain> <label>`.
 
-A domain without the kept label, for example a vendor install that `vm` never prepared, keeps its
-current disk and NVRAM: steps 2 and 3 run, the qcow2 NVRAM is a copy of the current one, and the
-domain gets no reset point. `werft prepare` or `werft snapshot` takes one.
+A domain with neither the kept label nor `clean-install` keeps its current disk and NVRAM: step 3
+runs, the qcow2 NVRAM is a copy of the current one, and the domain gets no reset point.
+`werft prepare` or `werft snapshot` takes one.
 
 After migration `vm` refuses the domain, because it finds no `.bak` file. This is a safe failure.
 The two tools run side by side, one per domain.
