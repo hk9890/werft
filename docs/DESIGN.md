@@ -20,7 +20,7 @@ Each row is a proposal until the user accepts it.
 | Lease address | AF_VSOCK first, DHCP lease by MAC as fallback | Unique per domain, no DNS race. mDNS is not used for leases. |
 | SSH | OpenSSH `ssh`/`scp` as child processes | The agent gets the same command werft used. vsock works through `systemd-ssh-proxy`. |
 | Clone | Domain XML generated in Go | `virt-clone` goes away, and with it the mise-python `gi` failure. |
-| Setup-specific steps | A recipe file that the setup repo owns | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
+| Setup-specific steps | A recipe file that the setup repo owns (accepted) | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
 
 ## Packages
 
@@ -106,9 +106,10 @@ first use with `StoragePoolDefineXML` and builds it through the libvirt API, wit
 ## Lease lifecycle
 
 1. **Resolve.** Image and tier give the newest stock version in `images.toml`.
-2. **Admit.** Take the global lock. Count leases, read `StoragePoolGetInfo` and free host memory.
-   Fail with "no capacity" when a limit is reached. The lock stays held until step 5 ends, so a
-   second admission cannot pass the count check first, and reap never sees a lease directory
+2. **Admit.** Take the global lock. Read `StoragePoolGetInfo` and free host memory. Fail with "no
+   capacity" when the lease memory would take free memory below the budget in `config.toml`, or the
+   pool is full. The lock stays held until step 5 ends, so a
+   second admission cannot pass the capacity check first, and reap never sees a lease directory
    whose domain is not yet defined.
 3. **Prepare.** Create a lease ID, an ed25519 key pair in the lease directory, and a random MAC.
 4. **Disk.** `StorageVolCreateXML` with a `backingStore` on the stock file. Thin, created in
@@ -124,7 +125,9 @@ first use with `StoragePoolDefineXML` and builds it through the libvirt API, wit
    - werft metadata: owner, created, expiry, stock version.
 
    Then release the global lock. Steps 2 to 5 take seconds and do not include the boot.
-6. **Boot.** `DomainCreateWithFlags`. No viewer unless `--view`.
+6. **Boot.** `DomainCreateWithFlags`. The domain keeps its graphics device, but no viewer opens
+   unless `--view`. When the stock image carries the LUKS marker, type the disk password as the
+   `boot` step does; it comes from `pass`, so a lease without a TTY needs the GPG agent unlocked.
 7. **Address.** vsock CID from the live XML when the image record says the guest has systemd 256
    or later. Else the DHCP lease for the MAC (`NetworkGetDhcpLeases`).
 8. **Ready.** Probe SSH with the lease key until it answers or the boot timeout ends. Few attempts,
@@ -196,7 +199,8 @@ The two tools run side by side, one per domain.
    the stock name, write the image record.
 
 Build VMs and `-full` stay without passwordless sudo, as today. Only stock images get the seal
-changes, because leases are agent sandboxes and `-full` is not.
+changes. Seal removes no secrets: a `full` lease holds them by design
+([PRODUCT.md](PRODUCT.md#access-and-trust)).
 
 ## Provision pipeline
 
@@ -294,12 +298,12 @@ Exit codes are part of the contract:
 - libvirt is the arbiter. A unique domain name reserves a lease. QEMU image locks prevent two
   writers on one disk. Stock files are opened read-only as backing files.
 - `locks/global.lock` (`flock`) serializes admission, seal, reap, and stock garbage collection.
-  Admission holds it from the count check until the lease domain is defined. It is held for
+  Admission holds it from the capacity check until the lease domain is defined. It is held for
   seconds, never for a boot.
 - `locks/<domain>.lock` serializes `snapshot`, `reset`, `prepare`, `provision`, `seal` and
   `migrate` on one build VM. A second run fails with `conflict` and does not wait.
-- Leases run in parallel. Limits: the lease count from config, pool free space, free host memory,
-  and the 253 addresses of the NAT range.
+- Leases run in parallel. Limits: the memory budget, pool free space, and the 253 addresses of the
+  NAT range.
 - A stock version is deleted only when no lease domain names it in its metadata.
 
 ## Testing
@@ -334,10 +338,6 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 ## Open questions
 
-Product questions (LUKS in leases, lease user, lifetime, capacity, desktop or headless) are in
-[PRODUCT.md](PRODUCT.md#open-questions). Proposals for them: `seal` refuses an encrypted build VM;
-the lease user is the image's primary user with passwordless sudo from seal.
-
 - **Legacy labels on migration.** Keep only the kept label, or export `clean-install` to a flat
   file? `clean-install` is never used by `provision` today.
 - **Reaping without a command.** Also a systemd user timer that runs `werft reap`?
@@ -351,10 +351,3 @@ the lease user is the image's primary user with passwordless sudo from seal.
 - **Shell completion.** Does werft generate zsh completion, replacing `completion-zsh/vm.rc`?
 - **Lease owner.** Where the value comes from: an `--owner` flag, an env var set by the agent
   harness, or `$USER`. Does `release` refuse a lease of another owner?
-- **Agent trust boundary.** Group `libvirt` on `qemu:///system` gives full control of a daemon that
-  runs as root, so it is root-equivalent on the host. Every agent that can run werft has that
-  access. Is that acceptable, or does werft need a narrower front end, such as a polkit rule or a
-  broker?
-- **Lease network.** Leases get passwordless sudo. On the default NAT network they reach the host
-  and the LAN. Keep the default NAT, or use an isolated network or an nwfilter that blocks the host
-  and the LAN?
