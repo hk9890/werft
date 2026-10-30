@@ -4,7 +4,8 @@ How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). w
 bash tool `vm` in [`scripts/vm/`](https://github.com/carlo9890/setup/tree/main/scripts/vm) of the
 setup repo.
 
-Status: target design. Only the entry point and the version stamp exist in code.
+Status: target design. In code: the hypervisor port with its libvirt adapter and fake, `domxml`,
+`failure`, `config`, `state`, and the command dispatch with `version` and `help`.
 
 ## Proposals in short
 
@@ -29,16 +30,24 @@ policy packages run against fakes. Same shape as revier: ports outside, one plac
 real adapters.
 
 - **`cmd/werft`** — Entry point. One file per command: flag parsing, text and JSON rendering, the
-  map from error kind to exit code. It builds the real adapters in one place. No command logic.
+  map from error kind to exit code, the confirmation prompt. It builds the real adapters in one
+  place. No command logic.
+- **`internal/failure`** — The error kinds of [Agent interface](#agent-interface). Every package
+  gives its errors a kind here; `cmd/werft` maps the kind to the exit code.
 - **`internal/virt`** — The hypervisor port: the interface and the types that cross it. Only the
-  calls werft needs: domain define/start/shutdown/destroy/undefine, snapshots, volumes, pool info,
-  DHCP leases, screenshot, send-key, device attach/detach, domain metadata.
+  calls werft needs: domain lookup/list/define/start/shutdown/destroy/undefine, state, XML,
+  metadata and description; snapshots; pools and volumes; DHCP leases; screenshot, send-key,
+  device attach/detach; libvirt version and free host memory. Objects are addressed by name.
+  Metadata and description go to the persistent definition.
 - **`internal/virt/libvirt`** — The go-libvirt adapter. It opens `libvirt-sock` (monolithic daemon)
-  or `virtqemud-sock` (modular daemons) and maps libvirt errors to `internal/virt` error kinds.
+  or `virtqemud-sock` (modular daemons) and maps libvirt error codes to failure kinds. libvirt
+  reports a taken domain or snapshot name as a generic "operation failed"; the adapter maps it to
+  `conflict` by its message, because a define must reserve a lease name.
 - **`internal/virttest`** — The fake hypervisor: in-memory domains, volumes and snapshots, a call
   log, and failure injection.
-- **`internal/domxml`** — Pure functions that build and edit domain XML with libvirtxml: lease
-  domains, clones of build VMs (new name, UUID, MAC), the qcow2 NVRAM rewrite for migration.
+- **`internal/domxml`** — Pure functions that read, build and edit domain XML with libvirtxml.
+  They read disks, loader, NVRAM, UEFI, vsock CID, MACs and description. They will build lease
+  domains, clones of build VMs (new name, UUID, MAC), and the qcow2 NVRAM rewrite for migration.
 - **`internal/guest`** — The guest port and its OpenSSH adapter: run a command, run a script with
   data on stdin, copy files, probe readiness. It passes a werft-owned `ssh_config` with `-F`, so the
   user's `SendEnv LC_*` never applies. It keeps login attempts few, because sshd
@@ -63,6 +72,8 @@ real adapters.
 - **`internal/config`**, **`internal/state`**, **`internal/build`** — `config.toml` (URI, pool,
   lease limits, lifetime, recipe per build VM); paths, locks and image records under
   `~/.local/state/werft/`; the ldflags version stamp.
+- **`internal/livetest`** — Live-test helpers behind build tag `live`: the `werft-test` pool, the
+  base image, a scratch UEFI domain, and vsock SSH ([TESTING.md](TESTING.md)).
 
 ## Data model
 
@@ -324,7 +335,9 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 ## Risks
 
-- **go-libvirt has no release tags.** Pin the pseudo-version. The `internal/virt` interface keeps a
+- **go-libvirt has no release tags.** Pin the pseudo-version. Known defect: `DomainScreenshot`
+  decodes the MIME type from the empty end-of-stream packet and fails after the image streamed. The
+  adapter takes the format from the image header instead. The `internal/virt` interface keeps a
   `virsh` adapter possible. Live tests catch protocol drift.
 - **Firmware autoselection.** All firmware descriptors in `/usr/share/qemu/firmware/` are raw, so
   autoselection can reject `format='qcow2'`. Use an explicit loader path. The live test
