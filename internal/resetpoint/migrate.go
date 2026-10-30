@@ -95,7 +95,7 @@ func PlanMigration(h virt.Hypervisor, domain, exportPool string) (*Migration, er
 	if l, _ := domxml.LoaderOf(d); l.Path == "" {
 		return nil, failure.New(failure.Unsupported, "%s names no loader file; a qcow2 NVRAM needs one, because firmware autoselection knows only raw NVRAM", domain)
 	}
-	if m.nvramPool, m.rawNVRAM, err = h.VolumeByPath(nv.Path); err != nil {
+	if m.nvramPool, m.rawNVRAM, err = virt.NVRAMVolume(h, nv.Path); err != nil {
 		return nil, failure.Wrap(failure.Unsupported, err, "the NVRAM %s of %s is in no storage pool, and werft changes files only through one", nv.Path, domain)
 	}
 	if err := h.RefreshPool(m.nvramPool); err != nil {
@@ -182,7 +182,7 @@ func (m *Migration) planResume(h virt.Hypervisor, nvram string) error {
 		if raw == "" {
 			continue
 		}
-		if m.nvramPool, _, err = h.VolumeByPath(nvram); err != nil {
+		if m.nvramPool, _, err = virt.NVRAMVolume(h, nvram); err != nil {
 			return err
 		}
 		m.Keep, m.Resume, m.rawNVRAM = label, true, filepath.Base(raw)

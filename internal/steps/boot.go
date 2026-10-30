@@ -121,7 +121,7 @@ func boot(r *pipeline.Run) error {
 		if !failure.Is(err, failure.Timeout) {
 			return err
 		}
-		return failure.Wrap(failure.Timeout, err, "open the window to look: virt-viewer -c qemu:///system %s", r.Domain)
+		return failure.Wrap(failure.Timeout, err, "look at its console: werft start --view %s", r.Domain)
 	}
 	r.Printf("Typing the disk password of %s at its console", r.Domain)
 	return console.Type(r.H, r.Domain, r.Secret(pipeline.GuestPassword))
@@ -137,7 +137,7 @@ func (WaitSSH) Run(r *pipeline.Run) error { return waitSSH(r) }
 func waitSSH(r *pipeline.Run) error {
 	err := r.PollLogin(sshTimeout, "no SSH answer from "+r.Domain, func() bool { return r.Reach("true") })
 	if err != nil && r.LUKS {
-		return failure.Wrap(failure.KindOf(err), err, "if its console asks for the disk password again, the disk refused it; nothing types it twice (virt-viewer -c qemu:///system %s)", r.Domain)
+		return failure.Wrap(failure.KindOf(err), err, "if its console asks for the disk password again, the disk refused it; nothing types it twice (werft start --view %s)", r.Domain)
 	}
 	if err == nil {
 		r.Printf("SSH answers in %s at %s", r.Domain, r.Addr.Host)
@@ -188,11 +188,13 @@ func (Reboot) Run(r *pipeline.Run) error {
 	return waitSSH(r)
 }
 
-func sshReply(r *pipeline.Run, addr string) (accepted, answered bool) {
+// sshReply tries one login at addr through shell. answered is set when sshd
+// answered, accepted when it let the login in.
+func sshReply(r *pipeline.Run, shell guest.Shell, addr string) (accepted, answered bool) {
 	var stderr bytes.Buffer
 	a := r.Addr
 	a.Host = addr
-	err := r.KeyShell.Run(r.Ctx, a, "true", nil, io.Discard, &stderr)
+	err := shell.Run(r.Ctx, a, "true", nil, io.Discard, &stderr)
 	if err == nil {
 		return true, true
 	}

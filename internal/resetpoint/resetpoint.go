@@ -30,7 +30,8 @@ var MinLibvirt = virt.Version{Major: 11, Minor: 4}
 
 // Guard refuses a domain whose reset point would miss a half: a UEFI NVRAM
 // that is not qcow2, a disk that is not qcow2, or a libvirt that leaves the
-// NVRAM out.
+// NVRAM out. It also refuses a migrated domain that vm took a reset point
+// of since: the disk holds a qemu-img snapshot libvirt does not know.
 func Guard(h virt.Hypervisor, domain string) error {
 	v, err := h.LibVersion()
 	if err != nil {
@@ -47,8 +48,18 @@ func Guard(h virt.Hypervisor, domain string) error {
 	if err != nil {
 		return err
 	}
-	if nv, ok := domxml.NVRAMOf(d); domxml.UEFI(d) && (!ok || nv.Format != "qcow2") {
+	nv, ok := domxml.NVRAMOf(d)
+	if domxml.UEFI(d) && (!ok || nv.Format != "qcow2") {
 		return failure.New(failure.Unsupported, "%s keeps its UEFI variables in raw format, which a reset point leaves out; run werft migrate %s", domain, domain)
+	}
+	if ok {
+		labels, err := Legacy(h, domain)
+		if err != nil {
+			return err
+		}
+		if len(labels) > 0 {
+			return failure.New(failure.Unsupported, "vm took the reset points %s of %s after its migration; vm must not snapshot a migrated domain. Delete each with sudo qemu-img snapshot -d <label> <disk> and sudo rm %s.<label>.bak, then retake it with werft snapshot", strings.Join(labels, ", "), domain, nv.Path)
+		}
 	}
 	for _, disk := range domxml.Disks(d) {
 		if disk.Device == "disk" && !disk.Shared && disk.Format != "qcow2" {

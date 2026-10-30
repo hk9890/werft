@@ -274,3 +274,103 @@ func golibvirtConn(t *testing.T) *golibvirt.Libvirt {
 	t.Cleanup(func() { _ = l.Disconnect() })
 	return l
 }
+
+const (
+	msCode = "/usr/share/OVMF/OVMF_CODE_4M.ms.fd"
+	msVars = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
+	// secureBootOn prints 1 when the firmware booted the guest with Secure
+	// Boot on: the last byte of the SecureBoot variable.
+	secureBootOn = "od -An -tu1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c | awk '{print $NF}'"
+)
+
+// TestSecureBootMigrateLive gives a scratch domain the shape of the build
+// VMs virt-manager installs: firmware autoselection with Secure Boot and
+// enrolled keys, the MS loader, a raw NVRAM from the MS vars template, SMM,
+// and an empty SATA cdrom. It has no reset points of vm, as after a fresh
+// install. werft migrate converts its NVRAM, and a werft reset point then
+// restores disk and NVRAM with Secure Boot still on.
+func TestSecureBootMigrateLive(t *testing.T) {
+	isolate(t)
+	h := livetest.Connect(t)
+	g := livetest.NewGuest(t, h, "werft-test-pg-sb")
+	toSecureBoot(t, h, g)
+	livetest.DeleteVolumes(h, g.Name+"_VARS.qcow2")
+	t.Cleanup(func() { livetest.DeleteVolumes(h, g.Name+"_VARS.qcow2") })
+
+	g.Boot()
+	if got := strings.TrimSpace(g.Run(secureBootOn)); got != "1" {
+		t.Fatalf("Secure Boot is %q before the migration, want 1", got)
+	}
+	mark(g, "one", false)
+	g.Poweroff()
+
+	werftJSON(t, 0, "migrate", "--yes", g.Name)
+	text, err := h.DomainXML(g.Name, true)
+	livetest.Must(t, err, "domain XML")
+	d, err := domxml.Parse(text)
+	livetest.Must(t, err, "parse domain XML")
+	if nv, _ := domxml.NVRAMOf(d); nv.Format != "qcow2" || d.OS.Loader == nil || d.OS.Loader.Path != msCode || d.OS.Loader.Secure != "yes" {
+		t.Fatalf("after migrate NVRAM = %+v, loader = %+v", nv, d.OS.Loader)
+	}
+	if names, err := h.Snapshots(g.Name); err != nil || len(names) != 0 {
+		t.Errorf("a domain without reset points of vm got %q, %v", names, err)
+	}
+
+	werftJSON(t, 0, "snapshot", g.Name, "base")
+	g.Boot()
+	if got := strings.TrimSpace(g.Run(secureBootOn)); got != "1" {
+		t.Errorf("Secure Boot is %q after the migration, want 1", got)
+	}
+	mark(g, "two", true)
+	g.Poweroff()
+	// Control: without a reset both changes survive a boot.
+	g.Boot()
+	if got := guestState(g); got != "two\nvar" {
+		t.Fatalf("state before the reset = %q", got)
+	}
+	g.Poweroff()
+
+	werftJSON(t, 0, "reset", "--yes", g.Name, "base")
+	g.Boot()
+	if got := guestState(g); got != "one\nnovar" {
+		t.Errorf("state after the reset = %q, want the marker and NVRAM of the reset point", got)
+	}
+	if got := strings.TrimSpace(g.Run(secureBootOn)); got != "1" {
+		t.Errorf("Secure Boot is %q after the reset, want 1", got)
+	}
+	g.Poweroff()
+}
+
+// toSecureBoot gives the guest the firmware, NVRAM, SMM and cdrom of a build
+// VM virt-manager installs, with a raw NVRAM volume <name>_VARS.fd that is
+// removed when the test ends.
+func toSecureBoot(t *testing.T, h virt.Hypervisor, g *livetest.Guest) {
+	t.Helper()
+	raw := g.Name + "_VARS.fd"
+	livetest.DeleteVolumes(h, raw)
+	t.Cleanup(func() { livetest.DeleteVolumes(h, raw) })
+	livetest.Upload(t, h, raw, msVars)
+	text, err := h.DomainXML(g.Name, true)
+	livetest.Must(t, err, "domain XML")
+	d, err := domxml.Parse(text)
+	livetest.Must(t, err, "parse domain XML")
+	d.OS.Firmware = "efi"
+	d.OS.FirmwareInfo = &libvirtxml.DomainOSFirmwareInfo{Features: []libvirtxml.DomainOSFirmwareFeature{
+		{Enabled: "yes", Name: "enrolled-keys"}, {Enabled: "yes", Name: "secure-boot"}}}
+	d.OS.Loader = &libvirtxml.DomainLoader{Path: msCode, Readonly: "yes", Secure: "yes", Type: "pflash", Format: "raw"}
+	d.OS.NVRam = &libvirtxml.DomainNVRam{NVRam: livetest.PoolPath + "/" + raw, Format: "raw", Template: msVars, TemplateFormat: "raw"}
+	if d.Features == nil {
+		d.Features = &libvirtxml.DomainFeatureList{}
+	}
+	d.Features.SMM = &libvirtxml.DomainFeatureSMM{State: "on"}
+	d.Devices.Disks = append(d.Devices.Disks, libvirtxml.DomainDisk{
+		Device:   "cdrom",
+		Driver:   &libvirtxml.DomainDiskDriver{Name: "qemu", Type: "raw"},
+		Target:   &libvirtxml.DomainDiskTarget{Dev: "sda", Bus: "sata"},
+		ReadOnly: &libvirtxml.DomainDiskReadOnly{},
+	})
+	text, err = d.Marshal()
+	livetest.Must(t, err, "domain XML")
+	_, err = h.DefineDomain(text)
+	livetest.Must(t, err, "redefine with Secure Boot")
+}

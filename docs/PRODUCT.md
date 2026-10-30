@@ -132,7 +132,8 @@ repo owns. werft only runs it.
 
 1. **Parity with `vm`.** Same commands and pipelines in Go: `list`, `start`, `stop`, `snapshot`,
    `snapshots`, `reset`, `prepare`, `provision`, plus `migrate` to move each build VM to werft
-   reset points. `vm` and werft run side by side, one build VM at a time.
+   reset points. `vm` and werft run side by side, one build VM at a time. Status: in code; next
+   is a `migrate`, `prepare` and `provision` of each real build VM.
 2. **Setup-repo switch.** The setup repo adds its recipe. When `werft provision` makes a `-full`
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,

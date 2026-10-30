@@ -59,4 +59,5 @@ func TestTheStickStaysOnTheHostWithoutASession(t *testing.T) {
 	if i := w.index("^(host unmount stick|AttachDevice|host mount stick)"); i >= 0 {
 		t.Errorf("the stick was touched: %q", w.entries()[i])
 	}
+	w.assertSequence("automatic login is still restored", "pgrep -u", "mv -f .*custom.conf")
 }

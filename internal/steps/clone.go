@@ -128,7 +128,7 @@ func sources(h virt.Hypervisor, name string) (cloneSource, error) {
 	}
 	src := cloneSource{domain: d, disks: disks}
 	if nv, ok := domxml.NVRAMOf(d); ok && nv.Path != "" {
-		pool, vol, err := h.VolumeByPath(nv.Path)
+		pool, vol, err := virt.NVRAMVolume(h, nv.Path)
 		if err != nil {
 			return cloneSource{}, failure.Wrap(failure.KindOf(err), err, "NVRAM %s of %s is in no storage pool", nv.Path, name)
 		}

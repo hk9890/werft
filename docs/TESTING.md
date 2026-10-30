@@ -42,6 +42,12 @@ What a run creates:
   `werft-test` pool, through a temporary `config.toml` with `pool = "werft-test"`. The domain
   `werft-test-rp-mig-ci` boots the disk and NVRAM exports to check that they hold `clean-install`.
   The test removes them.
+- `TestSecureBootMigrateLive` gives `werft-test-pg-sb` the firmware of a virt-manager build VM
+  (Secure Boot, `OVMF_CODE_4M.ms.fd`, SMM, an empty SATA cdrom) and the raw NVRAM volume
+  `werft-test-pg-sb_VARS.fd`. Its migrate writes `werft-test-pg-sb_VARS.qcow2` into the `werft-test`
+  pool. The test removes them.
+- `TestPrepareKeysLive` runs the `boot` and `wait-ssh` steps of `prepare` on `werft-test-pg-keys`.
+  The test removes it.
 - `TestLifecycleLive` also defines the domain `werft-test-lc-legacy`, which never starts. Its NVRAM
   path is in a temporary directory with a `.old.bak` file, which stands for a reset point of `vm`.
   The test removes the domain.

@@ -89,3 +89,36 @@ func TestEnsurePoolFailsWhenThePoolStaysInactive(t *testing.T) {
 		t.Errorf("EnsurePool = %v", err)
 	}
 }
+
+// nvramFile is a host where the NVRAM file x_VARS.fd lies in NVRAMDir, and a
+// pool lists it only after a refresh.
+type nvramFile struct{ *virttest.Fake }
+
+func (h nvramFile) RefreshPool(name string) error {
+	if err := h.Fake.RefreshPool(name); err != nil {
+		return err
+	}
+	_, err := h.CreateVolume(name, "<volume><name>x_VARS.fd</name><capacity>540672</capacity></volume>")
+	return err
+}
+
+func TestNVRAMVolumeMakesThePool(t *testing.T) {
+	h := nvramFile{virttest.New()}
+	pool, name, err := virt.NVRAMVolume(h, virt.NVRAMDir+"/x_VARS.fd")
+	if err != nil || pool != virt.NVRAMPool || name != "x_VARS.fd" {
+		t.Fatalf("NVRAMVolume = %q, %q, %v", pool, name, err)
+	}
+	if info, _ := h.PoolInfo(virt.NVRAMPool); !info.Active {
+		t.Error("the nvram pool is not active")
+	}
+}
+
+func TestNVRAMVolumeElsewhereMakesNoPool(t *testing.T) {
+	f := virttest.New()
+	if _, _, err := virt.NVRAMVolume(f, "/other/x_VARS.fd"); !failure.Is(err, failure.NotFound) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := f.Calls(); !reflect.DeepEqual(got, []string{"VolumeByPath /other/x_VARS.fd"}) {
+		t.Errorf("calls = %q", got)
+	}
+}

@@ -2,7 +2,8 @@ package steps_test
 
 import (
 	"context"
-	"slices"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -62,7 +63,109 @@ func TestPrepareCopiesTheKey(t *testing.T) {
 		t.Fatalf("prepare: %v", err)
 	}
 	w.assertSequence("the key goes in before the first root step",
-		"^ssh-copy-id .*/id_ed25519.pub tester@192.168.122.1$", "^ssh true$", "sh -c 'true' sh$")
+		"^ssh-copy-id .*/werft/id_ed25519.pub tester@192.168.122.1$", "authorized_keys", "^ssh true$", "sh -c 'true' sh$")
+	// sshd (PerSourcePenalties) resets a source with too many failed logins.
+	if n := w.count("^ssh refused$"); n != 1 {
+		t.Errorf("%d failed logins, want one before the key copy and no more", n)
+	}
+	if got := authorizedKeys(w); got != werftPubKey+"\n"+userPubKey+"\n" {
+		t.Errorf("authorized_keys got %q, want the werft key and the user's key", got)
+	}
+}
+
+// authorizedKeys is what prepare gave the guest for its authorized_keys.
+func authorizedKeys(w *world) string {
+	for _, s := range w.shell.stdin {
+		if cmd, data, _ := strings.Cut(s, "\x00"); strings.Contains(cmd, "authorized_keys") {
+			return data
+		}
+	}
+	return ""
+}
+
+func TestPrepareNamesTheUserWhenTheKeyCopyFails(t *testing.T) {
+	w := freshWorld(t)
+	w.shell.keyRejected = true
+	w.host.copyKeyErr = errors.New("exit status 1")
+	_, err := w.run(steps.Prepare(), false)
+	if err == nil || !strings.Contains(err.Error(), "the user in the VM must be tester") {
+		t.Fatalf("err = %v", err)
+	}
+	if w.index("sh -c 'true' sh$") >= 0 {
+		t.Error("prepare went on without the key")
+	}
+}
+
+// A guest that accepts the werft key still gets the user's key, so ssh
+// <name> works on a base werft alone prepared, and on its clone.
+func TestPrepareAddsTheUsersKeyToAReadyGuest(t *testing.T) {
+	w := freshWorld(t)
+	if _, err := w.run(steps.Prepare(), false); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if got := authorizedKeys(w); got != werftPubKey+"\n"+userPubKey+"\n" {
+		t.Errorf("authorized_keys got %q", got)
+	}
+}
+
+func TestPrepareWithoutAUserKeyAddsTheWerftKey(t *testing.T) {
+	w := freshWorld(t)
+	must(t, os.Remove(w.userKey+".pub"))
+	if _, err := w.run(steps.Prepare(), false); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if got := authorizedKeys(w); got != werftPubKey+"\n" {
+		t.Errorf("authorized_keys got %q", got)
+	}
+}
+
+// A guest without sshd gets the install commands and one window; with no
+// SSH server in the person's time the run fails with a timeout.
+func TestPrepareWithoutSSHServer(t *testing.T) {
+	w := freshWorld(t)
+	w.shell.fail["^true$"] = true
+	_, err := w.run(steps.Prepare(), false)
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "no SSH server answered in testvm") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(w.out.String(), "sudo apt install -y openssh-server") {
+		t.Errorf("no install advice:\n%s", w.out.String())
+	}
+	if n := w.count("^viewer open testvm"); n != 1 {
+		t.Errorf("%d windows opened, want one", n)
+	}
+	if w.index("^CreateSnapshot") >= 0 {
+		t.Error("a base was taken")
+	}
+}
+
+// An encrypted disk holds the guest without network until a person types
+// its password; prepare says so and waits, and never types it.
+func TestPrepareWithoutAddress(t *testing.T) {
+	w := freshWorld(t)
+	w.h.noLeases = true
+	_, err := w.run(steps.Prepare(), false)
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "testvm took no address") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(w.out.String(), "If its disk asks for a password, type it in its window") {
+		t.Errorf("no disk password advice:\n%s", w.out.String())
+	}
+	if w.count("^viewer open testvm") != 1 || w.index("^SendKey") >= 0 || w.index("^ssh ") >= 0 {
+		t.Errorf("want one window, no keys typed, no login:\n  %s", strings.Join(w.entries(), "\n  "))
+	}
+}
+
+func TestPrepareWithoutDisplayNamesTheViewerCommand(t *testing.T) {
+	w := freshWorld(t)
+	w.host.display = false
+	w.h.noLeases = true
+	if _, err := w.run(steps.Prepare(), false); err == nil {
+		t.Fatal("prepare succeeded")
+	}
+	if !strings.Contains(w.out.String(), "werft start --view testvm") || w.index("^viewer open") >= 0 {
+		t.Errorf("want the hint and no window:\n%s", w.out.String())
+	}
 }
 
 func TestPrepareAddsTheKeyOverTheUsersOwnKey(t *testing.T) {
@@ -76,12 +179,11 @@ func TestPrepareAddsTheKeyOverTheUsersOwnKey(t *testing.T) {
 	if w.index("^ssh-copy-id") >= 0 {
 		t.Error("ssh-copy-id asked for a password though a key worked")
 	}
-	added := slices.ContainsFunc(w.shell.stdin, func(s string) bool {
-		cmd, data, _ := strings.Cut(s, "\x00")
-		return strings.Contains(cmd, "authorized_keys") && data == werftPubKey+"\n"
-	})
-	if !added {
-		t.Errorf("authorized_keys did not get the werft key: %q", w.shell.stdin)
+	if got := authorizedKeys(w); got != werftPubKey+"\n"+userPubKey+"\n" {
+		t.Errorf("authorized_keys got %q, want the werft key and the user's key", got)
+	}
+	if n := w.count("^ssh refused$"); n != 0 {
+		t.Errorf("%d failed logins, want none: the user's key works", n)
 	}
 }
 

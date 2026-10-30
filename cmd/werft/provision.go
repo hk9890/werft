@@ -59,7 +59,8 @@ func (c *cli) cmdProvision(args []string) error {
 	}
 	defer func() { _ = log.Close() }()
 
-	r, done, err := c.buildVMRun(name, *yes, io.MultiWriter(c.stderr, ansi.Strip(log)))
+	plainLog := ansi.Strip(log)
+	r, done, err := c.buildVMRun(name, *yes, io.MultiWriter(c.stderr, plainLog))
 	if err != nil {
 		return err
 	}
@@ -68,6 +69,8 @@ func (c *cli) cmdProvision(args []string) error {
 	r.PasswordSpec = passwordSpec(rec.GuestPassword, r.User, name)
 	r.Printf("Provisioning %s with the recipe %s; log: %s", name, rec.Path, logPath)
 	if err := pipeline.Execute(r, steps.FromRecipe(rec)); err != nil {
+		// The log ends with the failure, as stderr does.
+		_, _ = fmt.Fprintf(plainLog, "werft: %v\n", err)
 		return err
 	}
 	r.Printf("%s is ready", r.Domain)
@@ -80,6 +83,7 @@ func (c *cli) cmdProvision(args []string) error {
 func (c *cli) cmdPrepare(args []string) error {
 	fs := flag.NewFlagSet("prepare", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "retake an existing provision-base without asking")
+	recipePath := fs.String("recipe", "", "the recipe whose guest_password prepare uses; default: the recipe config.toml names for <name>")
 	if err := c.parseFlags(fs, "prepare", args); err != nil {
 		return err
 	}
@@ -87,13 +91,17 @@ func (c *cli) cmdPrepare(args []string) error {
 	if err != nil {
 		return err
 	}
-	var spec secret.Spec
-	if path, err := configuredRecipe(name); err != nil {
-		return err
-	} else if path != "" {
-		if spec, err = recipe.GuestPassword(path); err != nil {
+	path := *recipePath
+	if path == "" {
+		if path, err = configuredRecipe(name); err != nil {
 			return err
 		}
+	}
+	var spec secret.Spec
+	if path == "" {
+		c.progress("No recipe for %s, so no pass entry for the guest password; it is asked for at the terminal", name)
+	} else if spec, err = recipe.GuestPassword(path); err != nil {
+		return err
 	}
 	dir, err := state.Root()
 	if err != nil {

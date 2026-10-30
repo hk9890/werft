@@ -4,11 +4,12 @@ How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). w
 bash tool `vm` in [`scripts/vm/`](https://github.com/carlo9890/setup/tree/main/scripts/vm) of the
 setup repo.
 
-Status: target design. In code: the hypervisor port with its libvirt adapter and fake, `domxml`,
-`failure`, `config`, `state`, the command dispatch with `version` and `help`, `list`, `start` and
-`stop` (`lifecycle`), the provision pipeline with `prepare` and `provision` (`pipeline`,
-`steps`, `recipe`, `guest`, `console`, `secret`, `hostdev`, `ansi`), and `snapshot`,
-`snapshots`, `reset` and `migrate` (`resetpoint`).
+Status: phase 1 of the roadmap (parity with `vm`) is in code: the hypervisor port with its
+libvirt adapter and fake, `domxml`, `failure`, `config`, `state`, the command dispatch with
+`version` and `help`, `list`, `start` and `stop` (`lifecycle`), the provision pipeline with
+`prepare` and `provision` (`pipeline`, `steps`, `recipe`, `guest`, `console`, `secret`, `hostdev`,
+`ansi`), and `snapshot`, `snapshots`, `reset` and `migrate` (`resetpoint`). Stock images, seal and
+leases are target design.
 
 ## Proposals in short
 
@@ -129,10 +130,13 @@ real adapters.
 | Recipes | setup repo; until then `examples/setup/` in werft | setup repo |
 
 werft never opens a file under `/var/lib/libvirt/` directly. Every disk operation goes through the
-storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception: `list` and
-`snapshots` read the file names in the NVRAM directory (`/var/lib/libvirt/qemu/nvram` is `0755`) to count the `.bak`
-files of `vm`. werft creates the `werft` pool on
-first use with `StoragePoolDefineXML` and builds it through the libvirt API, with no sudo.
+storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception: `list`,
+`snapshots` and the raw-NVRAM guard read the file names in the NVRAM directory
+(`/var/lib/libvirt/qemu/nvram` is `0755`) to find the `.bak` files of `vm`. werft creates the
+`werft` pool on first use with `StoragePoolDefineXML` and builds it through the libvirt API, with no
+sudo. libvirt keeps the NVRAM files in no pool by itself. When no pool lists an NVRAM file in
+`/var/lib/libvirt/qemu/nvram`, `clone` and `migrate` define the pool `nvram` on that directory the
+same way, refresh it, and look again (`virt.NVRAMVolume`).
 
 ## Lease lifecycle
 
@@ -206,6 +210,11 @@ Before every snapshot create or revert, werft reads the domain XML and refuses w
 
 The error names `werft migrate <domain>`. A BIOS domain (no NVRAM) passes.
 
+It also refuses a domain with a qcow2 NVRAM that has a `.bak` file of `vm` next to it. Then `vm
+snapshot` ran after the migration, and the disk holds a `qemu-img` snapshot that libvirt does not
+know. The storage API does not show the internal snapshots of a disk, so the `.bak` file is the
+only sign werft can see. The error names the commands that remove the snapshot.
+
 ### One-time migration
 
 `werft migrate [--yes] <domain>` moves a build VM from `qemu-img` snapshots plus `.bak` files to
@@ -258,8 +267,12 @@ A domain with neither the kept label nor `clean-install` keeps its current disk 
 runs, the qcow2 NVRAM is a copy of the current one, and the domain gets no reset point.
 `werft prepare` or `werft snapshot` takes one.
 
-After migration `vm` refuses the domain, because it finds no `.bak` file. This is a safe failure.
-The two tools run side by side, one per domain.
+After migration `vm reset` and `vm provision` refuse the domain, because they find no `.bak` file.
+`vm snapshot` does not refuse it: it finds the native reset point with `qemu-img snapshot -l`, and
+takes a `qemu-img` snapshot plus a `.bak` copy of the qcow2 NVRAM. `vm snapshot --replace` of a
+native label deletes the disk half of the libvirt reset point. Do not use `vm snapshot` on a
+migrated domain. The raw-NVRAM guard catches the `.bak` file of such a snapshot. The two tools run
+side by side, one per domain.
 
 ## Stock images and seal
 
@@ -313,7 +326,7 @@ All generic.
 | `reset` | Force off the VM and revert it to a reset point |
 | `boot` | Start the VM; type the disk password when the LUKS marker is set |
 | `viewer` | Open a viewer; `undo` or a successful run closes it, a failed run leaves it open |
-| `wait-ssh` | Wait until sshd answers; `prepare` also installs the werft key |
+| `wait-ssh` | Wait until sshd answers; `prepare` also installs the werft key and the user's own key |
 | `verify-guest-password` | Check the guest password with one `sudo` call |
 | `detect-guest` | Detect the family (`ubuntu` or `omarchy`) and the session process |
 | `hostname` | Set the guest hostname to the domain name |
@@ -347,9 +360,12 @@ the file, but its pool keeps the name, and the new copy under that name fails.
 
 The guest login is `$USER` with the werft key and `~/.ssh/id_ed25519`, through the werft
 `ssh_config`. It sets `IdentitiesOnly`, so no other agent key uses up sshd's `MaxAuthTries`.
-`prepare` checks the werft key alone (`ssh -P werft-key-only`, which the config maps to that key).
-When the guest refuses it, `prepare` adds the key over a login with the user's key, else with
-`ssh-copy-id`, which asks for the password. The address is the vsock CID when the domain has one, else the IPv4 DHCP lease of each MAC;
+`prepare` tries one login with both keys. When the guest refuses both, `prepare` runs `ssh-copy-id`
+with the werft key, which asks for the password; so at most one failed login comes before it, as
+in `vm`. Then `prepare` adds each public key that is not in `~/.ssh/authorized_keys` yet: the werft
+key and `~/.ssh/id_ed25519.pub`, when it exists. The user's key keeps `ssh <build VM>` working, and
+the clone inherits both. Last, `prepare` checks the werft key alone (`ssh -P werft-key-only`, which
+the config maps to that key). The address is the vsock CID when the domain has one, else the IPv4 DHCP lease of each MAC;
 the first that answers SSH wins. A cleanup reaches its domain again by the same rule, because the
 guest can reboot and the run can move on to the clone after the step ran.
 
@@ -359,7 +375,7 @@ A recipe is a TOML file that lists the provision steps and their parameters. The
 it and the files it names; paths resolve relative to the recipe, and `~/` is the home directory. A
 step can be limited to a guest family. `config.toml` maps each build VM to its recipe (`recipe` for
 all, `[recipes]` per build VM); `--recipe` overrides it. `prepare` reads only `[guest_password]`
-from it.
+from it; without a recipe it says so and asks for the guest password at the terminal.
 
 ```toml
 [guest_password]              # pass entry, else the prompt at the terminal
@@ -441,6 +457,8 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 - The user migrates one build VM at a time with `werft migrate`. `vm` keeps working on the domains
   not yet migrated and refuses a migrated domain.
+- Phase 2 adds a guard to `vm snapshot` in the setup repo, so it refuses a domain with a qcow2
+  NVRAM ([One-time migration](#one-time-migration)).
 - The setup repo keeps: the recipe, the bootstrap script, `tests/system`, the `pass` entry
   `vm/guest-password`, `scripts/common/wait-for-package-manager.sh` for its own use, and the
   `~/.ssh/config` entries for build VMs. Leases need no ssh config entry; werft writes one per lease.
@@ -456,7 +474,8 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 - **Firmware autoselection.** All firmware descriptors in `/usr/share/qemu/firmware/` are raw, so
   autoselection can reject `format='qcow2'`. Use an explicit loader path. The live test
   `TestUEFIResetPointRestoresNVRAMAndDisk` proves revert of disk and NVRAM on libvirt 12.0 with an
-  explicit loader.
+  explicit loader. `TestSecureBootMigrateLive` proves `migrate`, `snapshot` and `reset` on the shape
+  of a virt-manager build VM: Secure Boot with enrolled keys, `OVMF_CODE_4M.ms.fd`, SMM.
 - **systemd versions.** vsock SSH and `ssh.ephemeral-authorized_keys-all` need systemd 256.
   Ubuntu 24.04 has 255 and uses the TCP fallback. A static `/etc/hostname` overrides the hostname
   credential, so seal must delete it.

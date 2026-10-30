@@ -124,8 +124,11 @@ func TestProvisionRefusesACloneStartedDuringTheRun(t *testing.T) {
 	if !failure.Is(err, failure.Conflict) || !strings.Contains(err.Error(), "testvm-full is running") {
 		t.Fatalf("err = %v", err)
 	}
-	if i := w.index("^(UndefineDomain|DeleteVolume) testvm-full"); i >= 0 {
+	if i := w.index("^(UndefineDomain|DeleteVolume|DefineDomain) testvm-full"); i >= 0 {
 		t.Errorf("the running clone was touched: %q", w.entries()[i])
+	}
+	if s, _ := w.fake.DomainState("testvm-full"); s != virt.StateRunning {
+		t.Errorf("testvm-full is %s", s)
 	}
 }
 
