@@ -44,6 +44,8 @@ type Migration struct {
 	def       *libvirtxml.Domain
 	disk      poolVolume
 	disks     []string
+	nvramPath string
+	// nvramPool is empty while no pool lists the NVRAM; Run makes one.
 	nvramPool string
 	rawNVRAM  string
 }
@@ -60,8 +62,10 @@ func KeepLabel(domain string) string {
 }
 
 // PlanMigration checks that the shut-off domain can move to native reset
-// points and finds what moves. It changes nothing but a refresh of the
-// NVRAM pool, which makes libvirt list the copies vm wrote.
+// points and finds what moves. It changes nothing but a refresh of the pool
+// that lists the NVRAM, which makes libvirt list the copies vm wrote. When
+// no pool lists the NVRAM, it finds the copies in a listing of virt.NVRAMDir,
+// and Run makes the pool.
 func PlanMigration(h virt.Hypervisor, domain, exportPool string) (*Migration, error) {
 	if err := requireShutOff(h, domain, "a migration"); err != nil {
 		return nil, err
@@ -86,6 +90,7 @@ func PlanMigration(h virt.Hypervisor, domain, exportPool string) (*Migration, er
 	if !domxml.UEFI(d) || !ok || nv.Path == "" {
 		return nil, failure.New(failure.Unsupported, "%s has no UEFI NVRAM; werft migrate finds the reset points of vm only by their NVRAM copies", domain)
 	}
+	m.nvramPath = nv.Path
 	if err := m.findDisks(h); err != nil {
 		return nil, err
 	}
@@ -95,11 +100,13 @@ func PlanMigration(h virt.Hypervisor, domain, exportPool string) (*Migration, er
 	if l, _ := domxml.LoaderOf(d); l.Path == "" {
 		return nil, failure.New(failure.Unsupported, "%s names no loader file; a qcow2 NVRAM needs one, because firmware autoselection knows only raw NVRAM", domain)
 	}
-	if m.nvramPool, m.rawNVRAM, err = h.VolumeByPath(nv.Path); err != nil {
+	if m.nvramPool, m.rawNVRAM, err = virt.FindNVRAM(h, nv.Path); err != nil {
 		return nil, failure.Wrap(failure.Unsupported, err, "the NVRAM %s of %s is in no storage pool, and werft changes files only through one", nv.Path, domain)
 	}
-	if err := h.RefreshPool(m.nvramPool); err != nil {
-		return nil, err
+	if m.nvramPool != "" {
+		if err := h.RefreshPool(m.nvramPool); err != nil {
+			return nil, err
+		}
 	}
 	labels, err := m.legacyLabels(h)
 	if err != nil {
@@ -182,7 +189,7 @@ func (m *Migration) planResume(h virt.Hypervisor, nvram string) error {
 		if raw == "" {
 			continue
 		}
-		if m.nvramPool, _, err = h.VolumeByPath(nvram); err != nil {
+		if m.nvramPool, _, err = virt.FindNVRAM(h, nvram); err != nil {
 			return err
 		}
 		m.Keep, m.Resume, m.rawNVRAM = label, true, filepath.Base(raw)
@@ -222,20 +229,20 @@ func errOr(err, otherwise error) error {
 }
 
 // legacyLabels is the label of each NVRAM copy of vm, in the order of the
-// pool listing, then each label an earlier run redefined and did not finish
-// to delete.
+// pool or directory listing, then each label an earlier run redefined and
+// did not finish to delete.
 func (m *Migration) legacyLabels(h virt.Hypervisor) ([]string, error) {
-	names, err := h.Volumes(m.nvramPool)
+	var names []string
+	var err error
+	if m.nvramPool == "" {
+		names, err = listDir(filepath.Dir(m.nvramPath))
+	} else {
+		names, err = h.Volumes(m.nvramPool)
+	}
 	if err != nil {
 		return nil, err
 	}
-	var labels []string
-	for _, name := range names {
-		rest, ok := strings.CutPrefix(name, m.rawNVRAM+".")
-		if label, ok2 := strings.CutSuffix(rest, ".bak"); ok && ok2 && label != "" {
-			labels = append(labels, label)
-		}
-	}
+	labels := backupLabels(m.rawNVRAM, names)
 	snapshots, err := h.Snapshots(m.Domain)
 	if err != nil {
 		return nil, err
@@ -266,6 +273,12 @@ func (m *Migration) QCOW2NVRAM() string { return m.Domain + "_VARS.qcow2" }
 
 // Run carries out the migration. progress gets a line per step.
 func (m *Migration) Run(h virt.Hypervisor, progress func(format string, args ...any)) error {
+	if m.nvramPool == "" {
+		var err error
+		if m.nvramPool, _, err = virt.NVRAMVolume(h, m.nvramPath); err != nil {
+			return failure.Wrap(failure.KindOf(err), err, "the NVRAM %s of %s is in no storage pool, and werft changes files only through one", m.nvramPath, m.Domain)
+		}
+	}
 	if !m.Resume {
 		if m.Keep != "" {
 			progress("Checking that the disk of %s has the reset point '%s'", m.Domain, m.Keep)

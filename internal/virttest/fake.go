@@ -757,6 +757,11 @@ func (f *Fake) DefinePool(name, path string) error {
 	if _, ok := f.pools[name]; ok {
 		return failure.New(failure.Conflict, "pool %s already exists", name)
 	}
+	for other, p := range f.pools {
+		if p.path == path {
+			return failure.New(failure.Failed, "storage source conflict with pool: '%s'", other)
+		}
+	}
 	f.pools[name] = &pool{path: path, capacity: 100 << 30, volumes: map[string]*volume{}}
 	return nil
 }
@@ -796,6 +801,20 @@ func (f *Fake) RefreshPool(name string) error {
 	}
 	_, err := f.activePool(name)
 	return err
+}
+
+func (f *Fake) Pools() ([]virt.Pool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("Pools"); err != nil {
+		return nil, err
+	}
+	var out []virt.Pool
+	for name, p := range f.pools {
+		out = append(out, virt.Pool{Name: name, Path: p.path})
+	}
+	slices.SortFunc(out, func(a, b virt.Pool) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
 }
 
 func (f *Fake) PoolInfo(name string) (virt.PoolInfo, error) {

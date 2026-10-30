@@ -267,3 +267,31 @@ func TestMigrateCommand(t *testing.T) {
 		t.Errorf("migrate without a name = %+v", r)
 	}
 }
+
+// A declined migrate leaves the host as it was: it makes no pool for an
+// NVRAM that no pool lists yet.
+func TestDeclinedMigrateMakesNoPool(t *testing.T) {
+	rh := newRPHost(t)
+	if err := virt.EnsurePool(rh.fake, "default", "/img"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rh.fake.CreateVolume("default", "<volume><name>b.qcow2</name><capacity>1</capacity></volume>"); err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.NewReplacer("<name>vm</name>", "<name>b</name>", "format='qcow2'>/nvram/vm_VARS.qcow2", "format='raw'>"+virt.NVRAMDir+"/werft-unit-b_VARS.fd", "/img/vm.qcow2", "/img/b.qcow2").Replace(rpVM)
+	if _, err := rh.fake.DefineDomain(legacy); err != nil {
+		t.Fatal(err)
+	}
+	before := len(rh.fake.Calls())
+	if r := rh.run("", false, "migrate", "b"); r.code != 5 {
+		t.Fatalf("migrate without a terminal = %+v", r)
+	}
+	if r := rh.run("no\n", true, "migrate", "b"); r.code != 5 {
+		t.Fatalf("migrate answered no = %+v", r)
+	}
+	for _, call := range rh.fake.Calls()[before:] {
+		if strings.HasPrefix(call, "DefinePool") || strings.HasPrefix(call, "StartPool") || strings.HasPrefix(call, "RefreshPool") {
+			t.Errorf("a declined migrate called %s", call)
+		}
+	}
+}

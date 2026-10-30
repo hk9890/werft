@@ -21,7 +21,7 @@ omarchy-4-0 = "~/dev/github/werft/examples/setup/recipe.toml"
 Then, once per build VM and again after a change to the base:
 
 ```sh
-werft prepare ubuntu-26-04      # werft key, hostname, provision-base
+werft prepare ubuntu-26-04      # werft key and your own key, hostname, provision-base
 werft provision ubuntu-26-04    # or: werft provision --recipe <file> ubuntu-26-04
 ```
 
@@ -38,6 +38,10 @@ leaves the build VM running and prints the `ssh` command that reaches it.
 ## Differences from `vm provision`
 
 - The base must carry the werft key. Run `werft prepare` once on a build VM that `vm prepare` made.
+  It also keeps `~/.ssh/id_ed25519.pub` in the guest's `authorized_keys`, so `ssh <build VM>` works
+  as before.
+- `werft prepare` takes the guest password from the `pass` entry of the recipe that
+  `config.toml` names, or of `--recipe <file>`. Without a recipe it asks at the terminal.
 - Reset points are native libvirt snapshots. Run `werft migrate <build VM>` first.
 - The stick has no `--key` flag. The recipe names it by its label, under `/media/$USER` or
   `/run/media/$USER`.

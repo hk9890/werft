@@ -19,7 +19,7 @@ func (Viewer) KeepOnFailure() {}
 
 func (Viewer) Check(r *pipeline.Run) error {
 	if !r.Host.HasDisplay() {
-		r.Printf("No display here, so no window opens. To watch the run, open one on the desktop: virt-viewer -c qemu:///system %s", r.Domain)
+		r.Printf("No display here, so no window opens. To watch the run, open one on the desktop: %s", ViewerCommand(r.Domain))
 	}
 	return nil
 }

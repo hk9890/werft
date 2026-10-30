@@ -430,3 +430,52 @@ func TestMigrateNamesTheSnapshotCommandWhenTheLastStepFails(t *testing.T) {
 		t.Errorf("guard = %v; the domain is migrated", err)
 	}
 }
+
+// unlistedNVRAM is a host where the raw NVRAM of vm lies in virt.NVRAMDir
+// and a pool lists it only after a refresh.
+type unlistedNVRAM struct{ *virttest.Fake }
+
+func (h unlistedNVRAM) RefreshPool(name string) error {
+	if err := h.Fake.RefreshPool(name); err != nil {
+		return err
+	}
+	if _, err := h.VolumePath(name, "werft-unit-vm_VARS.fd"); err == nil {
+		return nil
+	}
+	_, err := h.CreateVolume(name, "<volume><name>werft-unit-vm_VARS.fd</name><capacity>1</capacity></volume>")
+	return err
+}
+
+// TestMigrateMakesTheNVRAMPoolOnlyInRun plans a migration of a domain whose
+// NVRAM no pool lists: the plan changes nothing, and Run makes the pool.
+func TestMigrateMakesTheNVRAMPoolOnlyInRun(t *testing.T) {
+	h := unlistedNVRAM{virttest.New()}
+	for pool, path := range map[string]string{"default": "/img", "werft": "/werft"} {
+		if err := virt.EnsurePool(h, pool, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.CreateVolume("default", "<volume><name>werft-unit-vm.qcow2</name><capacity>1</capacity></volume>"); err != nil {
+		t.Fatal(err)
+	}
+	xml := strings.Replace(legacyVM("werft-unit-vm"), "/nvram/", virt.NVRAMDir+"/", 1)
+	if _, err := h.DefineDomain(xml); err != nil {
+		t.Fatal(err)
+	}
+	since := len(h.Calls())
+	m, err := resetpoint.PlanMigration(h, "werft-unit-vm", "werft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range h.Calls()[since:] {
+		if strings.HasPrefix(call, "DefinePool") || strings.HasPrefix(call, "RefreshPool") {
+			t.Errorf("the plan called %s", call)
+		}
+	}
+	if err := m.Run(h, func(string, ...any) {}); err != nil {
+		t.Fatal(err)
+	}
+	if names, err := h.Volumes(virt.NVRAMPool); err != nil || !slices.Equal(names, []string{"werft-unit-vm_VARS.qcow2"}) {
+		t.Errorf("nvram pool = %q, %v", names, err)
+	}
+}

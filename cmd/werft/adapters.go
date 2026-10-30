@@ -59,7 +59,8 @@ func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run,
 		return fail(err)
 	}
 	home, _ := os.UserHomeDir()
-	if err := guest.WriteConfig(dir.SSHConfig(), dir.SSHKey(), filepath.Join(home, ".ssh", "id_ed25519")); err != nil {
+	userKey := filepath.Join(home, ".ssh", "id_ed25519")
+	if err := guest.WriteConfig(dir.SSHConfig(), dir.SSHKey(), userKey); err != nil {
 		return fail(failure.Wrap(failure.Failed, err, "write %s", dir.SSHConfig()))
 	}
 	r = (&pipeline.Run{
@@ -77,6 +78,7 @@ func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run,
 		GuestDir:  guestDir,
 		SSHConfig: dir.SSHConfig(),
 		SSHKey:    dir.SSHKey(),
+		UserKey:   userKey,
 		Addr:      guest.Addr{User: u.Username},
 	}).Init()
 	return r, close, nil

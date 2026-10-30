@@ -50,6 +50,8 @@ type Hypervisor interface {
 	StartPool(name string) error
 	RefreshPool(name string) error
 	PoolInfo(name string) (PoolInfo, error)
+	// Pools is every pool libvirt knows, active or not.
+	Pools() ([]Pool, error)
 
 	// Volumes is the names of the volumes in pool, as libvirt knows them
 	// since its last refresh.
@@ -122,6 +124,12 @@ const (
 	// with snapshots cannot be undefined.
 	UndefineSnapshots
 )
+
+// Pool is a storage pool and the directory it covers.
+type Pool struct {
+	Name string
+	Path string
+}
 
 type PoolInfo struct {
 	Active     bool

@@ -30,7 +30,8 @@ var MinLibvirt = virt.Version{Major: 11, Minor: 4}
 
 // Guard refuses a domain whose reset point would miss a half: a UEFI NVRAM
 // that is not qcow2, a disk that is not qcow2, or a libvirt that leaves the
-// NVRAM out.
+// NVRAM out. It also refuses a migrated domain that vm took a reset point
+// of since: the disk holds a qemu-img snapshot libvirt does not know.
 func Guard(h virt.Hypervisor, domain string) error {
 	v, err := h.LibVersion()
 	if err != nil {
@@ -47,8 +48,18 @@ func Guard(h virt.Hypervisor, domain string) error {
 	if err != nil {
 		return err
 	}
-	if nv, ok := domxml.NVRAMOf(d); domxml.UEFI(d) && (!ok || nv.Format != "qcow2") {
+	nv, ok := domxml.NVRAMOf(d)
+	if domxml.UEFI(d) && (!ok || nv.Format != "qcow2") {
 		return failure.New(failure.Unsupported, "%s keeps its UEFI variables in raw format, which a reset point leaves out; run werft migrate %s", domain, domain)
+	}
+	if ok {
+		labels, err := Legacy(h, domain)
+		if err != nil {
+			return err
+		}
+		if len(labels) > 0 {
+			return failure.New(failure.Unsupported, "vm took the reset points %s of %s after its migration; vm must not snapshot a migrated domain. Delete each with sudo qemu-img snapshot -d <label> <disk> and sudo rm %s.<label>.bak, then retake it with werft snapshot", strings.Join(labels, ", "), domain, nv.Path)
+		}
 	}
 	for _, disk := range domxml.Disks(d) {
 		if disk.Device == "disk" && !disk.Shared && disk.Format != "qcow2" {
@@ -77,22 +88,54 @@ func Legacy(h virt.Hypervisor, domain string) ([]string, error) {
 	if !ok || nv.Path == "" {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(filepath.Dir(nv.Path))
+	names, err := listDir(filepath.Dir(nv.Path))
+	if err != nil {
+		return nil, err
+	}
+	return backupLabels(filepath.Base(nv.Path), names), nil
+}
+
+// listDir is the file names in dir; none when werft cannot list it.
+func listDir(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, failure.Wrap(failure.Failed, err, "list the NVRAM directory of %s", domain)
+		return nil, failure.Wrap(failure.Failed, err, "list %s", dir)
 	}
-	base := filepath.Base(nv.Path)
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return names, nil
+}
+
+// Backups is the NVRAM copies of vm among the file names: <nvram>.<label>.bak.
+func Backups(nvram string, names []string) []string {
+	var out []string
+	for _, name := range names {
+		if _, ok := backupLabel(nvram, name); ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func backupLabels(nvram string, names []string) []string {
 	var labels []string
-	for _, e := range entries {
-		rest, ok := strings.CutPrefix(e.Name(), base+".")
-		if label, ok2 := strings.CutSuffix(rest, ".bak"); ok && ok2 && label != "" {
+	for _, name := range names {
+		if label, ok := backupLabel(nvram, name); ok {
 			labels = append(labels, label)
 		}
 	}
-	return labels, nil
+	return labels
+}
+
+func backupLabel(nvram, name string) (string, bool) {
+	rest, ok := strings.CutPrefix(name, nvram+".")
+	label, ok2 := strings.CutSuffix(rest, ".bak")
+	return label, ok && ok2 && label != ""
 }
 
 func Has(h virt.Hypervisor, domain, label string) (bool, error) {

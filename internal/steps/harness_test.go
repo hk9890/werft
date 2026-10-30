@@ -31,6 +31,7 @@ import (
 
 const (
 	werftPubKey = "ssh-ed25519 AAAAwerft werft"
+	userPubKey  = "ssh-ed25519 AAAAuser tester@host"
 	vm          = "testvm"
 	password    = "gu3st pw"
 	passphrase  = "s3cr%t"
@@ -50,8 +51,10 @@ type world struct {
 	out   bytes.Buffer
 	// screen is the console of every domain, the disk prompt of Omarchy.
 	screen []byte
-	// key is the werft key; only its public half exists.
-	key string
+	// key is the werft key, userKey the user's own; only their public
+	// halves exist.
+	key     string
+	userKey string
 
 	mu  sync.Mutex
 	log []string
@@ -95,8 +98,13 @@ const domainXML = `<domain type='kvm'>
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
-	w := &world{t: t, fake: virttest.New(), pass: map[string]string{}, key: filepath.Join(t.TempDir(), "id_ed25519")}
+	dir := t.TempDir()
+	w := &world{t: t, fake: virttest.New(), pass: map[string]string{},
+		key: filepath.Join(dir, "werft", "id_ed25519"), userKey: filepath.Join(dir, "user", "id_ed25519")}
+	must(t, os.MkdirAll(filepath.Dir(w.key), 0o700))
+	must(t, os.MkdirAll(filepath.Dir(w.userKey), 0o700))
 	must(t, os.WriteFile(w.key+".pub", []byte(werftPubKey+"\n"), 0o644))
+	must(t, os.WriteFile(w.userKey+".pub", []byte(userPubKey+"\n"), 0o644))
 	w.h = &recorder{Fake: w.fake, w: w}
 	w.shell = &shell{w: w, fail: map[string]bool{}}
 	w.host = &host{w: w, display: true}
@@ -169,7 +177,7 @@ func (w *world) newRun(yes bool) *pipeline.Run {
 		H: w.h, Shell: w.shell, KeyShell: werftKeyShell{w.shell}, Host: w.host, Secrets: passStore{w}, Prompter: w.term,
 		Out: &w.out, Yes: yes, Sleep: func(time.Duration) {},
 		BuildVM: vm, Domain: vm, User: "tester", GuestDir: "/tmp/werft-provision",
-		SSHConfig: "/state/ssh_config", SSHKey: w.key, LogPath: "/state/logs/p.log",
+		SSHConfig: "/state/ssh_config", SSHKey: w.key, UserKey: w.userKey, LogPath: "/state/logs/p.log",
 		PasswordSpec: secret.Spec{Pass: "vm/guest-password", Prompt: "Password of tester in the VM testvm, for its sudo"},
 		Addr:         guest.Addr{User: "tester"},
 	}).Init()
@@ -180,6 +188,8 @@ func (w *world) newRun(yes bool) *pipeline.Run {
 type recorder struct {
 	*virttest.Fake
 	w *world
+	// noLeases gives no MAC an address, as a guest held in its initramfs.
+	noLeases bool
 }
 
 func (h *recorder) StartDomain(name string) error {
@@ -258,6 +268,9 @@ func (h *recorder) SendKey(domain string, keys []uint32) error {
 }
 
 func (h *recorder) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {
+	if h.noLeases {
+		return nil, nil
+	}
 	last, _ := strconv.ParseUint(mac[len(mac)-2:], 16, 8)
 	return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last)}}, nil
 }
@@ -296,8 +309,7 @@ func (s *shell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.R
 		return fmt.Errorf("ssh: connect to host %q: no route", addr.Host)
 	}
 	if s.keyRejected {
-		_, _ = io.WriteString(stderr, "tester@host: Permission denied (publickey,password).\n")
-		return &guest.ExitError{Code: 255}
+		return s.refuse(stderr)
 	}
 	s.w.add("ssh " + cmd)
 	if stdin != nil {
@@ -335,6 +347,14 @@ func (s *shell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.R
 	return nil
 }
 
+// refuse is sshd's answer to a login with no key it knows; the log counts
+// it as a failed login.
+func (s *shell) refuse(stderr io.Writer) error {
+	s.w.add("ssh refused")
+	_, _ = io.WriteString(stderr, "tester@host: Permission denied (publickey,password).\n")
+	return &guest.ExitError{Code: 255}
+}
+
 // address is the IP the recorder leases to the domain's MAC.
 func (s *shell) address(domain string) string {
 	if _, ips := virt.DomainAddresses(s.w.h, domain); len(ips) > 0 {
@@ -348,8 +368,7 @@ type werftKeyShell struct{ *shell }
 
 func (s werftKeyShell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if s.userKeyOnly && len(s.running()) > 0 {
-		_, _ = io.WriteString(stderr, "tester@host: Permission denied (publickey,password).\n")
-		return &guest.ExitError{Code: 255}
+		return s.refuse(stderr)
 	}
 	return s.shell.Run(ctx, addr, cmd, stdin, stdout, stderr)
 }
@@ -362,11 +381,13 @@ func exit(ok bool) error {
 }
 
 type host struct {
-	w        *world
-	display  bool
-	stickErr error
-	holders  string
-	viewers  int
+	w           *world
+	display     bool
+	stickErr    error
+	holders     string
+	viewers     int
+	copyKeyErr  error
+	settingsErr error
 }
 
 func (h *host) HasDisplay() bool { return h.display }
@@ -379,7 +400,7 @@ func (h *host) OpenViewer(domain string, reconnect bool) (func(), error) {
 
 func (h *host) CopyViewerSettings(from, to string) error {
 	h.w.add("dconf copy")
-	return nil
+	return h.settingsErr
 }
 
 func (h *host) StickMount(label string) string { return "/media/tester/" + label }
@@ -405,6 +426,9 @@ func (h *host) StickOnHost(hostdev.Stick) bool { return true }
 
 func (h *host) CopySSHKey(addr guest.Addr, pubkey string) error {
 	h.w.add("ssh-copy-id " + pubkey + " " + addr.String())
+	if h.copyKeyErr != nil {
+		return h.copyKeyErr
+	}
 	h.w.shell.keyRejected = false
 	return nil
 }

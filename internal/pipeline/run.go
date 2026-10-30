@@ -69,7 +69,10 @@ type Run struct {
 	GuestDir  string
 	SSHConfig string
 	// SSHKey is the private key prepare installs in the guest.
-	SSHKey  string
+	SSHKey string
+	// UserKey is the user's own private key; prepare installs its public
+	// half too, so ssh <name> works without werft.
+	UserKey string
 	LogPath string
 	// PasswordSpec says where the guest password comes from.
 	PasswordSpec secret.Spec

@@ -111,3 +111,21 @@ func TestLegacy(t *testing.T) {
 		t.Errorf("unknown domain = %v", err)
 	}
 }
+
+// vm finds a libvirt snapshot with its qemu-img and takes one of its own
+// next to it, with a .bak copy of the qcow2 NVRAM. werft cannot see the
+// qemu-img snapshot through libvirt, so the .bak gives it away.
+func TestGuardRefusesAResetPointOfVMAfterMigration(t *testing.T) {
+	dir := t.TempDir()
+	f := fake(t, strings.Replace(domain("qcow2", "qcow2"), "/nvram/", dir+"/", 1))
+	if err := resetpoint.Guard(f, "vm"); err != nil {
+		t.Fatalf("migrated domain: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "vm_VARS.later.bak"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := resetpoint.Guard(f, "vm")
+	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "vm took the reset points later of vm after its migration") {
+		t.Errorf("err = %v", err)
+	}
+}
