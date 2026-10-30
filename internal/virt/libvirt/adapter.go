@@ -446,6 +446,14 @@ func (a *Adapter) VolumeInfo(pool, name string) (virt.VolumeInfo, error) {
 	return virt.VolumeInfo{Capacity: capacity, Allocation: allocation}, nil
 }
 
+func (a *Adapter) VolumeByPath(path string) (string, string, error) {
+	v, err := a.l.StorageVolLookupByPath(path)
+	if err != nil {
+		return "", "", wrap(err, "volume at %s", path)
+	}
+	return v.Pool, v.Name, nil
+}
+
 func (a *Adapter) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {
 	n, err := a.l.NetworkLookupByName(network)
 	if err != nil {

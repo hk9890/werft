@@ -15,6 +15,19 @@ import (
 type Config struct {
 	// Pool is the libvirt storage pool for stock images and lease overlays.
 	Pool string `toml:"pool"`
+	// Recipe is the provision recipe of every build VM that Recipes does not
+	// name.
+	Recipe string `toml:"recipe"`
+	// Recipes maps a build VM to its provision recipe.
+	Recipes map[string]string `toml:"recipes"`
+}
+
+// RecipeFor is the recipe path of build VM vm, empty when there is none.
+func (c Config) RecipeFor(vm string) string {
+	if path, ok := c.Recipes[vm]; ok {
+		return path
+	}
+	return c.Recipe
 }
 
 func Default() Config { return Config{Pool: "werft"} }
@@ -53,5 +66,22 @@ func Load(path string) (Config, error) {
 	if c.Pool == "" {
 		return Config{}, fmt.Errorf("read %s: pool is empty", path)
 	}
+	c.Recipe = resolve(filepath.Dir(path), c.Recipe)
+	for vm, p := range c.Recipes {
+		c.Recipes[vm] = resolve(filepath.Dir(path), p)
+	}
 	return c, nil
+}
+
+// resolve expands a leading ~/ and makes a relative path relative to dir.
+func resolve(dir, path string) string {
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, rest)
+		}
+	}
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(dir, path)
 }

@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -41,10 +42,31 @@ func TestLoad(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || got != tt.want {
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Load = %+v, %v", got, err)
 			}
 		})
+	}
+}
+
+func TestRecipeFor(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	path := write(t, "recipe = \"~/setup/recipe.toml\"\n[recipes]\nomarchy-4-0 = \"omarchy.toml\"\nubuntu-24-04 = \"/abs.toml\"\n")
+	c, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for vm, want := range map[string]string{
+		"ubuntu-26-04": "/home/u/setup/recipe.toml",
+		"omarchy-4-0":  filepath.Join(filepath.Dir(path), "omarchy.toml"),
+		"ubuntu-24-04": "/abs.toml",
+	} {
+		if got := c.RecipeFor(vm); got != want {
+			t.Errorf("RecipeFor(%s) = %q, want %q", vm, got, want)
+		}
+	}
+	if got := config.Default().RecipeFor("x"); got != "" {
+		t.Errorf("default RecipeFor = %q", got)
 	}
 }
 

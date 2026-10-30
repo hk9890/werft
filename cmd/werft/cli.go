@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/virt"
 )
 
 // cli is one invocation: its streams, whether stdin is a terminal, and the
@@ -21,6 +22,9 @@ type cli struct {
 	stderr io.Writer
 	tty    bool
 	json   bool
+	// readSecret reads a line from the terminal without echo.
+	readSecret func() (string, error)
+	dial       func() (virt.Hypervisor, error)
 }
 
 type command struct {
@@ -36,6 +40,8 @@ var commands []command
 func init() {
 	commands = []command{
 		{name: "help", args: "[command]", summary: "show the usage of werft or of one command", run: (*cli).cmdHelp},
+		{name: "prepare", args: "[--yes] <name>", summary: "make a stock install the base provision starts from: werft key, hostname, provision-base", run: (*cli).cmdPrepare},
+		{name: "provision", args: "[--yes] [--recipe file] <name>", summary: "run the recipe on <name> from provision-base and keep the result as <name>-full", run: (*cli).cmdProvision},
 		{name: "version", summary: "print the werft version", run: (*cli).cmdVersion},
 	}
 }

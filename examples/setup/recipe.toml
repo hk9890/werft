@@ -1,0 +1,153 @@
+# werft provision recipe for the setup repo (github.com/carlo9890/setup).
+# It replays the fresh-machine bootstrap in a build VM, runs the system
+# checks, and keeps the result as <build VM>-full: what `vm provision` did.
+# Paths are relative to this file; ~/ is the home directory.
+
+# sudo in the guest, and the disk prompt of an encrypted guest, need it.
+[guest_password]
+pass = "vm/guest-password"
+
+# The passphrase of the GPG key on the key stick. It is typed at the terminal.
+[secrets.passphrase]
+prompt = "GPG passphrase for the key on MASTER-KEY"
+
+# Stage 1: bootstrap.
+[[steps]]
+type = "reset"
+label = "provision-base"
+
+[[steps]]
+type = "boot"
+
+[[steps]]
+type = "viewer"
+
+[[steps]]
+type = "wait-ssh"
+
+[[steps]]
+type = "verify-guest-password"
+
+[[steps]]
+type = "detect-guest"
+
+# Before the session and the bootstrap, so both see the final name.
+[[steps]]
+type = "hostname"
+
+# Omarchy logs its user in by itself (SDDM), after the disk password.
+[[steps]]
+type = "autologin"
+family = "ubuntu"
+
+[[steps]]
+type = "upload"
+files = ["bootstrap.sh"]
+
+[[steps]]
+type = "wait-session"
+
+[[steps]]
+type = "unlock-keyring"
+
+# Omarchy refuses the plain pacman -Syu of install.sh while updates are
+# pending, so it is updated its own way first, inside the sudo window.
+# OMARCHY_UPDATE_LOGGED keeps the update from re-running itself under script,
+# where its reboot question waits forever. env-bootstrap sets OMARCHY_PATH,
+# which an SSH command does not get from a shell setup. The reboot after it
+# gives a new kernel its modules, the stick's among them.
+[[steps]]
+type = "sudo-grant"
+family = "omarchy"
+
+[[steps]]
+type = "run"
+family = "omarchy"
+command = ". /usr/share/omarchy/default/bash/env-bootstrap && env XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus OMARCHY_UPDATE_LOGGED=1 omarchy update -y"
+
+[[steps]]
+type = "reboot"
+family = "omarchy"
+
+[[steps]]
+type = "upload"
+family = "omarchy"
+files = ["bootstrap.sh"]
+
+[[steps]]
+type = "wait-session"
+family = "omarchy"
+
+[[steps]]
+type = "unlock-keyring"
+family = "omarchy"
+
+[[steps]]
+type = "usb-passthrough"
+label = "MASTER-KEY"
+
+[[steps]]
+type = "sudo-grant"
+family = "ubuntu"
+
+[[steps]]
+type = "pinentry"
+secret = "passphrase"
+
+[[steps]]
+type = "run"
+command = "bash bootstrap.sh https://github.com/carlo9890/bootstrap-scripts"
+
+[[steps]]
+type = "undo"
+step = "pinentry"
+
+[[steps]]
+type = "undo"
+step = "usb-passthrough"
+
+# On Omarchy the grant spans the reboot after omarchy update.
+[[steps]]
+type = "undo"
+step = "sudo-grant"
+
+# Stage 2: checks, after a reboot, so they see a fresh login.
+[[steps]]
+type = "reboot"
+
+[[steps]]
+type = "upload"
+
+[[steps]]
+type = "wait-session"
+
+[[steps]]
+type = "unlock-keyring"
+
+# From the host checkout, so a check added on a branch runs at once.
+[[steps]]
+type = "checks"
+dir = "~/setup/tests/system"
+command = "run.sh"
+
+# Stage 3: the result image.
+[[steps]]
+type = "undo"
+step = "viewer"
+
+[[steps]]
+type = "undo"
+step = "autologin"
+
+[[steps]]
+type = "poweroff"
+
+[[steps]]
+type = "clone"
+
+[[steps]]
+type = "generalize"
+
+[[steps]]
+type = "snapshot"
+label = "clean"

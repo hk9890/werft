@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# pinentry-auto answers gpg-agent's passphrase prompt inside a guest.
+#
+# The werft step pinentry sets it as pinentry-program and leaves the
+# passphrase in the runtime directory, a tmpfs. It speaks just enough of the
+# Assuan pinentry protocol: every command is acknowledged, and GETPIN is
+# answered with the passphrase.
+
+set -euo pipefail
+
+passphrase="$(<"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/werft-passphrase")"
+# Assuan data lines percent-escape %, CR and LF; a passphrase is one line.
+passphrase="${passphrase//%/%25}"
+
+echo "OK Pleased to meet you"
+while IFS= read -r line; do
+    case "$line" in
+        GETPIN*) printf 'D %s\nOK\n' "$passphrase" ;;
+        BYE*)    echo "OK closing connection"; exit 0 ;;
+        *)       echo "OK" ;;
+    esac
+done

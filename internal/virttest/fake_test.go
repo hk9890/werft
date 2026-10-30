@@ -110,7 +110,7 @@ func TestUndefineOfARunningDomainKeepsItUntilItStops(t *testing.T) {
 	mustKind(t, err, failure.NotFound)
 }
 
-func TestUndefineNVRAMDeletesTheVolume(t *testing.T) {
+func TestUndefineNVRAMLeavesTheNameInThePool(t *testing.T) {
 	f := virttest.New()
 	newPool(t, f)
 	if _, err := f.CreateVolume("pool", "<volume><name>vm1-vars.qcow2</name></volume>"); err != nil {
@@ -122,8 +122,11 @@ func TestUndefineNVRAMDeletesTheVolume(t *testing.T) {
 	if err := f.UndefineDomain("vm1", virt.UndefineNVRAM); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.VolumePath("pool", "vm1-vars.qcow2")
-	mustKind(t, err, failure.NotFound)
+	_, err := f.CreateVolume("pool", "<volume><name>vm1-vars.qcow2</name></volume>")
+	mustKind(t, err, failure.Conflict)
+	if err := f.DeleteVolume("pool", "vm1-vars.qcow2"); err != nil {
+		t.Fatalf("delete of the stale name: %v", err)
+	}
 }
 
 func TestSnapshotsRestoreTheDefinition(t *testing.T) {
@@ -289,5 +292,25 @@ func TestCallLogAndFailureInjection(t *testing.T) {
 	want := []string{"DefineDomain vm1", "StartDomain vm1", "DomainState vm1", "StartDomain vm1", "StartDomain vm1"}
 	if got := f.Calls(); !reflect.DeepEqual(got, want) {
 		t.Errorf("calls = %q, want %q", got, want)
+	}
+}
+
+func TestVolumeByPath(t *testing.T) {
+	f := virttest.New()
+	if err := f.DefinePool("p", "/pool"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.StartPool("p"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := f.CreateVolume("p", "<volume><name>disk.qcow2</name><capacity>1</capacity></volume>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pool, name, err := f.VolumeByPath(v.Path); err != nil || pool != "p" || name != "disk.qcow2" {
+		t.Errorf("VolumeByPath = %q, %q, %v", pool, name, err)
+	}
+	if _, _, err := f.VolumeByPath("/elsewhere"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("VolumeByPath of a path in no pool = %v", err)
 	}
 }

@@ -34,6 +34,12 @@ func (d Dir) Lease(id string) string { return filepath.Join(d.Leases(), id) }
 func (d Dir) Logs() string           { return filepath.Join(string(d), "logs") }
 func (d Dir) Locks() string          { return filepath.Join(string(d), "locks") }
 
+// SSHKey is the private key prepare installs in a build VM.
+func (d Dir) SSHKey() string { return filepath.Join(string(d), "id_ed25519") }
+
+// SSHConfig is the ssh_config werft uses for build VMs.
+func (d Dir) SSHConfig() string { return filepath.Join(string(d), "ssh_config") }
+
 // Lock is a held flock. The kernel drops it when the process ends, so a
 // crashed run leaves no stale lock.
 type Lock struct{ f *os.File }
