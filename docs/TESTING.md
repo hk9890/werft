@@ -26,10 +26,14 @@ the test image is missing.
 What a run creates:
 
 - The storage pool `werft-test` in `/var/lib/libvirt/images/werft-test/`. It stays, with the uploaded
-  base image, so the next run skips the upload. Remove both with
+  base image, so the next run skips the upload. The base volume has the name of the image file.
+  `~/.cache/werft/base-image.lock` lets one run at a time upload it, and a marker file next to the
+  lock records a finished upload; without the marker, the next run uploads again. Remove pool and
+  volumes with
   `virsh -c qemu:///system pool-destroy werft-test && virsh -c qemu:///system pool-undefine werft-test`
   after you delete its volumes.
-- The domain `werft-test-uefi` with its overlay, NVRAM and console log. The test removes them.
+- One scratch domain per test, `werft-test-<track>-<name>` (for example `werft-test-fnd-uefi`), with
+  its overlay, NVRAM and console log. The test removes them.
 
 The test names never touch a build VM.
 
@@ -38,20 +42,24 @@ The test names never touch a build VM.
 - A boot that times out prints the last 60 lines of the guest serial console.
 - `WERFT_TEST_KEEP=1` keeps the domain after a failure. Connect with
   `ssh -F /dev/null -o "ProxyCommand=/usr/lib/systemd/systemd-ssh-proxy %h %p" -o ProxyUseFdpass=yes root@vsock/<cid>`;
-  the CID is in `virsh -c qemu:///system dumpxml werft-test-uefi`. The test key is gone with the
+  the CID is in `virsh -c qemu:///system dumpxml <domain>`. The test key is gone with the
   test's temp directory, so only the connection itself can be checked. The next run removes the
   domain.
 
 ## Write a live test
 
-Follow `internal/virt/libvirt/uefi_reset_live_test.go`:
+Build on `internal/livetest`; `internal/virt/libvirt/uefi_reset_live_test.go` is the model:
 
-- Use only the `werft-test` pool and domain names that start with `werft-test-`.
-- Remove what the test creates in `t.Cleanup`, and remove leftovers of an earlier run at the start.
-- Reach the guest over vsock with a key passed as the `ssh.ephemeral-authorized_keys-all`
-  credential in the SMBIOS OEM strings. A cloud image has no SSH host keys: pass the
-  `systemd.unit-dropin.sshd-vsock@.service` credential that runs `ssh-keygen -A`, as the existing
-  test does.
+- Create the scratch domain with `livetest.NewGuest`, and remove other domains with
+  `livetest.RemoveDomain`. Both refuse a name without the `werft-test-` prefix. `NewGuest`
+  removes leftovers of an earlier run, and removes the domain and its volumes in `t.Cleanup`.
+- Give each domain and volume the prefix of your track, so parallel runs do not collide.
+- Reach the guest with `Guest.Boot`, `Guest.Run` and `Guest.SSH`: root over vsock, with the test key
+  as the `ssh.ephemeral-authorized_keys-all` credential. The cloud image has no SSH host keys and
+  no network configuration, so the guest gets two more credentials: a `sshd-vsock@` drop-in that
+  runs `ssh-keygen -A`, and a networkd DHCP file.
+- Call `Guest.Run` and `Guest.Boot` only from the test goroutine, not from a subtest: they fail
+  the test they were made for.
 - Add a control step that shows the effect you assert away is real.
 
 ## Minimum checks before opening a PR

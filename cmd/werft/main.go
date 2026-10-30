@@ -2,17 +2,17 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
-	"github.com/hk9890/werft/internal/build"
+	"golang.org/x/term"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Printf("werft %s (%s, %s)\n", build.Version, build.Commit, build.Date)
-		return
+	c := &cli{
+		stdin:  os.Stdin,
+		stdout: os.Stdout,
+		stderr: os.Stderr,
+		tty:    term.IsTerminal(int(os.Stdin.Fd())),
 	}
-	fmt.Fprintln(os.Stderr, "usage: werft version")
-	os.Exit(2)
+	os.Exit(c.run(os.Args[1:]))
 }
