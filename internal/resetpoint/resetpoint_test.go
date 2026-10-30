@@ -1,6 +1,10 @@
 package resetpoint_test
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/hk9890/werft/internal/failure"
@@ -76,5 +80,34 @@ func TestTakeAndRevert(t *testing.T) {
 	}
 	if err := resetpoint.Take(f, "vm", "other", false); !failure.Is(err, failure.Conflict) {
 		t.Errorf("snapshot of a running domain = %v", err)
+	}
+}
+
+func TestLegacy(t *testing.T) {
+	dir := t.TempDir()
+	f := fake(t, strings.Replace(domain("raw", "qcow2"), "/nvram/", dir+"/", 1))
+	if labels, err := resetpoint.Legacy(f, "vm"); err != nil || labels != nil {
+		t.Errorf("no reset points: %q, %v", labels, err)
+	}
+	for _, name := range []string{"vm_VARS", "vm_VARS.clean-install.bak", "vm_VARS.full.bak", "vm_VARS.bak", "vm_VARS2.x.bak", "other_VARS.clean.bak"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	labels, err := resetpoint.Legacy(f, "vm")
+	if err != nil || !slices.Equal(labels, []string{"clean-install", "full"}) {
+		t.Errorf("labels = %q, %v", labels, err)
+	}
+
+	missing := fake(t, domain("raw", "qcow2"))
+	if labels, err := resetpoint.Legacy(missing, "vm"); err != nil || labels != nil {
+		t.Errorf("NVRAM directory that does not exist: %q, %v", labels, err)
+	}
+	bios := fake(t, `<domain type='kvm'><name>vm</name></domain>`)
+	if labels, err := resetpoint.Legacy(bios, "vm"); err != nil || labels != nil {
+		t.Errorf("BIOS domain: %q, %v", labels, err)
+	}
+	if _, err := resetpoint.Legacy(bios, "none"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("unknown domain = %v", err)
 	}
 }

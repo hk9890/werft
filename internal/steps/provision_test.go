@@ -207,7 +207,7 @@ func TestFailedBootstrapUndoesTheTemporaryChanges(t *testing.T) {
 	w := newWorld(t)
 	w.shell.fail["bootstrap.sh"] = true
 	_, err := provision(t, w, true)
-	if err == nil || !strings.Contains(err.Error(), "ssh -F /state/ssh_config tester@192.168.122.01") || !strings.Contains(err.Error(), "log: /state/logs/p.log") {
+	if err == nil || !strings.Contains(err.Error(), "ssh -F /state/ssh_config tester@192.168.122.1") || !strings.Contains(err.Error(), "log: /state/logs/p.log") {
 		t.Fatalf("err = %v, want the ssh command and the log", err)
 	}
 	w.assertSequence("the cleanups run newest first",

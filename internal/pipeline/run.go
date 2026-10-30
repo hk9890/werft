@@ -5,11 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/hostdev"
@@ -178,26 +176,13 @@ func (r *Run) SSHCommand() string {
 // DHCP lease of each MAC. A reset guest keeps its MAC, so a lease can name
 // the address before sshd is up: only an SSH probe tells.
 func (r *Run) Candidates() []guest.Addr {
-	text, err := r.H.DomainXML(r.Domain, false)
-	if err != nil {
-		return nil
-	}
-	d, err := domxml.Parse(text)
-	if err != nil {
-		return nil
-	}
+	cid, ips := virt.DomainAddresses(r.H, r.Domain)
 	var out []guest.Addr
-	if cid, ok := domxml.VsockCID(d); ok {
-		out = append(out, guest.Addr{User: r.User, Host: "vsock/" + strconv.FormatUint(uint64(cid), 10)})
+	if cid != "" {
+		out = append(out, guest.Addr{User: r.User, Host: cid})
 	}
-	for _, i := range domxml.Interfaces(d) {
-		if i.Network == "" || i.MAC == "" {
-			continue
-		}
-		leases, _ := r.H.DHCPLeases(i.Network, i.MAC)
-		for _, l := range leases {
-			out = append(out, guest.Addr{User: r.User, Host: l.IP})
-		}
+	for _, ip := range ips {
+		out = append(out, guest.Addr{User: r.User, Host: ip})
 	}
 	return out
 }

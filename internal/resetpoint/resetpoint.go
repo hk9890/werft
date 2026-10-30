@@ -4,7 +4,12 @@
 package resetpoint
 
 import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
@@ -42,6 +47,43 @@ func Guard(h virt.Hypervisor, domain string) error {
 		}
 	}
 	return nil
+}
+
+// Legacy is the labels of the reset points vm keeps for domain: a copy of
+// the NVRAM named <nvram>.<label>.bak next to it. It lists the directory, as
+// vm did, and not the storage pool: libvirt refreshes a pool only on request,
+// and vm writes the copies outside the pool API. The nvram directory of
+// libvirt is world-readable, so no root is needed. A domain without NVRAM,
+// or with an NVRAM in a directory werft cannot list, has none.
+func Legacy(h virt.Hypervisor, domain string) ([]string, error) {
+	text, err := h.DomainXML(domain, true)
+	if err != nil {
+		return nil, err
+	}
+	d, err := domxml.Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	nv, ok := domxml.NVRAMOf(d)
+	if !ok || nv.Path == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(filepath.Dir(nv.Path))
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, failure.Wrap(failure.Failed, err, "list the NVRAM directory of %s", domain)
+	}
+	base := filepath.Base(nv.Path)
+	var labels []string
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), base+".")
+		if label, ok2 := strings.CutSuffix(rest, ".bak"); ok && ok2 && label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return labels, nil
 }
 
 func Has(h virt.Hypervisor, domain, label string) (bool, error) {

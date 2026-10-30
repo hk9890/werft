@@ -229,6 +229,27 @@ func TestVolumes(t *testing.T) {
 	mustKind(t, f.DeleteVolume("pool", "a.raw"), failure.NotFound)
 }
 
+func TestIgnoreShutdown(t *testing.T) {
+	f := virttest.New()
+	if _, err := f.DefineDomain(vmXML); err != nil {
+		t.Fatal(err)
+	}
+	f.IgnoreShutdown("vm1")
+	if err := f.StartDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.ShutdownDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := f.DomainState("vm1"); s != virt.StateRunning {
+		t.Errorf("state after an ignored shutdown = %v", s)
+	}
+	if err := f.DestroyDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	mustKind(t, f.ShutdownDomain("vm1"), failure.Conflict)
+}
+
 func TestGuestDevices(t *testing.T) {
 	f := virttest.New()
 	if _, err := f.DefineDomain(vmXML); err != nil {

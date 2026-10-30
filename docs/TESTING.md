@@ -36,8 +36,12 @@ What a run creates:
   its overlay, NVRAM and console log. The test removes them.
 - `TestProvisionLive` also makes the clone `werft-test-pp-prov-full`, with its disk and NVRAM copies
   in the `werft-test` pool, and replaces it once. The test removes them.
+- `TestLifecycleLive` also defines the domain `werft-test-lc-legacy`, which never starts. Its NVRAM
+  path is in a temporary directory with a `.old.bak` file, which stands for a reset point of `vm`.
+  The test removes the domain.
 
-The test names never touch a build VM.
+No test changes a build VM. `TestLifecycleLive` runs `werft list`, which reads every domain on the
+host, build VMs included, and changes none.
 
 ## Debug a failing live test
 

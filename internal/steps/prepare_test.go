@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
@@ -59,7 +60,7 @@ func TestPrepareCopiesTheKey(t *testing.T) {
 		t.Fatalf("prepare: %v", err)
 	}
 	w.assertSequence("the key goes in before the first root step",
-		"^ssh-copy-id .*/id_ed25519.pub tester@192.168.122.01$", "^ssh true$", "sh -c 'true' sh$")
+		"^ssh-copy-id .*/id_ed25519.pub tester@192.168.122.1$", "^ssh true$", "sh -c 'true' sh$")
 }
 
 func TestPrepareAddsTheKeyOverTheUsersOwnKey(t *testing.T) {
@@ -92,7 +93,7 @@ func TestPrepareOmarchyMarksTheDisk(t *testing.T) {
 		t.Error("an Omarchy guest was asked about GDM")
 	}
 	desc, _ := w.fake.DomainDescription(vm)
-	if desc != "my notes\n"+steps.LUKSMarker {
+	if desc != "my notes\n"+domxml.LUKSMarker {
 		t.Errorf("description = %q", desc)
 	}
 	if w.index("^SendKey") >= 0 {
@@ -102,7 +103,7 @@ func TestPrepareOmarchyMarksTheDisk(t *testing.T) {
 
 func TestPrepareClearsAStaleMarker(t *testing.T) {
 	w := freshWorld(t)
-	must(t, w.fake.SetDomainDescription(vm, "my notes\n"+steps.LUKSMarker))
+	must(t, w.fake.SetDomainDescription(vm, "my notes\n"+domxml.LUKSMarker))
 	if _, err := w.run(steps.Prepare(), false); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
