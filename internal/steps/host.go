@@ -10,9 +10,12 @@ import (
 
 // Viewer opens one viewer window to watch the run; it follows the VM across
 // its reboots. The cleanup closes it: with nothing left to watch it would
-// wait for a restart that never comes. Over SSH to the host there is no
+// wait for a restart that never comes. A failed run leaves it open on the VM
+// it leaves running for inspection. Over SSH to the host there is no
 // display, and the window would fail without a word.
 type Viewer struct{}
+
+func (Viewer) KeepOnFailure() {}
 
 func (Viewer) Check(r *pipeline.Run) error {
 	if !r.Host.HasDisplay() {

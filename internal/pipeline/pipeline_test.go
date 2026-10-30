@@ -41,12 +41,24 @@ func (s *stub) Run(r *pipeline.Run) error {
 	return nil
 }
 
-type cleaning struct{ stub }
+type cleaning struct {
+	stub
+	// failCleanups is how many cleanups fail before one succeeds.
+	failCleanups int
+}
 
 func (c *cleaning) Cleanup(*pipeline.Run) error {
 	*c.log = append(*c.log, "cleanup "+c.name)
+	if c.failCleanups > 0 {
+		c.failCleanups--
+		return errors.New("ssh timed out")
+	}
 	return nil
 }
+
+type inspector struct{ cleaning }
+
+func (*inspector) KeepOnFailure() {}
 
 type prompter struct{ log *[]string }
 
@@ -68,7 +80,7 @@ func TestChecksAndSecretsComeBeforeAnyRun(t *testing.T) {
 	r := newRun(&log)
 	err := pipeline.Execute(r, []pipeline.Entry{
 		{Name: "a", Step: &stub{name: "a", log: &log, declare: "s1"}},
-		{Name: "b", Step: &cleaning{stub{name: "b", log: &log}}},
+		{Name: "b", Step: &cleaning{stub: stub{name: "b", log: &log}}},
 		{Name: "c", Step: &stub{name: "c", log: &log, declare: "s1"}},
 	})
 	if err != nil {
@@ -84,9 +96,9 @@ func TestFailureStopsAndPopsCleanupsInReverse(t *testing.T) {
 	var log []string
 	r := newRun(&log)
 	err := pipeline.Execute(r, []pipeline.Entry{
-		{Name: "a", Step: &cleaning{stub{name: "a", log: &log}}},
-		{Name: "b", Step: &cleaning{stub{name: "b", log: &log, failRun: true}}},
-		{Name: "c", Step: &cleaning{stub{name: "c", log: &log}}},
+		{Name: "a", Step: &cleaning{stub: stub{name: "a", log: &log}}},
+		{Name: "b", Step: &cleaning{stub: stub{name: "b", log: &log, failRun: true}}},
+		{Name: "c", Step: &cleaning{stub: stub{name: "c", log: &log}}},
 	})
 	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "b broke") {
 		t.Fatalf("err = %v, want the timeout of b", err)
@@ -103,7 +115,7 @@ func TestInterruptPopsCleanups(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.Ctx = ctx
 	err := pipeline.Execute(r, []pipeline.Entry{
-		{Name: "a", Step: &cleaning{stub{name: "a", log: &log, cancel: cancel}}},
+		{Name: "a", Step: &cleaning{stub: stub{name: "a", log: &log, cancel: cancel}}},
 		{Name: "b", Step: &stub{name: "b", log: &log}},
 	})
 	if err == nil || !errors.Is(ctx.Err(), context.Canceled) {
@@ -114,12 +126,59 @@ func TestInterruptPopsCleanups(t *testing.T) {
 	}
 }
 
+func TestInterruptBeforeTheFirstStepRunsNoStep(t *testing.T) {
+	var log []string
+	r := newRun(&log)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.Ctx = ctx
+	err := pipeline.Execute(r, []pipeline.Entry{
+		{Name: "reset", Step: &stub{name: "reset", log: &log}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "interrupted before reset") {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(log, "run reset ") {
+		t.Errorf("log = %q", log)
+	}
+}
+
+func TestFailedUndoIsTriedAgainAtTheEnd(t *testing.T) {
+	var log []string
+	r := newRun(&log)
+	err := pipeline.Execute(r, []pipeline.Entry{
+		{Name: "a", Step: &cleaning{stub: stub{name: "a", log: &log}, failCleanups: 1}},
+		{Name: "undo", Step: pipeline.Undo{ID: "a"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "ssh timed out") {
+		t.Fatalf("err = %v", err)
+	}
+	want := []string{"check a", "run a ", "cleanup a", "cleanup a"}
+	if !slices.Equal(log, want) {
+		t.Errorf("log = %q\nwant  %q", log, want)
+	}
+}
+
+func TestInspectorStaysAfterAFailureOnly(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		var log []string
+		r := newRun(&log)
+		_ = pipeline.Execute(r, []pipeline.Entry{
+			{Name: "viewer", Step: &inspector{cleaning{stub: stub{name: "viewer", log: &log}}}},
+			{Name: "b", Step: &stub{name: "b", log: &log, failRun: fail}},
+		})
+		if closed := slices.Contains(log, "cleanup viewer"); closed == fail {
+			t.Errorf("failed run %v: log = %q", fail, log)
+		}
+	}
+}
+
 func TestUndoRunsTheCleanupOnce(t *testing.T) {
 	var log []string
 	r := newRun(&log)
 	err := pipeline.Execute(r, []pipeline.Entry{
-		{Name: "a", ID: "first", Step: &cleaning{stub{name: "a", log: &log}}},
-		{Name: "b", Step: &cleaning{stub{name: "b", log: &log}}},
+		{Name: "a", ID: "first", Step: &cleaning{stub: stub{name: "a", log: &log}}},
+		{Name: "b", Step: &cleaning{stub: stub{name: "b", log: &log}}},
 		{Name: "undo", Step: pipeline.Undo{ID: "first"}},
 		{Name: "undo", Step: pipeline.Undo{ID: "first"}},
 		{Name: "c", Step: &stub{name: "c", log: &log}},
@@ -138,7 +197,7 @@ func TestFamilySkipsStep(t *testing.T) {
 	r := newRun(&log)
 	r.Family = "ubuntu"
 	err := pipeline.Execute(r, []pipeline.Entry{
-		{Name: "a", Family: "omarchy", Step: &cleaning{stub{name: "a", log: &log}}},
+		{Name: "a", Family: "omarchy", Step: &cleaning{stub: stub{name: "a", log: &log}}},
 		{Name: "b", Family: "ubuntu", Step: &stub{name: "b", log: &log}},
 	})
 	if err != nil {

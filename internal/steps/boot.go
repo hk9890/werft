@@ -11,6 +11,7 @@ import (
 
 	"github.com/hk9890/werft/internal/console"
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/pipeline"
 	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/virt"
@@ -175,7 +176,7 @@ func poweroff(r *pipeline.Run) error {
 	return nil
 }
 
-var rootPoweroff = rootCommand("systemctl poweroff --check-inhibitors=no")
+var rootPoweroff = guest.RootCommand("systemctl poweroff --check-inhibitors=no")
 
 // Reboot powers the guest off from inside, boots it and waits for SSH.
 type Reboot struct{}
@@ -200,7 +201,7 @@ func sshReply(r *pipeline.Run, addr string) (accepted, answered bool) {
 	var stderr bytes.Buffer
 	a := r.Addr
 	a.Host = addr
-	err := r.Shell.Run(r.Ctx, a, "true", nil, io.Discard, &stderr)
+	err := r.KeyShell.Run(r.Ctx, a, "true", nil, io.Discard, &stderr)
 	if err == nil {
 		return true, true
 	}

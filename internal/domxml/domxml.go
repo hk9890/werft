@@ -141,18 +141,4 @@ func Interfaces(d *libvirtxml.Domain) []Interface {
 	return out
 }
 
-// MACs are the MAC addresses of the domain's network interfaces, in order.
-func MACs(d *libvirtxml.Domain) []string {
-	if d.Devices == nil {
-		return nil
-	}
-	var out []string
-	for _, i := range d.Devices.Interfaces {
-		if i.MAC != nil && i.MAC.Address != "" {
-			out = append(out, i.MAC.Address)
-		}
-	}
-	return out
-}
-
 func Description(d *libvirtxml.Domain) string { return d.Description }

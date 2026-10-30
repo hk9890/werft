@@ -84,16 +84,54 @@ func TestWriteTar(t *testing.T) {
 
 func TestWriteConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "ssh_config")
-	if err := guest.WriteConfig(path, []string{"/state/id_ed25519"}); err != nil {
+	if err := guest.WriteConfig(path, "/state/id_ed25519", "/home/u/.ssh/id_ed25519"); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	for _, want := range []string{"Host vsock/*\n  ProxyCommand /usr/lib/systemd/systemd-ssh-proxy %h %p", "IdentityFile /state/id_ed25519", "BatchMode yes", "UserKnownHostsFile /dev/null"} {
+	for _, want := range []string{
+		"Host vsock/*\n  ProxyCommand /usr/lib/systemd/systemd-ssh-proxy %h %p",
+		"Host *\n  IdentityFile /state/id_ed25519\n  IdentitiesOnly yes\n", "BatchMode yes", "UserKnownHostsFile /dev/null",
+		"Match !tagged werft-key-only\n  IdentityFile /home/u/.ssh/id_ed25519\n",
+	} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("config lacks %q:\n%s", want, data)
 		}
 	}
 	if cmd := (guest.OpenSSH{Config: path}).Command(guest.Addr{User: "u", Host: "vsock/3"}); cmd != "ssh -F "+path+" u@vsock/3" {
 		t.Errorf("Command = %q", cmd)
+	}
+	if args := (guest.OpenSSH{Config: path, KeyOnly: true}).Args(guest.Addr{User: "u", Host: "h"}, "true"); strings.Join(args, " ") != "-F "+path+" -P werft-key-only u@h -- true" {
+		t.Errorf("KeyOnly args = %q", args)
+	}
+}
+
+// The werft key is offered first, and alone with KeyOnly; no agent key is.
+func TestWriteConfigOffersTheKeysInOrder(t *testing.T) {
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("no ssh client")
+	}
+	path := filepath.Join(t.TempDir(), "ssh_config")
+	if err := guest.WriteConfig(path, "/state/id_ed25519", "/home/u/.ssh/id_ed25519"); err != nil {
+		t.Fatal(err)
+	}
+	for keyOnly, want := range map[bool]string{
+		false: "identitiesonly yes\nidentityfile /state/id_ed25519\nidentityfile /home/u/.ssh/id_ed25519\n",
+		true:  "identitiesonly yes\nidentityfile /state/id_ed25519\n",
+	} {
+		o := guest.OpenSSH{Config: path, KeyOnly: keyOnly}
+		args := append([]string{"-G"}, o.Args(guest.Addr{User: "u", Host: "192.0.2.1"}, "")...)
+		out, err := exec.Command("ssh", args...).Output()
+		if err != nil {
+			t.Fatalf("ssh -G: %v", err)
+		}
+		var got strings.Builder
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "identit") {
+				got.WriteString(line + "\n")
+			}
+		}
+		if got.String() != want {
+			t.Errorf("KeyOnly %v: ssh resolves\n%swant\n%s", keyOnly, got.String(), want)
+		}
 	}
 }

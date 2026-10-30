@@ -24,64 +24,116 @@ type Clone struct{}
 func target(r *pipeline.Run) string { return r.BuildVM + FullSuffix }
 
 func (Clone) Check(r *pipeline.Run) error {
-	t := target(r)
-	state, err := r.H.DomainState(t)
-	if failure.Is(err, failure.NotFound) {
-		return nil
-	}
-	if err != nil {
+	if _, err := sources(r.H, r.BuildVM); err != nil {
 		return err
 	}
-	if state != virt.StateShutOff {
-		return failure.New(failure.Conflict, "%s is %s; provision replaces it, so it must be shut off first", t, state)
+	t := target(r)
+	exists, err := requireShutOff(r.H, t)
+	if err != nil || !exists {
+		return err
 	}
 	return r.Confirm(t + " exists and will be replaced. Everything in it is lost.")
 }
 
+// requireShutOff fails with failure.Conflict unless the domain name is shut
+// off or does not exist, and reports whether it exists.
+func requireShutOff(h virt.Hypervisor, name string) (bool, error) {
+	state, err := h.DomainState(name)
+	if failure.Is(err, failure.NotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if state != virt.StateShutOff {
+		return true, failure.New(failure.Conflict, "%s is %s; provision replaces it, so it must be shut off first", name, state)
+	}
+	return true, nil
+}
+
+// Run checks the clone again: the run took long since preflight, and
+// virt-manager can have started it in between.
 func (Clone) Run(r *pipeline.Run) error {
 	t := target(r)
-	if _, err := r.H.Domain(t); err == nil {
+	exists, err := requireShutOff(r.H, t)
+	if err != nil {
+		return err
+	}
+	src, err := sources(r.H, r.Domain)
+	if err != nil {
+		return err
+	}
+	if exists {
 		r.Printf("Removing the old %s", t)
 		if err := removeClone(r.H, t); err != nil {
 			return err
 		}
 	}
 	r.Printf("Cloning %s to %s", r.Domain, t)
-	src, err := r.H.Domain(r.Domain)
+	from, err := r.H.Domain(r.Domain)
 	if err != nil {
 		return err
 	}
-	text, err := r.H.DomainXML(r.Domain, true)
-	if err != nil {
-		return err
-	}
-	d, err := domxml.Parse(text)
-	if err != nil {
-		return err
-	}
-	paths, created, err := copyDisks(r.H, d, t)
+	paths, created, err := copyDisks(r.H, src.disks, t)
 	nvram := ""
 	if err == nil {
-		nvram, created, err = copyNVRAM(r.H, d, t, created)
+		nvram, created, err = copyNVRAM(r.H, src, t, created)
 	}
 	if err == nil {
-		err = defineClone(r.H, d, t, paths, nvram)
+		err = defineClone(r.H, src.domain, t, paths, nvram)
 	}
 	if err != nil {
 		for _, v := range created {
-			_ = r.H.DeleteVolume(v[0], v[1])
+			_ = r.H.DeleteVolume(v.pool, v.name)
 		}
 		return failure.Wrap(failure.KindOf(err), err, "%s itself is intact", r.Domain)
 	}
-	dst, err := r.H.Domain(t)
+	to, err := r.H.Domain(t)
 	if err != nil {
 		return err
 	}
-	if err := r.Host.CopyViewerSettings(src.UUID, dst.UUID); err != nil {
+	if err := r.Host.CopyViewerSettings(from.UUID, to.UUID); err != nil {
 		r.Printf("Could not copy virt-manager's viewer settings to %s; its window opens with the defaults", t)
 	}
 	r.Domain, r.Addr = t, guest.Addr{}
 	return nil
+}
+
+type poolVolume struct{ pool, name string }
+
+// cloneSource is a domain with the storage volumes of its writable disks and
+// of its NVRAM, when it has one.
+type cloneSource struct {
+	domain      *libvirtxml.Domain
+	disks       []domxml.Disk
+	nvram       *poolVolume
+	nvramFormat string
+}
+
+// sources reads the domain and finds the volume of each writable disk and of
+// the NVRAM. A disk or NVRAM outside every storage pool fails.
+func sources(h virt.Hypervisor, name string) (cloneSource, error) {
+	text, err := h.DomainXML(name, true)
+	if err != nil {
+		return cloneSource{}, err
+	}
+	d, err := domxml.Parse(text)
+	if err != nil {
+		return cloneSource{}, err
+	}
+	disks, err := writableDisks(h, d)
+	if err != nil {
+		return cloneSource{}, err
+	}
+	src := cloneSource{domain: d, disks: disks}
+	if nv, ok := domxml.NVRAMOf(d); ok && nv.Path != "" {
+		pool, vol, err := h.VolumeByPath(nv.Path)
+		if err != nil {
+			return cloneSource{}, failure.Wrap(failure.KindOf(err), err, "NVRAM %s of %s is in no storage pool", nv.Path, name)
+		}
+		src.nvram, src.nvramFormat = &poolVolume{pool, vol}, nv.Format
+	}
+	return src, nil
 }
 
 func defineClone(h virt.Hypervisor, d *libvirtxml.Domain, name string, paths map[string]string, nvram string) error {
@@ -120,15 +172,11 @@ func writableDisks(h virt.Hypervisor, d *libvirtxml.Domain) ([]domxml.Disk, erro
 	return out, nil
 }
 
-// copyDisks copies each writable disk to a new volume next to it and gives
-// the path per target, and the pool and name of each volume it created.
-func copyDisks(h virt.Hypervisor, d *libvirtxml.Domain, name string) (map[string]string, [][2]string, error) {
-	disks, err := writableDisks(h, d)
-	if err != nil {
-		return nil, nil, err
-	}
+// copyDisks copies each disk to a new volume next to it and gives the path
+// per target, and each volume it created.
+func copyDisks(h virt.Hypervisor, disks []domxml.Disk, name string) (map[string]string, []poolVolume, error) {
 	paths := map[string]string{}
-	var created [][2]string
+	var created []poolVolume
 	for i, disk := range disks {
 		vol := name
 		if i > 0 {
@@ -152,7 +200,7 @@ func copyDisks(h virt.Hypervisor, d *libvirtxml.Domain, name string) (map[string
 		if err != nil {
 			return nil, created, err
 		}
-		created = append(created, [2]string{disk.Pool, vol})
+		created = append(created, poolVolume{disk.Pool, vol})
 		paths[disk.Target] = v.Path
 	}
 	return paths, created, nil
@@ -161,16 +209,11 @@ func copyDisks(h virt.Hypervisor, d *libvirtxml.Domain, name string) (map[string
 // copyNVRAM copies the NVRAM of a UEFI domain to <name>_VARS next to it,
 // and adds the copy to created. libvirt's firmware autoselection refuses an
 // NVRAM template in qcow2 format, so the clone gets a file of its own.
-func copyNVRAM(h virt.Hypervisor, d *libvirtxml.Domain, name string, created [][2]string) (string, [][2]string, error) {
-	nv, ok := domxml.NVRAMOf(d)
-	if !ok || nv.Path == "" {
+func copyNVRAM(h virt.Hypervisor, src cloneSource, name string, created []poolVolume) (string, []poolVolume, error) {
+	if src.nvram == nil {
 		return "", created, nil
 	}
-	pool, vol, err := h.VolumeByPath(nv.Path)
-	if err != nil {
-		return "", created, failure.Wrap(failure.KindOf(err), err, "NVRAM %s is in no storage pool", nv.Path)
-	}
-	format := nv.Format
+	format := src.nvramFormat
 	if format == "" {
 		format = "raw"
 	}
@@ -179,15 +222,18 @@ func copyNVRAM(h virt.Hypervisor, d *libvirtxml.Domain, name string, created [][
 		copyName = name + "_VARS.qcow2"
 	}
 	xml := fmt.Sprintf("<volume><name>%s</name><capacity>0</capacity><target><format type='%s'/></target></volume>", copyName, format)
-	v, err := h.CreateVolumeFrom(pool, xml, pool, vol)
+	v, err := h.CreateVolumeFrom(src.nvram.pool, xml, src.nvram.pool, src.nvram.name)
 	if err != nil {
 		return "", created, err
 	}
-	return v.Path, append(created, [2]string{pool, copyName}), nil
+	return v.Path, append(created, poolVolume{src.nvram.pool, copyName}), nil
 }
 
-// removeClone undefines the shut-off clone with its NVRAM and reset points,
-// and deletes its own disk volumes.
+// removeClone undefines the shut-off clone with its reset points, and
+// deletes its own disk and NVRAM volumes. An NVRAM in a pool goes through
+// the storage API: an undefine that deletes it unlinks the file behind the
+// back of the storage driver, whose pool then still holds the name, and the
+// copy of the new clone's NVRAM under that name fails.
 func removeClone(h virt.Hypervisor, name string) error {
 	text, err := h.DomainXML(name, true)
 	if err != nil {
@@ -201,15 +247,24 @@ func removeClone(h virt.Hypervisor, name string) error {
 	if err != nil {
 		return err
 	}
+	var volumes []poolVolume
+	for _, disk := range disks {
+		volumes = append(volumes, poolVolume{disk.Pool, disk.Volume})
+	}
 	flags := virt.UndefineSnapshots
-	if _, ok := domxml.NVRAMOf(d); ok {
-		flags |= virt.UndefineNVRAM
+	if nv, ok := domxml.NVRAMOf(d); ok {
+		if pool, vol, err := h.VolumeByPath(nv.Path); err == nil {
+			flags |= virt.UndefineKeepNVRAM
+			volumes = append(volumes, poolVolume{pool, vol})
+		} else {
+			flags |= virt.UndefineNVRAM
+		}
 	}
 	if err := h.UndefineDomain(name, flags); err != nil {
 		return err
 	}
-	for _, disk := range disks {
-		if err := h.DeleteVolume(disk.Pool, disk.Volume); err != nil && !failure.Is(err, failure.NotFound) {
+	for _, v := range volumes {
+		if err := h.DeleteVolume(v.pool, v.name); err != nil && !failure.Is(err, failure.NotFound) {
 			return err
 		}
 	}

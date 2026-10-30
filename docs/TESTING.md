@@ -35,7 +35,7 @@ What a run creates:
 - One scratch domain per test, `werft-test-<track>-<name>` (for example `werft-test-fnd-uefi`), with
   its overlay, NVRAM and console log. The test removes them.
 - `TestProvisionLive` also makes the clone `werft-test-pp-prov-full`, with its disk and NVRAM copies
-  in the `werft-test` pool. The test removes them.
+  in the `werft-test` pool, and replaces it once. The test removes them.
 
 The test names never touch a build VM.
 

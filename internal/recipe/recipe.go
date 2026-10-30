@@ -102,6 +102,26 @@ func Load(path string) (*Recipe, error) {
 	return r, nil
 }
 
+// GuestPassword reads only [guest_password] of the recipe at path, for
+// prepare, which needs nothing else of it.
+func GuestPassword(path string) (secret.Spec, error) {
+	var f file
+	abs, err := filepath.Abs(ExpandHome(path))
+	if err == nil {
+		_, err = toml.DecodeFile(abs, &f)
+	}
+	if os.IsNotExist(err) {
+		return secret.Spec{}, failure.New(failure.NotFound, "recipe %s does not exist", abs)
+	}
+	if err != nil {
+		return secret.Spec{}, failure.Wrap(failure.Usage, err, "recipe %s", abs)
+	}
+	if f.GuestPassword == nil {
+		return secret.Spec{}, nil
+	}
+	return *f.GuestPassword, nil
+}
+
 func (r *Recipe) parse(f file, md toml.MetaData) error {
 	var unknown []string
 	for _, k := range md.Undecoded() {

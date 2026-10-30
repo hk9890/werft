@@ -47,9 +47,12 @@ type Host interface {
 
 // Run is the context the steps of one run share.
 type Run struct {
-	Ctx      context.Context
-	H        virt.Hypervisor
-	Shell    guest.Shell
+	Ctx   context.Context
+	H     virt.Hypervisor
+	Shell guest.Shell
+	// KeyShell logs in with the werft key alone; prepare asks it whether the
+	// guest accepts the key.
+	KeyShell guest.Shell
 	Host     Host
 	Secrets  secret.Store
 	Prompter Prompter

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/hostdev"
@@ -28,9 +29,10 @@ import (
 )
 
 const (
-	vm         = "testvm"
-	password   = "gu3st pw"
-	passphrase = "s3cr%t"
+	werftPubKey = "ssh-ed25519 AAAAwerft werft"
+	vm          = "testvm"
+	password    = "gu3st pw"
+	passphrase  = "s3cr%t"
 )
 
 // world is a build VM on the fake hypervisor with a fake guest, host,
@@ -47,6 +49,8 @@ type world struct {
 	out   bytes.Buffer
 	// screen is the console of every domain, the disk prompt of Omarchy.
 	screen []byte
+	// key is the werft key; only its public half exists.
+	key string
 
 	mu  sync.Mutex
 	log []string
@@ -90,7 +94,8 @@ const domainXML = `<domain type='kvm'>
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
-	w := &world{t: t, fake: virttest.New(), pass: map[string]string{}}
+	w := &world{t: t, fake: virttest.New(), pass: map[string]string{}, key: filepath.Join(t.TempDir(), "id_ed25519")}
+	must(t, os.WriteFile(w.key+".pub", []byte(werftPubKey+"\n"), 0o644))
 	w.h = &recorder{Fake: w.fake, w: w}
 	w.shell = &shell{w: w, fail: map[string]bool{}}
 	w.host = &host{w: w, display: true}
@@ -119,11 +124,15 @@ func must(t *testing.T, err error) {
 	}
 }
 
-// defineClone defines a shut-off testvm-full with a disk of its own.
+// defineClone defines a shut-off testvm-full with a disk and an NVRAM of
+// its own.
 func (w *world) defineClone() {
 	disk, err := w.fake.CreateVolume("default", "<volume><name>testvm-full.qcow2</name><capacity unit='G'>20</capacity><target><format type='qcow2'/></target></volume>")
 	must(w.t, err)
-	_, err = w.fake.DefineDomain(fmt.Sprintf(domainXML, "testvm-full", "testvm-full", disk.Path))
+	_, err = w.fake.CreateVolume("nvram", "<volume><name>testvm-full_VARS.qcow2</name><capacity>540672</capacity><target><format type='qcow2'/></target></volume>")
+	must(w.t, err)
+	xml := fmt.Sprintf(domainXML, "testvm-full", "testvm-full", disk.Path)
+	_, err = w.fake.DefineDomain(strings.Replace(xml, "52:54:00:00:00:01", "52:54:00:00:00:02", 1))
 	must(w.t, err)
 }
 
@@ -156,10 +165,10 @@ func (w *world) runWithCancel(entries []pipeline.Entry, cancel *context.CancelFu
 
 func (w *world) newRun(yes bool) *pipeline.Run {
 	return (&pipeline.Run{
-		H: w.h, Shell: w.shell, Host: w.host, Secrets: passStore{w}, Prompter: w.term,
+		H: w.h, Shell: w.shell, KeyShell: werftKeyShell{w.shell}, Host: w.host, Secrets: passStore{w}, Prompter: w.term,
 		Out: &w.out, Yes: yes, Sleep: func(time.Duration) {},
 		BuildVM: vm, Domain: vm, User: "tester", GuestDir: "/tmp/werft-provision",
-		SSHConfig: "/state/ssh_config", SSHKey: "/state/id_ed25519", LogPath: "/state/logs/p.log",
+		SSHConfig: "/state/ssh_config", SSHKey: w.key, LogPath: "/state/logs/p.log",
 		PasswordSpec: secret.Spec{Pass: "vm/guest-password", Prompt: "Password of tester in the VM testvm, for its sudo"},
 		Addr:         guest.Addr{User: "tester"},
 	}).Init()
@@ -257,8 +266,11 @@ type shell struct {
 	w       *world
 	omarchy bool
 	luks    bool
-	// keyRejected makes sshd refuse the werft key until ssh-copy-id ran.
+	// keyRejected makes sshd refuse every key until ssh-copy-id ran.
 	keyRejected bool
+	// userKeyOnly makes sshd accept the user's own key, and the werft key
+	// only once it is in authorized_keys.
+	userKeyOnly bool
 	// fail makes a command that matches a pattern fail.
 	fail map[string]bool
 	// onRun is called with each command before it runs.
@@ -308,13 +320,44 @@ func (s *shell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.R
 		return exit(s.luks)
 	case strings.Contains(cmd, "systemctl poweroff"):
 		for _, d := range s.running() {
-			s.w.fake.SetState(d, virt.StateShutOff)
+			if s.address(d) == addr.Host {
+				s.w.fake.SetState(d, virt.StateShutOff)
+			}
 		}
 		return fmt.Errorf("connection closed")
+	case strings.Contains(cmd, "authorized_keys"):
+		s.userKeyOnly = false
 	case strings.Contains(cmd, "unlock-keyring.js"):
 		_, _ = io.WriteString(stdout, "/org/freedesktop/secrets/collection/login\n")
 	}
 	return nil
+}
+
+// address is the IP the recorder leases to the domain's MAC.
+func (s *shell) address(domain string) string {
+	text, _ := s.w.fake.DomainXML(domain, false)
+	d, err := domxml.Parse(text)
+	if err != nil {
+		return ""
+	}
+	for _, i := range domxml.Interfaces(d) {
+		leases, _ := s.w.h.DHCPLeases(i.Network, i.MAC)
+		for _, l := range leases {
+			return l.IP
+		}
+	}
+	return ""
+}
+
+// werftKeyShell is the guest as a login with the werft key alone sees it.
+type werftKeyShell struct{ *shell }
+
+func (s werftKeyShell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if s.userKeyOnly && len(s.running()) > 0 {
+		_, _ = io.WriteString(stderr, "tester@host: Permission denied (publickey,password).\n")
+		return &guest.ExitError{Code: 255}
+	}
+	return s.shell.Run(ctx, addr, cmd, stdin, stdout, stderr)
 }
 
 func exit(ok bool) error {

@@ -32,9 +32,9 @@ func TestClone(t *testing.T) {
 	if nv != want {
 		t.Errorf("nvram = %+v, want %+v", nv, want)
 	}
-	macs := domxml.MACs(c)
-	if len(macs) != 1 || macs[0] == "52:54:00:aa:bb:cc" || !strings.HasPrefix(macs[0], "52:54:00:") {
-		t.Errorf("MACs = %q", macs)
+	ifaces := domxml.Interfaces(c)
+	if mac := ifaces[0].MAC; mac == "52:54:00:aa:bb:cc" || !strings.HasPrefix(mac, "52:54:00:") || ifaces[1].MAC != "" {
+		t.Errorf("Interfaces = %+v", ifaces)
 	}
 	if _, ok := domxml.VsockCID(c); ok {
 		t.Error("the clone kept the CID of its source")
@@ -46,8 +46,8 @@ func TestClone(t *testing.T) {
 		t.Error("Clone changed its source")
 	}
 	text, err := c.Marshal()
-	if err != nil || !strings.Contains(text, `<disk type="file" device="disk">`) {
-		t.Errorf("marshal: %v\n%s", err, text)
+	if err != nil || strings.Count(text, `<disk type="file" device="disk">`) != 2 || strings.Contains(text, `type="volume"`) {
+		t.Errorf("a copied disk, the volume one too, is not a file disk: %v\n%s", err, text)
 	}
 }
 

@@ -95,7 +95,49 @@ func TestProvisionAsksEverythingBeforeItChangesAnything(t *testing.T) {
 		"^pass show vm/guest-password$", "^secret Password of tester", "^secret GPG passphrase",
 		"^DestroyDomain testvm$", "^RevertSnapshot")
 	w.assertSequence("the old clone goes before the new one is defined",
-		"^UndefineDomain testvm-full$", "^DeleteVolume testvm-full.qcow2$", "^CreateVolumeFrom testvm-full.qcow2", "^DefineDomain testvm-full$")
+		"^UndefineDomain testvm-full$", "^DeleteVolume testvm-full.qcow2$", "^DeleteVolume testvm-full_VARS.qcow2$",
+		"^CreateVolumeFrom testvm-full.qcow2", "^CreateVolumeFrom testvm-full_VARS.qcow2", "^DefineDomain testvm-full$")
+}
+
+func TestProvisionReplacesACloneTwice(t *testing.T) {
+	w := newWorld(t)
+	for range 2 {
+		if _, err := provision(t, w, true); err != nil {
+			t.Fatalf("provision: %v", err)
+		}
+	}
+	if _, err := w.fake.Domain("testvm-full"); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestProvisionRefusesACloneStartedDuringTheRun(t *testing.T) {
+	w := newWorld(t)
+	w.defineClone()
+	w.shell.onRun = func(cmd string) {
+		if strings.Contains(cmd, "bootstrap.sh") {
+			must(t, w.fake.StartDomain("testvm-full"))
+		}
+	}
+	_, err := provision(t, w, true)
+	if !failure.Is(err, failure.Conflict) || !strings.Contains(err.Error(), "testvm-full is running") {
+		t.Fatalf("err = %v", err)
+	}
+	if i := w.index("^(UndefineDomain|DeleteVolume) testvm-full"); i >= 0 {
+		t.Errorf("the running clone was touched: %q", w.entries()[i])
+	}
+}
+
+func TestProvisionRefusesAnNVRAMOutsideEveryPool(t *testing.T) {
+	w := newWorld(t)
+	must(t, w.fake.DeleteVolume("nvram", "testvm_VARS.qcow2"))
+	_, err := provision(t, w, true)
+	if !failure.Is(err, failure.NotFound) || !strings.Contains(err.Error(), "is in no storage pool") {
+		t.Fatalf("err = %v", err)
+	}
+	if w.index("^RevertSnapshot") >= 0 {
+		t.Error("provision reset the build VM")
+	}
 }
 
 func TestProvisionWithoutTerminalChangesNothing(t *testing.T) {
@@ -170,9 +212,9 @@ func TestFailedBootstrapUndoesTheTemporaryChanges(t *testing.T) {
 	}
 	w.assertSequence("the cleanups run newest first",
 		"bootstrap.sh", "grep -vxF", "rm -f .* sh '/etc/sudoers.d/90-werft-provision'$",
-		"^DetachDevice testvm$", "^host mount stick$", "mv -f .* sh '/etc/gdm3/custom.conf'$", "^viewer close testvm$")
-	if w.count("systemctl poweroff") != 0 || w.count("restart gdm") != 1 {
-		t.Error("the failed run did not leave the VM running with its session")
+		"^DetachDevice testvm$", "^host mount stick$", "mv -f .* sh '/etc/gdm3/custom.conf'$")
+	if w.count("systemctl poweroff") != 0 || w.count("restart gdm") != 1 || w.count("^viewer close") != 0 {
+		t.Error("the failed run did not leave the VM running with its session and its window")
 	}
 	if s, _ := w.fake.DomainState(vm); s != virt.StateRunning {
 		t.Errorf("testvm is %s", s)
@@ -203,7 +245,7 @@ func TestInterruptedProvisionCleansUp(t *testing.T) {
 	if _, err := w.runWithCancel(entries, &cancel); err == nil {
 		t.Fatal("an interrupted run succeeded")
 	}
-	w.assertSequence("SIGINT pops the cleanup stack", "bootstrap.sh", "grep -vxF", "rm -f .*90-werft-provision", "^DetachDevice", "mv -f .*custom.conf", "^viewer close")
+	w.assertSequence("SIGINT pops the cleanup stack", "bootstrap.sh", "grep -vxF", "rm -f .*90-werft-provision", "^DetachDevice", "mv -f .*custom.conf")
 }
 
 func TestProvisionOmarchy(t *testing.T) {

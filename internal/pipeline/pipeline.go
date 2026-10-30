@@ -1,17 +1,21 @@
 // Package pipeline runs the steps of prepare and provision (docs/DESIGN.md,
 // "Provision pipeline"). Every step's check runs before any step runs, so all
 // questions come before the first destructive action, and every secret is
-// read after the last question. A step's cleanup is pushed before the step
-// runs, and the stack is popped in reverse on success, on failure and on
-// SIGINT.
+// read after the last question. SIGINT and SIGTERM are caught only after
+// that, so they end a prompt as they always do. A step's cleanup is pushed
+// before the step runs, and the stack is popped in reverse on success, on
+// failure and on SIGINT.
 package pipeline
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/secret"
@@ -30,6 +34,14 @@ type Step interface {
 // twice, and after a run that stopped half-way.
 type Cleaner interface {
 	Cleanup(r *Run) error
+}
+
+// Inspector is a Cleaner whose change helps a person inspect a failed run,
+// so it stays when the run fails. Its cleanup runs through Undo and after a
+// run that succeeded.
+type Inspector interface {
+	Cleaner
+	KeepOnFailure()
 }
 
 // Entry is a step in a pipeline. ID names it for Undo; it defaults to Name.
@@ -64,9 +76,12 @@ func Execute(r *Run, entries []Entry) error {
 	if err := r.readSecrets(); err != nil {
 		return err
 	}
+	ctx, stop := signal.NotifyContext(r.Ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	r.Ctx = ctx
 	err := run(r, entries)
 	r.Ctx = context.Background()
-	if cerr := r.popAll(); err == nil && cerr != nil {
+	if cerr := r.popAll(err != nil); err == nil && cerr != nil {
 		err = cerr
 	}
 	if err != nil {
@@ -77,6 +92,9 @@ func Execute(r *Run, entries []Entry) error {
 
 func run(r *Run, entries []Entry) error {
 	for i, e := range entries {
+		if err := r.Ctx.Err(); err != nil {
+			return failure.Wrap(failure.Failed, err, "interrupted before %s", e.Name)
+		}
 		if e.Family != "" && e.Family != r.Family {
 			r.Printf("[%d/%d] %s: skipped, %s is no %s guest", i+1, len(entries), e.Name, r.Domain, e.Family)
 			continue
@@ -88,20 +106,24 @@ func run(r *Run, entries []Entry) error {
 		if err := e.Step.Run(r); err != nil {
 			return failure.Wrap(failure.KindOf(err), err, "%s", e.Name)
 		}
-		if err := r.Ctx.Err(); err != nil {
-			return failure.Wrap(failure.Failed, err, "interrupted after %s", e.Name)
-		}
+	}
+	if err := r.Ctx.Err(); err != nil {
+		return failure.Wrap(failure.Failed, err, "interrupted after the last step")
 	}
 	return nil
 }
 
 // popAll runs every cleanup left on the stack, newest first. A failed
-// cleanup does not stop the others.
-func (r *Run) popAll() error {
+// cleanup does not stop the others. After a failed run an Inspector keeps
+// its change.
+func (r *Run) popAll(failed bool) error {
 	var errs []error
 	for len(r.stack) > 0 {
 		p := r.stack[len(r.stack)-1]
 		r.stack = r.stack[:len(r.stack)-1]
+		if _, keep := p.cleaner.(Inspector); keep && failed {
+			continue
+		}
 		if err := p.cleaner.Cleanup(r); err != nil {
 			r.Printf("warning: the cleanup of %s failed: %v", p.id, err)
 			errs = append(errs, fmt.Errorf("cleanup of %s: %w", p.id, err))
@@ -110,9 +132,10 @@ func (r *Run) popAll() error {
 	return errors.Join(errs...)
 }
 
-// Undo runs the cleanup of the newest pushed step with ID now and takes it
-// off the stack, so a temporary change ends where the recipe says. Nothing
-// happens when no such step ran.
+// Undo runs the cleanup of the newest pushed step with ID now, so a
+// temporary change ends where the recipe says, and takes it off the stack
+// once it succeeded. A failed cleanup stays on the stack, so the end of the
+// run tries it again. Nothing happens when no such step ran.
 type Undo struct{ ID string }
 
 func (Undo) Check(*Run) error { return nil }
@@ -122,9 +145,11 @@ func (u Undo) Run(r *Run) error {
 		if r.stack[i].id != u.ID {
 			continue
 		}
-		c := r.stack[i].cleaner
+		if err := r.stack[i].cleaner.Cleanup(r); err != nil {
+			return err
+		}
 		r.stack = slices.Delete(r.stack, i, i+1)
-		return c.Cleanup(r)
+		return nil
 	}
 	return nil
 }

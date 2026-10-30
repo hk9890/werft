@@ -1,6 +1,9 @@
 package steps
 
 import (
+	"bytes"
+	"os"
+
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/pipeline"
 )
@@ -65,8 +68,8 @@ func (p *PrepareBoot) Run(r *pipeline.Run) error {
 
 // PrepareSSH waits for sshd, with the install commands for a guest that has
 // none, and installs the werft key when the guest does not accept it. One
-// login attempt says both whether sshd is up and whether it knows the key:
-// "Permission denied" comes from sshd itself.
+// login attempt with the werft key alone says both whether sshd is up and
+// whether it knows the key: "Permission denied" comes from sshd itself.
 type PrepareSSH struct{ window *window }
 
 func (PrepareSSH) Check(*pipeline.Run) error { return nil }
@@ -92,14 +95,37 @@ func (p *PrepareSSH) Run(r *pipeline.Run) error {
 	}
 	r.Printf("SSH server answers in %s", r.Domain)
 	if !accepted {
-		r.Printf("Copying the werft key into %s; ssh asks for the password of %s in the VM %s, as %s", r.Domain, r.User, r.Domain, r.Addr)
-		if err := r.Host.CopySSHKey(r.Addr, r.SSHKey+".pub"); err != nil {
-			return failure.Wrap(failure.Failed, err, "could not copy the SSH key into %s; ssh-copy-id says why, above; the user in the VM must be %s", r.Domain, r.User)
+		if err := installKey(r); err != nil {
+			return err
 		}
-		if !r.Probe("true") {
+		if ok, _ := sshReply(r, r.Addr.Host); !ok {
 			return failure.New(failure.Failed, "%s still rejects the werft key", r.Domain)
 		}
 	}
 	r.Printf("%s accepts the werft key", r.Domain)
+	return nil
+}
+
+// appendKey adds the key on stdin to authorized_keys, on a line of its own.
+const appendKey = `umask 077 && mkdir -p ~/.ssh && f=~/.ssh/authorized_keys && { if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then echo; fi; cat; } >>"$f"`
+
+// installKey adds the werft key over a login with the user's own key, so no
+// password is asked for, and else with ssh-copy-id.
+func installKey(r *pipeline.Run) error {
+	if r.Probe("true") {
+		r.Printf("Adding the werft key to %s over the login with your own key", r.Domain)
+		pub, err := os.ReadFile(r.SSHKey + ".pub")
+		if err != nil {
+			return failure.Wrap(failure.Failed, err, "read the werft key")
+		}
+		if err := r.Exec(appendKey, bytes.NewReader(pub)); err != nil {
+			return failure.Wrap(failure.Failed, err, "could not add the werft key to ~/.ssh/authorized_keys in %s", r.Domain)
+		}
+		return nil
+	}
+	r.Printf("Copying the werft key into %s; ssh asks for the password of %s in the VM %s, as %s", r.Domain, r.User, r.Domain, r.Addr)
+	if err := r.Host.CopySSHKey(r.Addr, r.SSHKey+".pub"); err != nil {
+		return failure.Wrap(failure.Failed, err, "could not copy the SSH key into %s; ssh-copy-id says why, above; the user in the VM must be %s", r.Domain, r.User)
+	}
 	return nil
 }

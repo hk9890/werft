@@ -110,7 +110,7 @@ func TestUndefineOfARunningDomainKeepsItUntilItStops(t *testing.T) {
 	mustKind(t, err, failure.NotFound)
 }
 
-func TestUndefineNVRAMDeletesTheVolume(t *testing.T) {
+func TestUndefineNVRAMLeavesTheNameInThePool(t *testing.T) {
 	f := virttest.New()
 	newPool(t, f)
 	if _, err := f.CreateVolume("pool", "<volume><name>vm1-vars.qcow2</name></volume>"); err != nil {
@@ -122,8 +122,11 @@ func TestUndefineNVRAMDeletesTheVolume(t *testing.T) {
 	if err := f.UndefineDomain("vm1", virt.UndefineNVRAM); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.VolumePath("pool", "vm1-vars.qcow2")
-	mustKind(t, err, failure.NotFound)
+	_, err := f.CreateVolume("pool", "<volume><name>vm1-vars.qcow2</name></volume>")
+	mustKind(t, err, failure.Conflict)
+	if err := f.DeleteVolume("pool", "vm1-vars.qcow2"); err != nil {
+		t.Fatalf("delete of the stale name: %v", err)
+	}
 }
 
 func TestSnapshotsRestoreTheDefinition(t *testing.T) {

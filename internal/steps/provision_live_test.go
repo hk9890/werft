@@ -100,7 +100,7 @@ func TestProvisionLive(t *testing.T) {
 	livetest.Must(t, err, "load recipe")
 
 	config := filepath.Join(dir, "ssh_config")
-	livetest.Must(t, guest.WriteConfig(config, []string{g.Key.Private}), "write ssh_config")
+	livetest.Must(t, guest.WriteConfig(config, g.Key.Private), "write ssh_config")
 	var out bytes.Buffer
 	r := (&pipeline.Run{
 		H: h, Shell: guest.OpenSSH{Config: config}, Host: noHost{}, Prompter: noPrompter{},
@@ -144,6 +144,19 @@ func TestProvisionLive(t *testing.T) {
 		t.Errorf("%s: machine-id, hostname, marker = %q; build VM machine-id %s", clone, lines, buildID[1])
 	}
 	livetest.Must(t, h.DestroyDomain(clone), "stop "+clone)
+
+	// A second provision replaces the clone. Its NVRAM copy takes the name
+	// of the old one, which the pool must not hold any more.
+	again := (&pipeline.Run{
+		H: h, Shell: r.Shell, Host: noHost{}, Prompter: noPrompter{}, Out: testWriter{t}, Yes: true,
+		BuildVM: g.Name, Domain: g.Name, User: "root", SSHConfig: config,
+	}).Init()
+	if err := pipeline.Execute(again, []pipeline.Entry{{Name: "clone", Step: steps.Clone{}}}); err != nil {
+		t.Fatalf("replace %s: %v", clone, err)
+	}
+	if _, err := h.Domain(clone); err != nil {
+		t.Errorf("no %s after the replace: %v", clone, err)
+	}
 }
 
 // removeClone removes the clone a provision run made, with its NVRAM and

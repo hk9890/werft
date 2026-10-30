@@ -1,13 +1,10 @@
 package main
 
 import (
-	"context"
 	"io"
 	"os"
-	"os/signal"
 	"os/user"
 	"path/filepath"
-	"syscall"
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
@@ -60,16 +57,13 @@ func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run,
 		return fail(err)
 	}
 	home, _ := os.UserHomeDir()
-	identities := []string{dir.SSHKey(), filepath.Join(home, ".ssh", "id_ed25519")}
-	if err := guest.WriteConfig(dir.SSHConfig(), identities); err != nil {
+	if err := guest.WriteConfig(dir.SSHConfig(), dir.SSHKey(), filepath.Join(home, ".ssh", "id_ed25519")); err != nil {
 		return fail(failure.Wrap(failure.Failed, err, "write %s", dir.SSHConfig()))
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	closers = append(closers, stop)
 	r = (&pipeline.Run{
-		Ctx:       ctx,
 		H:         h,
 		Shell:     guest.OpenSSH{Config: dir.SSHConfig()},
+		KeyShell:  guest.OpenSSH{Config: dir.SSHConfig(), KeyOnly: true},
 		Host:      steps.System{User: u.Username, Out: out},
 		Secrets:   secret.Pass{},
 		Prompter:  prompter{c},

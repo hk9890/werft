@@ -205,13 +205,14 @@ func checkDHCPLease(t *testing.T, h virt.Hypervisor, g *livetest.Guest) {
 	livetest.Must(t, err, "inactive XML")
 	d, err := domxml.Parse(x)
 	livetest.Must(t, err, "parse")
-	macs := domxml.MACs(d)
-	if len(macs) != 1 {
-		t.Fatalf("MACs = %v", macs)
+	ifaces := domxml.Interfaces(d)
+	if len(ifaces) != 1 || ifaces[0].MAC == "" {
+		t.Fatalf("Interfaces = %+v", ifaces)
 	}
+	mac := ifaces[0].MAC
 	var leases []virt.DHCPLease
-	eventually(t, time.Minute, "DHCP lease for "+macs[0], func() bool {
-		leases, err = h.DHCPLeases("default", macs[0])
+	eventually(t, time.Minute, "DHCP lease for "+mac, func() bool {
+		leases, err = h.DHCPLeases("default", mac)
 		livetest.Must(t, err, "DHCP leases")
 		return len(leases) > 0
 	})

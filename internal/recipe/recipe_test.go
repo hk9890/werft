@@ -3,11 +3,14 @@ package recipe_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/pipeline"
 	"github.com/hk9890/werft/internal/recipe"
+	"github.com/hk9890/werft/internal/steps"
 )
 
 // write puts a recipe and a script and a check directory next to it.
@@ -143,5 +146,42 @@ func TestExpandHome(t *testing.T) {
 	}
 	if got := recipe.ExpandHome("a/~/b"); got != "a/~/b" {
 		t.Errorf("ExpandHome = %q", got)
+	}
+}
+
+func TestGuestPasswordReadsNothingElse(t *testing.T) {
+	path := write(t, `
+[guest_password]
+pass = "vm/guest-password"
+
+[[steps]]
+type = "checks"
+dir = "~/no/such/checks"
+`)
+	spec, err := recipe.GuestPassword(path)
+	if err != nil || spec.Pass != "vm/guest-password" {
+		t.Errorf("GuestPassword = %+v, %v", spec, err)
+	}
+	if _, err := recipe.Load(path); err == nil {
+		t.Error("control: Load accepts the missing checks dir")
+	}
+	_, err = recipe.GuestPassword(filepath.Join(t.TempDir(), "none.toml"))
+	if !failure.Is(err, failure.NotFound) {
+		t.Errorf("missing recipe: %v", err)
+	}
+}
+
+// undo can name exactly the step types whose step has a cleanup.
+func TestUndoableAreTheStepsWithACleanup(t *testing.T) {
+	for _, typ := range recipe.StepTypes() {
+		entries := steps.FromRecipe(&recipe.Recipe{Steps: []recipe.Step{{Type: typ}}})
+		if len(entries) != 1 || entries[0].Step == nil {
+			t.Errorf("%s makes no step", typ)
+			continue
+		}
+		_, cleans := entries[0].Step.(pipeline.Cleaner)
+		if undoable := slices.Contains(recipe.Undoable, typ); cleans != undoable {
+			t.Errorf("%s: has a cleanup %v, in Undoable %v", typ, cleans, undoable)
+		}
 	}
 }

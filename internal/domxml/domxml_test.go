@@ -76,9 +76,6 @@ func TestUEFIDomain(t *testing.T) {
 	if cid, ok := domxml.VsockCID(d); !ok || cid != 42 {
 		t.Errorf("VsockCID = %d, %v", cid, ok)
 	}
-	if got := domxml.MACs(d); !reflect.DeepEqual(got, []string{"52:54:00:aa:bb:cc"}) {
-		t.Errorf("MACs = %v", got)
-	}
 	if got := domxml.Description(d); got != "first line\nvm: the disk asks for the guest password at boot" {
 		t.Errorf("Description = %q", got)
 	}
@@ -101,8 +98,8 @@ func TestBIOSDomain(t *testing.T) {
 	if _, ok := domxml.VsockCID(d); ok {
 		t.Error("VsockCID found a CID in an inactive auto vsock")
 	}
-	if domxml.Disks(d) != nil || domxml.MACs(d) != nil {
-		t.Error("found disks or MACs in a domain without them")
+	if domxml.Disks(d) != nil || domxml.Interfaces(d) != nil {
+		t.Error("found disks or interfaces in a domain without them")
 	}
 }
 

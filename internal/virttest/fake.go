@@ -350,7 +350,9 @@ func (f *Fake) stop(method, name string) error {
 
 // UndefineDomain follows libvirt: a domain with snapshots needs
 // UndefineSnapshots, a domain with NVRAM needs UndefineNVRAM or
-// UndefineKeepNVRAM. UndefineNVRAM deletes a pool volume at the NVRAM path.
+// UndefineKeepNVRAM. UndefineNVRAM keeps a pool volume at the NVRAM path, as
+// libvirt does: the qemu driver unlinks the file and does not tell the
+// storage driver, so the pool still holds the name.
 // A running domain becomes transient: it keeps running and goes away when it
 // stops.
 func (f *Fake) UndefineDomain(name string, flags virt.UndefineFlags) error {
@@ -373,11 +375,8 @@ func (f *Fake) UndefineDomain(name string, flags virt.UndefineFlags) error {
 	if err != nil {
 		return failure.Wrap(failure.Failed, err, "undefine %s", name)
 	}
-	if nvram, ok := domxml.NVRAMOf(x); ok {
-		switch {
-		case flags&virt.UndefineNVRAM != 0:
-			f.deleteVolumeAt(nvram.Path)
-		case flags&virt.UndefineKeepNVRAM == 0:
+	if _, ok := domxml.NVRAMOf(x); ok {
+		if flags&(virt.UndefineNVRAM|virt.UndefineKeepNVRAM) == 0 {
 			return failure.New(failure.Conflict, "cannot undefine domain %s with nvram", name)
 		}
 	}
@@ -387,16 +386,6 @@ func (f *Fake) UndefineDomain(name string, flags virt.UndefineFlags) error {
 		d.transient = true
 	}
 	return nil
-}
-
-func (f *Fake) deleteVolumeAt(path string) {
-	for _, p := range f.pools {
-		for name, v := range p.volumes {
-			if v.path == path {
-				delete(p.volumes, name)
-			}
-		}
-	}
 }
 
 func (f *Fake) DomainState(name string) (virt.State, error) {

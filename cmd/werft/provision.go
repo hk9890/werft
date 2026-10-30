@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hk9890/werft/internal/ansi"
 	"github.com/hk9890/werft/internal/config"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/pipeline"
@@ -57,7 +58,7 @@ func (c *cli) cmdProvision(args []string) error {
 	}
 	defer func() { _ = log.Close() }()
 
-	r, done, err := c.buildVMRun(name, *yes, io.MultiWriter(c.stderr, log))
+	r, done, err := c.buildVMRun(name, *yes, io.MultiWriter(c.stderr, ansi.Strip(log)))
 	if err != nil {
 		return err
 	}
@@ -89,11 +90,9 @@ func (c *cli) cmdPrepare(args []string) error {
 	if path, err := configuredRecipe(name); err != nil {
 		return err
 	} else if path != "" {
-		rec, err := recipe.Load(path)
-		if err != nil {
+		if spec, err = recipe.GuestPassword(path); err != nil {
 			return err
 		}
-		spec = rec.GuestPassword
 	}
 	dir, err := state.Root()
 	if err != nil {

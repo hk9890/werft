@@ -15,8 +15,6 @@ import (
 	"github.com/hk9890/werft/internal/secret"
 )
 
-func rootCommand(script string, args ...string) string { return guest.RootCommand(script, args...) }
-
 // sessionEnv lets an SSH command reach the bus of the desktop session.
 const sessionEnv = `env XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus`
 

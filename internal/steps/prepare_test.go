@@ -1,6 +1,7 @@
 package steps_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,7 +59,27 @@ func TestPrepareCopiesTheKey(t *testing.T) {
 		t.Fatalf("prepare: %v", err)
 	}
 	w.assertSequence("the key goes in before the first root step",
-		"^ssh-copy-id /state/id_ed25519.pub tester@192.168.122.01$", "^ssh true$", "sh -c 'true' sh$")
+		"^ssh-copy-id .*/id_ed25519.pub tester@192.168.122.01$", "^ssh true$", "sh -c 'true' sh$")
+}
+
+func TestPrepareAddsTheKeyOverTheUsersOwnKey(t *testing.T) {
+	w := freshWorld(t)
+	w.shell.userKeyOnly = true
+	if _, err := w.run(steps.Prepare(), false); err != nil {
+		t.Fatalf("prepare: %v\n%s", err, w.out.String())
+	}
+	w.assertSequence("the werft key goes in over the working login, before the first root step",
+		"^ssh true$", "^ssh umask 077 .*authorized_keys", "^ssh true$", "sh -c 'true' sh$")
+	if w.index("^ssh-copy-id") >= 0 {
+		t.Error("ssh-copy-id asked for a password though a key worked")
+	}
+	added := slices.ContainsFunc(w.shell.stdin, func(s string) bool {
+		cmd, data, _ := strings.Cut(s, "\x00")
+		return strings.Contains(cmd, "authorized_keys") && data == werftPubKey+"\n"
+	})
+	if !added {
+		t.Errorf("authorized_keys did not get the werft key: %q", w.shell.stdin)
+	}
 }
 
 func TestPrepareOmarchyMarksTheDisk(t *testing.T) {
