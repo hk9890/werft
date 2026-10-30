@@ -74,6 +74,9 @@ type Run struct {
 	// half too, so ssh <name> works without werft.
 	UserKey string
 	LogPath string
+	// KeyMount is where the usb-passthrough stick is mounted on the host;
+	// empty means the stick's label under the user's media directory.
+	KeyMount string
 	// PasswordSpec says where the guest password comes from.
 	PasswordSpec secret.Spec
 

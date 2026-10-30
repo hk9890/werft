@@ -347,3 +347,18 @@ func TestFailedCloneLeavesNoVolumes(t *testing.T) {
 	w.assertSequence("the copies go again", "^CreateVolumeFrom testvm-full.qcow2", "^CreateVolumeFrom testvm-full_VARS.qcow2",
 		"^DeleteVolume testvm-full.qcow2$", "^DeleteVolume testvm-full_VARS.qcow2$")
 }
+
+// libvirt copies the disk of a running guest without a word; the copy would
+// be inconsistent.
+func TestCloneRefusesARunningSource(t *testing.T) {
+	w := newWorld(t)
+	w.defineClone()
+	must(t, w.fake.StartDomain(vm))
+	_, err := w.run([]pipeline.Entry{{Name: "clone", Step: steps.Clone{}}}, true)
+	if !failure.Is(err, failure.Conflict) || !strings.Contains(err.Error(), "testvm is running") || !strings.Contains(err.Error(), "poweroff") {
+		t.Fatalf("err = %v", err)
+	}
+	if i := w.index("^(UndefineDomain|DeleteVolume|CreateVolumeFrom|DefineDomain)"); i >= 0 {
+		t.Errorf("clone acted on a running source: %q", w.entries()[i])
+	}
+}

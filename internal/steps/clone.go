@@ -52,9 +52,17 @@ func requireShutOff(h virt.Hypervisor, name string) (bool, error) {
 	return true, nil
 }
 
-// Run checks the clone again: the run took long since preflight, and
-// virt-manager can have started it in between.
+// Run refuses a running source: a copy of the disk and NVRAM of a running
+// guest is inconsistent. It checks the clone again: the run took long since
+// preflight, and virt-manager can have started it in between.
 func (Clone) Run(r *pipeline.Run) error {
+	state, err := r.H.DomainState(r.Domain)
+	if err != nil {
+		return err
+	}
+	if state != virt.StateShutOff {
+		return failure.New(failure.Conflict, "%s is %s; clone copies its disk, so a poweroff step must come before clone", r.Domain, state)
+	}
 	t := target(r)
 	exists, err := requireShutOff(r.H, t)
 	if err != nil {

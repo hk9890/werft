@@ -255,3 +255,56 @@ func TestPrepareInterruptedInTheSSHWaitGivesNoAdvice(t *testing.T) {
 		t.Errorf("an interrupt got the advice for a guest without sshd:\n%s", w.out.String())
 	}
 }
+
+// A vsock CID is in the live XML from the start, while an encrypted disk
+// still holds the guest without network: only a DHCP lease is an address.
+func TestPrepareWaitsForALeaseNotAVsockCID(t *testing.T) {
+	w := freshWorld(t)
+	text, err := w.fake.DomainXML(vm, true)
+	must(t, err)
+	_, err = w.fake.DefineDomain(strings.Replace(text, "</devices>", "<vsock model='virtio'><cid auto='yes'/></vsock></devices>", 1))
+	must(t, err)
+	w.h.noLeases = true
+	_, err = w.run(steps.Prepare(), false)
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "testvm took no address") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(w.out.String(), "If its disk asks for a password, type it in its window") || w.count("^viewer open testvm") != 1 {
+		t.Errorf("want the disk password advice and one window:\n%s", w.out.String())
+	}
+	if cid, _ := virt.DomainAddresses(w.fake, vm); cid == "" {
+		t.Error("the domain got no vsock CID; the test proves nothing")
+	}
+}
+
+// LUKSMark changes only the marker line; the user's text, blank lines too,
+// stays as it is.
+func TestPrepareKeepsTheBlankLinesOfTheDescription(t *testing.T) {
+	const notes = "my notes\n\nmore"
+	tests := []struct {
+		name       string
+		desc, want string
+		luks       bool
+	}{
+		{"no LUKS", notes, notes, false},
+		{"LUKS", notes, notes + "\n" + domxml.LUKSMarker, true},
+		{"LUKS gone", notes + "\n" + domxml.LUKSMarker, notes, false},
+		{"empty, LUKS", "", domxml.LUKSMarker, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := freshWorld(t)
+			must(t, w.fake.SetDomainDescription(vm, tt.desc))
+			w.shell.luks = tt.luks
+			if _, err := w.run(steps.Prepare(), false); err != nil {
+				t.Fatalf("prepare: %v", err)
+			}
+			if desc, _ := w.fake.DomainDescription(vm); desc != tt.want {
+				t.Errorf("description = %q, want %q", desc, tt.want)
+			}
+			if tt.desc == tt.want && w.index("^SetDomainDescription") >= 0 {
+				t.Error("an unchanged description was rewritten")
+			}
+		})
+	}
+}

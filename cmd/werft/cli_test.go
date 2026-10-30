@@ -166,6 +166,9 @@ func TestProvisionUsage(t *testing.T) {
 		{[]string{"provision", "ubuntu-26-04-full"}, "provision its build VM, ubuntu-26-04"},
 		{[]string{"provision", "ubuntu-26-04"}, "no recipe for ubuntu-26-04"},
 		{[]string{"prepare", "omarchy-full"}, "prepare its build VM, omarchy"},
+		{[]string{"provision", "-y"}, "provision takes one build VM name"},
+		{[]string{"prepare", "-y"}, "prepare takes one build VM name"},
+		{[]string{"migrate", "-y"}, "migrate takes one build VM name"},
 	}
 	for _, tt := range tests {
 		r := runCLI("", false, tt.args...)

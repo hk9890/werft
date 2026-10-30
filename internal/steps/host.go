@@ -46,7 +46,8 @@ func (Viewer) Cleanup(r *pipeline.Run) error {
 // UsbPassthrough hands a host USB stick to the guest, live only: the device
 // never enters the persistent XML, so neither a reset point nor the clone
 // references it. The host lets go of the stick first; the cleanup takes it
-// back.
+// back. The stick is the one mounted at Run.KeyMount, or with its label
+// under the user's media directory.
 type UsbPassthrough struct {
 	Label string
 
@@ -56,7 +57,10 @@ type UsbPassthrough struct {
 }
 
 func (u *UsbPassthrough) Check(r *pipeline.Run) error {
-	mount := r.Host.StickMount(u.Label)
+	mount := r.KeyMount
+	if mount == "" {
+		mount = r.Host.StickMount(u.Label)
+	}
 	s, err := r.Host.FindStick(mount)
 	if err != nil {
 		return err
