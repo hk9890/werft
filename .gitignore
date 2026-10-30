@@ -1,0 +1,7 @@
+/bin/
+/dist/
+/werft
+coverage.out
+*.test
+.idea/
+.claude/worktrees/

@@ -1,0 +1,43 @@
+[tools]
+go = "1.27.2"
+"go:golang.org/x/tools/cmd/goimports" = "0.52.0"
+"go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.14.0"
+
+[env]
+CGO_ENABLED = "0"
+
+[tasks.build]
+description = "Build the werft binary into ./bin"
+run = """
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PKG=github.com/hk9890/werft/internal/build
+go build -ldflags "-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT -X $PKG.Date=$DATE" -o bin/werft ./cmd/werft
+"""
+
+[tasks.test]
+description = "Unit tests"
+run = "go test ./..."
+
+[tasks.fmt]
+description = "Format Go source (goimports)"
+run = "goimports -local github.com/hk9890/werft -w cmd internal"
+
+[tasks."fmt:check"]
+description = "Fail if any file is not formatted"
+run = """
+OUT=$(goimports -local github.com/hk9890/werft -l cmd internal 2>&1) || { echo "goimports failed:"; echo "$OUT"; exit 1; }
+if [ -n "$OUT" ]; then echo "unformatted:"; echo "$OUT"; exit 1; fi
+"""
+
+[tasks.vet]
+run = "go vet ./..."
+
+[tasks.lint]
+description = "golangci-lint at the pinned version"
+run = "golangci-lint run --timeout=5m ./..."
+
+[tasks.check]
+description = "Everything CI runs"
+depends = ["fmt:check", "vet", "lint", "test"]

@@ -1,0 +1,149 @@
+# werft — product
+
+werft (German for shipyard) is a VM lab on one Linux workstation. Agents and humans use it to get a
+disposable VM, test something in it, and give it back. Agents are the main users.
+
+werft replaces the bash tool `vm` in the setup repo (`scripts/vm/` in `carlo9890/setup`). That tool
+stays in use until werft reaches parity.
+
+Technical design: [DESIGN.md](DESIGN.md).
+
+## What werft is
+
+- A command-line tool that manages libvirt VMs on the local host (`qemu:///system`).
+- A set of build VMs: vendor installs (for example Ubuntu 24.04, Ubuntu 26.04, Omarchy) with named
+  reset points.
+- A set of stock images, sealed from build VMs. Leases start from them.
+- A way to get a disposable VM in a known state, reach it over SSH, and give it back.
+- A way to rehearse a full fresh-machine install end to end, and keep the result as a build VM.
+
+## What werft is not
+
+- Not a cloud. There is no API server, no tenants, no quotas.
+- Not multi-host. One workstation, one libvirt instance.
+- Not a CI farm. It does not schedule jobs, store artifacts, or report to a forge.
+- Not a replacement for libvirt or virt-manager. werft drives libvirt; virt-manager stays the tool
+  for manual VM work, and werft VMs stay visible in it.
+- Not an image builder. A human installs each build VM by hand from vendor media once; werft takes
+  over from there.
+
+## Users and their jobs
+
+Agents come first. The agent commands (`images`, `lease`, `leases`, `release`, `reap`, `list`,
+`start`, `stop`, `reset`, `snapshot`, `snapshots`) work without a TTY and give machine-readable
+output. `prepare` and `provision` need a person at the host: `prepare` waits for the sshd install
+and the disk password, and `provision` needs the physical key stick and a passphrase typed at a
+TTY. The open question "Scripted secrets" in [DESIGN.md](DESIGN.md#open-questions) can change this
+for `provision`.
+Humans come second. They use the same commands and get readable output.
+
+| Job | Who | What they get |
+|---|---|---|
+| Rehearse a full install | human or agent | A build VM reset to its `provision-base` point, the bootstrap run in it, checks run, and the result kept as the `-full` build VM. |
+| Get a plain VM | agent, human | A lease from a `plain` stock image: the vendor install with SSH access and nothing else installed. |
+| Get a fully installed VM | agent, human | A lease from a `full` stock image: the state after the bootstrap. Blocked by the open question [Secrets in the full tier](#open-questions). |
+| Test own software | agent | A lease. The agent installs its software, runs its tests, and gives the lease back. The stock image does not change. |
+
+## Core concepts
+
+- **Build VM.** A libvirt domain that a human installs once from vendor media, for example
+  `ubuntu-26-04`, plus its provision result `ubuntu-26-04-full`. `reset` and `provision` change it.
+  Leases never run on it.
+- **Reset point.** A named, saved state of a build VM: disk and firmware state together. Reset
+  returns the build VM to exactly that state. If werft cannot save or restore both halves, the
+  command fails. Only build VMs have reset points.
+- **Stock image.** A sealed, immutable copy of one build VM reset point. werft never changes it.
+  Leases start from it. A new seal makes a new version.
+- **Tier.** The state a stock image comes from. `plain` is the vendor install, prepared for SSH
+  access. `full` is the state after the full bootstrap and its checks.
+- **Lease.** A disposable VM that one user gets from a stock image and tier. The lease has an
+  owner, an SSH address, and a lifetime. Release destroys it. Nothing done inside a lease reaches
+  the stock image.
+- **Provision.** The pipeline that turns a build VM into its `-full` build VM: reset, bootstrap,
+  check, clone, generalize, save a reset point.
+- **Seal.** The step that makes a stock image from a build VM reset point. It removes the identity
+  of the build VM (machine-id, hostname, SSH host keys), so each lease gets its own.
+
+## Agent experience
+
+Names and flags can change; the shape is the contract.
+
+The interaction to support: a user tells an agent "get a VM and do some tests in it". The agent
+runs:
+
+```sh
+werft images --json                          # which images and tiers exist
+werft lease ubuntu-26-04 --tier full --json  # get a VM; blocks until SSH answers
+ssh -F <lease ssh_config> <lease-id>         # the command werft prints; install software, run tests
+werft release <lease-id>                     # give it back; the VM is destroyed
+```
+
+Requirements:
+
+- `werft lease` returns only when the VM accepts an SSH login. The output has the lease ID, the
+  address, the SSH user, the key path, the path of the lease `ssh_config`, a ready `ssh` command,
+  and the expiry time.
+- `--json` gives one JSON document on stdout. Progress and logs go to stderr.
+- Exit codes are stable and documented, so an agent can tell "no capacity" (6) from "SSH timeout"
+  (7).
+- No command asks a question when stdin is not a TTY. A command that needs confirmation fails and
+  names the flag that gives it.
+- Secrets never appear on a command line, in a process list, or in JSON output.
+- A lease has a lifetime. werft destroys an expired lease, so an agent that crashes does not leak a
+  VM.
+- `werft leases --json` lists active leases with owner, image, tier, address, and expiry.
+- More than one lease can run at the same time, limited by host resources.
+
+## What carries over from `vm`
+
+Keep these user-visible behaviors. Each one fixed a real failure in `vm`.
+
+- Every question comes before any destructive step and before any secret is read.
+- `provision` checks all its inputs before it stops or resets anything.
+- The guest password is checked right after SSH comes up, not at the end.
+- Temporary changes in the guest (sudo grant, autologin, pinentry) are removed on success and on
+  failure.
+- werft types the LUKS disk password once at boot and does not retry.
+
+The implementation invariants behind them are in [DESIGN.md](DESIGN.md#step-model).
+
+Setup-specific parts (the bootstrap repo, the key stick, the GPG passphrase, the system checks,
+GNOME autologin, keyring unlock, Omarchy update) move out of the core. See
+[Open questions](#open-questions).
+
+## Roadmap
+
+1. **Parity with `vm`.** Same commands and pipelines in Go: `list`, `start`, `stop`, `snapshot`,
+   `snapshots`, `reset`, `prepare`, `provision`, plus `migrate` to move each build VM to werft
+   reset points. `vm` and werft run side by side, one build VM at a time.
+2. **Setup-repo switch.** The setup repo adds its recipe. When `werft provision` makes a `-full`
+   build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
+3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`,
+   `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases.
+4. **Agent integration.** Stable JSON output and exit codes, a skill or guide that tells an agent how
+   to use werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it.
+
+## Open questions
+
+DESIGN.md holds a proposal for some of these. A proposal is not a decision until the question is
+closed here.
+
+- **Secrets in the full tier.** Risk: the `-full` build VM ran the real bootstrap. It holds the
+  user's private GPG keys from the key stick, the password store, keyrings, and the `gh` token.
+  Seal does not remove them, so every `full` lease gives an agent those secrets. Choose one: build
+  the `full` tier from a provision run without the key stick and secrets; or seal removes
+  `~/.gnupg`, the password store, keyrings and the `gh` config; or `full` stays human-only and is
+  never leased.
+- **Setup-specific steps.** Does the setup repo own the bootstrap recipe and werft only run it,
+  or does werft own it? Proposal: a recipe file that the setup repo owns.
+- **SSH user and key.** Does a lease use the host `$USER` and `~/.ssh/id_ed25519`, or a werft key
+  and user per lease? Proposal: a key pair per lease; the user is open (primary image user with
+  passwordless sudo, or a separate `agent` user).
+- **LUKS images in leases.** Does a lease of an encrypted image need disk-password typing, or are
+  lease images unencrypted?
+- **Desktop or headless.** Must a lease run a desktop session, or is headless the default?
+- **Concurrency limit.** A fixed number of leases, or a limit from free RAM and CPU?
+- **Lifetime default.** What is the default lease lifetime, and can a lease be extended?
+
+The technical questions (lease mechanism, addressing, firmware state, host access) are proposals in
+[DESIGN.md](DESIGN.md#proposals-in-short).
