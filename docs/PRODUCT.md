@@ -41,7 +41,7 @@ Humans come second. They use the same commands and get readable output.
 |---|---|---|
 | Rehearse a full install | human or agent | A build VM reset to its `provision-base` point, the bootstrap run in it, checks run, and the result kept as the `-full` build VM. |
 | Get a plain VM | agent, human | A lease from a `plain` stock image: the vendor install with SSH access and nothing else installed. |
-| Get a fully installed VM | agent, human | A lease from a `full` stock image: the state after the bootstrap. Blocked by the open question [Secrets in the full tier](#open-questions). |
+| Get a fully installed VM | agent, human | A lease from a `full` stock image: the state after the bootstrap, secrets included. |
 | Test own software | agent | A lease. The agent installs its software, runs its tests, and gives the lease back. The stock image does not change. |
 
 ## Core concepts
@@ -63,6 +63,18 @@ Humans come second. They use the same commands and get readable output.
   check, clone, generalize, save a reset point.
 - **Seal.** The step that makes a stock image from a build VM reset point. It removes the identity
   of the build VM (machine-id, hostname, SSH host keys), so each lease gets its own.
+
+## Access and trust
+
+werft gives an agent no access that the user does not already have. An agent runs as the user on
+the host, so it can already read the user's keys, password store and tokens there.
+
+- werft runs as the user, through group `libvirt` on `qemu:///system`. That group is
+  root-equivalent on the host; the user is in it already.
+- A `full` lease holds the secrets of the installed user: GPG keys, password store, keyrings, the
+  `gh` token. This is intended. Release destroys them with the lease.
+- The agent logs in as the image's own user, with passwordless sudo.
+- A lease uses libvirt's default NAT network. It reaches the internet, the host and the LAN.
 
 ## Agent experience
 
@@ -128,17 +140,8 @@ GNOME autologin, keyring unlock, Omarchy update) move out of the core. See
 DESIGN.md holds a proposal for some of these. A proposal is not a decision until the question is
 closed here.
 
-- **Secrets in the full tier.** Risk: the `-full` build VM ran the real bootstrap. It holds the
-  user's private GPG keys from the key stick, the password store, keyrings, and the `gh` token.
-  Seal does not remove them, so every `full` lease gives an agent those secrets. Choose one: build
-  the `full` tier from a provision run without the key stick and secrets; or seal removes
-  `~/.gnupg`, the password store, keyrings and the `gh` config; or `full` stays human-only and is
-  never leased.
 - **Setup-specific steps.** Does the setup repo own the bootstrap recipe and werft only run it,
   or does werft own it? Proposal: a recipe file that the setup repo owns.
-- **SSH user and key.** Does a lease use the host `$USER` and `~/.ssh/id_ed25519`, or a werft key
-  and user per lease? Proposal: a key pair per lease; the user is open (primary image user with
-  passwordless sudo, or a separate `agent` user).
 - **LUKS images in leases.** Does a lease of an encrypted image need disk-password typing, or are
   lease images unencrypted?
 - **Desktop or headless.** Must a lease run a desktop session, or is headless the default?

@@ -196,7 +196,8 @@ The two tools run side by side, one per domain.
    the stock name, write the image record.
 
 Build VMs and `-full` stay without passwordless sudo, as today. Only stock images get the seal
-changes, because leases are agent sandboxes and `-full` is not.
+changes. Seal removes no secrets: a `full` lease holds them by design
+([PRODUCT.md](PRODUCT.md#access-and-trust)).
 
 ## Provision pipeline
 
@@ -334,9 +335,8 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 ## Open questions
 
-Product questions (LUKS in leases, lease user, lifetime, capacity, desktop or headless) are in
-[PRODUCT.md](PRODUCT.md#open-questions). Proposals for them: `seal` refuses an encrypted build VM;
-the lease user is the image's primary user with passwordless sudo from seal.
+Product questions (LUKS in leases, lifetime, capacity, desktop or headless) are in
+[PRODUCT.md](PRODUCT.md#open-questions). Proposal for LUKS: `seal` refuses an encrypted build VM.
 
 - **Legacy labels on migration.** Keep only the kept label, or export `clean-install` to a flat
   file? `clean-install` is never used by `provision` today.
@@ -351,10 +351,3 @@ the lease user is the image's primary user with passwordless sudo from seal.
 - **Shell completion.** Does werft generate zsh completion, replacing `completion-zsh/vm.rc`?
 - **Lease owner.** Where the value comes from: an `--owner` flag, an env var set by the agent
   harness, or `$USER`. Does `release` refuse a lease of another owner?
-- **Agent trust boundary.** Group `libvirt` on `qemu:///system` gives full control of a daemon that
-  runs as root, so it is root-equivalent on the host. Every agent that can run werft has that
-  access. Is that acceptable, or does werft need a narrower front end, such as a polkit rule or a
-  broker?
-- **Lease network.** Leases get passwordless sudo. On the default NAT network they reach the host
-  and the LAN. Keep the default NAT, or use an isolated network or an nwfilter that blocks the host
-  and the LAN?
