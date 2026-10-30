@@ -843,6 +843,22 @@ func (f *Fake) VolumeInfo(pool, name string) (virt.VolumeInfo, error) {
 	return virt.VolumeInfo{Capacity: max(v.capacity, used), Allocation: used}, nil
 }
 
+func (f *Fake) VolumeByPath(path string) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("VolumeByPath", path); err != nil {
+		return "", "", err
+	}
+	for poolName, p := range f.pools {
+		for name, v := range p.volumes {
+			if v.path == path {
+				return poolName, name, nil
+			}
+		}
+	}
+	return "", "", notFound("volume at", path)
+}
+
 func (f *Fake) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

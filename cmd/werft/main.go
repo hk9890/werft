@@ -13,6 +13,11 @@ func main() {
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 		tty:    term.IsTerminal(int(os.Stdin.Fd())),
+		readSecret: func() (string, error) {
+			b, err := term.ReadPassword(int(os.Stdin.Fd()))
+			return string(b), err
+		},
+		dial: dialLibvirt,
 	}
 	os.Exit(c.run(os.Args[1:]))
 }

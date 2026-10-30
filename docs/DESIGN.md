@@ -5,7 +5,9 @@ bash tool `vm` in [`scripts/vm/`](https://github.com/carlo9890/setup/tree/main/s
 setup repo.
 
 Status: target design. In code: the hypervisor port with its libvirt adapter and fake, `domxml`,
-`failure`, `config`, `state`, and the command dispatch with `version` and `help`.
+`failure`, `config`, `state`, the command dispatch with `version` and `help`, and the provision
+pipeline with `prepare` and `provision` (`pipeline`, `steps`, `recipe`, `guest`, `console`,
+`secret`, `hostdev`, and the snapshot part of `resetpoint`).
 
 ## Proposals in short
 
@@ -21,7 +23,7 @@ Each row is a proposal until the user accepts it.
 | Lease address | AF_VSOCK first, DHCP lease by MAC as fallback | Unique per domain, no DNS race. mDNS is not used for leases. |
 | SSH | OpenSSH `ssh`/`scp` as child processes | The agent gets the same command werft used. vsock works through `systemd-ssh-proxy`. |
 | Clone | Domain XML generated in Go | `virt-clone` goes away, and with it the mise-python `gi` failure. |
-| Setup-specific steps | A recipe file that the setup repo owns (accepted) | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
+| Setup-specific steps | A recipe file that the setup repo owns (accepted). Until the setup repo takes it over, werft ships it as `examples/setup/recipe.toml` | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
 
 ## Packages
 
@@ -105,10 +107,11 @@ real adapters.
 | LUKS marker | domain description line, same format as `vm` writes | libvirt |
 | Image records (user, guest family, systemd version, vsock support, versions) | `~/.local/state/werft/images.toml`, written by `seal` | werft |
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/` | werft, removed on release |
+| werft key for build VMs (installed by `prepare`), build VM `ssh_config` | `~/.local/state/werft/id_ed25519`, `~/.local/state/werft/ssh_config` | werft |
 | Provision logs | `~/.local/state/werft/logs/provision-<name>-<YYYYmmdd-HHMMSS>.log` | werft |
 | Locks | `~/.local/state/werft/locks/` | werft |
 | Config | `~/.config/werft/config.toml` | user |
-| Recipes | setup repo | setup repo |
+| Recipes | setup repo; until then `examples/setup/` in werft | setup repo |
 
 werft never opens a file under `/var/lib/libvirt/` directly. Every disk operation goes through the
 storage API, because `/var/lib/libvirt/images` is `0711 root`. werft creates the `werft` pool on
@@ -253,21 +256,54 @@ All generic.
 | `usb-passthrough` | Attach a host USB stick, and release it in cleanup |
 | `pinentry` | Install a pinentry stub with the passphrase in tmpfs and a gpg-agent line; remove them in cleanup |
 | `run` | Run a guest command or script, with an optional secret on stdin |
-| `checks` | Run a check directory and print a PASS/FAIL summary |
+| `checks` | Copy a host check directory into the guest and run its entry script; a failure is `checks_failed` |
 | `reboot`, `poweroff` | Power off from inside the guest; `reboot` then boots and waits for SSH |
-| `clone` | Delete the old clone, define a new one from generated XML, copy the viewer settings |
-| `generalize` | Give the clone a new machine-id and new SSH host keys |
+| `clone` | Delete the old clone, define a new one from generated XML, copy the viewer settings; the steps after it act on the clone |
+| `generalize` | Boot the clone, give it a new machine-id, new SSH host keys and its hostname, power it off |
 | `snapshot` | Take a reset point |
+| `undo` | Run the cleanup of an earlier step now, so a temporary change ends where the recipe says |
 
 `prepare` is a fixed built-in step list; it needs no recipe. Its two waits for a person (sshd install,
 disk password) stay, with a hint for each.
 
+The clone gets a copy of each writable disk and of the NVRAM, made with `StorageVolCreateXMLFrom`
+in the pool of the original (the NVRAM in the `nvram` pool). An NVRAM template does not work:
+firmware autoselection refuses a qcow2 template. A read-only or shareable disk, such as an
+installer ISO, stays shared. A disk or NVRAM outside every storage pool stops the clone, and the
+copies made so far are deleted.
+
+The guest login is `$USER` with the werft key and `~/.ssh/id_ed25519`, through the werft
+`ssh_config`. The address is the vsock CID when the domain has one, else the DHCP lease of each MAC;
+the first that answers SSH wins. A cleanup reaches its domain again by the same rule, because the
+guest can reboot and the run can move on to the clone after the step ran.
+
 ### Recipe
 
 A recipe is a TOML file that lists the provision steps and their parameters. The setup repo owns
-it and the files it names; paths resolve relative to the recipe. A step can be limited to a guest
-family. `config.toml` maps each build VM to its recipe; `--recipe` overrides it. The setup recipe
-holds:
+it and the files it names; paths resolve relative to the recipe, and `~/` is the home directory. A
+step can be limited to a guest family. `config.toml` maps each build VM to its recipe (`recipe` for
+all, `[recipes]` per build VM); `--recipe` overrides it. `prepare` reads only `[guest_password]`
+from it.
+
+```toml
+[guest_password]              # pass entry, else the prompt at the terminal
+pass = "vm/guest-password"
+
+[secrets.passphrase]          # a named secret for run and pinentry
+prompt = "GPG passphrase"
+
+[[steps]]
+type = "sudo-grant"           # a built-in step
+id = "sudo"                   # optional; the name undo uses, default the type
+family = "omarchy"            # optional; needs a detect-guest step before it
+```
+
+Parameters: `reset` takes `label` (default `provision-base`); `snapshot` and `usb-passthrough`
+take `label`; `upload` takes `files`; `run` takes `command` (run in the guest directory) and
+`secret` (on stdin); `checks` takes `dir` and `command` (default `run.sh`); `pinentry` takes
+`secret`; `undo` takes `step`. Load fails on an unknown key, a missing file, an unknown secret, a
+`family` before `detect-guest`, `generalize` before `clone`, and an `undo` without an earlier step
+that has a cleanup. The setup recipe holds:
 
 - the bootstrap repo URL and the script that clones it and runs `install.sh` (the rest of
   `guest/bootstrap.sh`);
@@ -360,8 +396,8 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 - **Reaping without a command.** Also a systemd user timer that runs `werft reap`?
 - **SSH library.** OpenSSH child processes (proposed), or `golang.org/x/crypto/ssh` with an AF_VSOCK
   dialer: no process per call, but a different path from the one the agent uses.
-- **Recipe location and format.** Where in the setup repo the recipe lives, and whether TOML is
-  enough for family conditions.
+- **Recipe location.** Where in the setup repo the recipe lives. TOML with a `family` key per step
+  is enough for the setup recipe.
 - **Scripted secrets.** Is `pass` plus TTY enough, or does an unattended `provision` need a secret
   file or file descriptor? Can an agent run `provision` without a TTY at all, given the key stick
   and the `pinentry` secret?

@@ -105,7 +105,7 @@ func TestHelpJSON(t *testing.T) {
 		if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
 			t.Fatalf("%q: stdout is no JSON: %q", args, r.stdout)
 		}
-		if r.code != 0 || len(doc.Commands) != len(commands) || doc.Commands[1].Name != "version" ||
+		if r.code != 0 || len(doc.Commands) != len(commands) || doc.Commands[len(doc.Commands)-1].Name != "version" ||
 			doc.ExitCodes["ok"] != 0 || doc.ExitCodes["needs_confirmation"] != 5 {
 			t.Errorf("%q = %+v", args, doc)
 		}
@@ -152,5 +152,29 @@ func TestConfirm(t *testing.T) {
 				t.Errorf("prompt shown = %v", asked)
 			}
 		})
+	}
+}
+
+func TestProvisionUsage(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"provision"}, "provision takes one build VM name"},
+		{[]string{"provision", "a", "b"}, "provision takes one build VM name"},
+		{[]string{"provision", "ubuntu-26-04-full"}, "provision its build VM, ubuntu-26-04"},
+		{[]string{"provision", "ubuntu-26-04"}, "no recipe for ubuntu-26-04"},
+		{[]string{"prepare", "omarchy-full"}, "prepare its build VM, omarchy"},
+	}
+	for _, tt := range tests {
+		r := runCLI("", false, tt.args...)
+		if r.code != 2 || !strings.Contains(r.stderr, tt.want) {
+			t.Errorf("%q = %+v, want exit 2 with %q", tt.args, r, tt.want)
+		}
+	}
+	r := runCLI("", false, "provision", "--recipe", "/none.toml", "ubuntu-26-04")
+	if r.code != 3 || !strings.Contains(r.stderr, "/none.toml does not exist") {
+		t.Errorf("missing recipe = %+v", r)
 	}
 }

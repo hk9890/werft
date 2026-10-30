@@ -291,3 +291,23 @@ func TestCallLogAndFailureInjection(t *testing.T) {
 		t.Errorf("calls = %q, want %q", got, want)
 	}
 }
+
+func TestVolumeByPath(t *testing.T) {
+	f := virttest.New()
+	if err := f.DefinePool("p", "/pool"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.StartPool("p"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := f.CreateVolume("p", "<volume><name>disk.qcow2</name><capacity>1</capacity></volume>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pool, name, err := f.VolumeByPath(v.Path); err != nil || pool != "p" || name != "disk.qcow2" {
+		t.Errorf("VolumeByPath = %q, %q, %v", pool, name, err)
+	}
+	if _, _, err := f.VolumeByPath("/elsewhere"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("VolumeByPath of a path in no pool = %v", err)
+	}
+}

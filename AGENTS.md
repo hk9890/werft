@@ -2,7 +2,7 @@
 
 ## Repository purpose
 
-werft is a Go CLI that hands out disposable test VMs from stock images on one libvirt host, for agents first and humans second. It replaces the bash tool `vm` in the setup repo. Only the foundation packages and `werft version` exist in code; the docs below hold the target.
+werft is a Go CLI that hands out disposable test VMs from stock images on one libvirt host, for agents first and humans second. It replaces the bash tool `vm` in the setup repo. The foundation packages, `werft version`, and `werft prepare` and `werft provision` exist in code; the docs below hold the target.
 
 ## Use-case routing
 

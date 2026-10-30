@@ -25,6 +25,8 @@ type Disk struct {
 	Source string
 	Pool   string
 	Volume string
+	// Shared is a read-only or shareable disk, such as an installer ISO.
+	Shared bool
 }
 
 func Disks(d *libvirtxml.Domain) []Disk {
@@ -33,7 +35,7 @@ func Disks(d *libvirtxml.Domain) []Disk {
 	}
 	var out []Disk
 	for _, x := range d.Devices.Disks {
-		disk := Disk{Device: x.Device}
+		disk := Disk{Device: x.Device, Shared: x.ReadOnly != nil || x.Shareable != nil}
 		if x.Target != nil {
 			disk.Target = x.Target.Dev
 		}
@@ -112,6 +114,31 @@ func VsockCID(d *libvirtxml.Domain) (uint32, bool) {
 		return 0, false
 	}
 	return uint32(cid), true
+}
+
+// Interface is a network interface: its MAC and, for one on a libvirt
+// network, the network name.
+type Interface struct {
+	MAC     string
+	Network string
+}
+
+func Interfaces(d *libvirtxml.Domain) []Interface {
+	if d.Devices == nil {
+		return nil
+	}
+	var out []Interface
+	for _, i := range d.Devices.Interfaces {
+		var x Interface
+		if i.MAC != nil {
+			x.MAC = i.MAC.Address
+		}
+		if i.Source != nil && i.Source.Network != nil {
+			x.Network = i.Source.Network.Network
+		}
+		out = append(out, x)
+	}
+	return out
 }
 
 // MACs are the MAC addresses of the domain's network interfaces, in order.
