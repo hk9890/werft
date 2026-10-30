@@ -81,6 +81,7 @@ type Run struct {
 	// LUKS is set when the domain's disk asks for a password at boot.
 	LUKS bool
 
+	questions  []string
 	specs      map[string]secret.Spec
 	order      []string
 	validators map[string][]func(string) error
@@ -98,7 +99,7 @@ func (r *Run) Init() *Run {
 		r.Ctx = context.Background()
 	}
 	if r.Sleep == nil {
-		r.Sleep = time.Sleep
+		r.Sleep = r.pause
 	}
 	return r
 }
@@ -107,12 +108,22 @@ func (r *Run) Printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(r.Out, format+"\n", args...)
 }
 
-// Confirm asks question unless the run answers yes to all.
-func (r *Run) Confirm(question string) error {
+// Ask queues a question. Execute asks the queued questions once every check
+// passed, unless the run answers yes to all.
+func (r *Run) Ask(question string) {
+	r.questions = append(r.questions, question)
+}
+
+func (r *Run) askQuestions() error {
 	if r.Yes {
 		return nil
 	}
-	return r.Prompter.Confirm(question)
+	for _, q := range r.questions {
+		if err := r.Prompter.Confirm(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SetViewer keeps the stop function of the open viewer window.
@@ -126,11 +137,32 @@ func (r *Run) CloseViewer() {
 	}
 }
 
+// pause sleeps for d, and ends early when the run is interrupted.
+func (r *Run) pause(d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-r.Ctx.Done():
+	case <-t.C:
+	}
+}
+
 // Poll calls cond every interval until it is true. It fails with
 // failure.Timeout, "<what> within <timeout>", once timeout has passed, and
 // when the run is interrupted.
 func (r *Run) Poll(timeout, interval time.Duration, what string, cond func() bool) error {
-	for waited := time.Duration(0); ; waited += interval {
+	return r.poll(timeout, func(int) time.Duration { return interval }, what, cond)
+}
+
+// PollLogin is Poll for SSH logins: the pauses between the attempts grow
+// as guest.LoginPause says.
+func (r *Run) PollLogin(timeout time.Duration, what string, cond func() bool) error {
+	return r.poll(timeout, guest.LoginPause, what, cond)
+}
+
+func (r *Run) poll(timeout time.Duration, pause func(attempt int) time.Duration, what string, cond func() bool) error {
+	waited := time.Duration(0)
+	for attempt := 1; ; attempt++ {
 		if err := r.Ctx.Err(); err != nil {
 			return failure.Wrap(failure.Failed, err, "interrupted while waiting: %s", what)
 		}
@@ -140,7 +172,9 @@ func (r *Run) Poll(timeout, interval time.Duration, what string, cond func() boo
 		if waited >= timeout {
 			return failure.New(failure.Timeout, "%s within %v", what, timeout)
 		}
-		r.Sleep(interval)
+		d := min(pause(attempt), timeout-waited)
+		r.Sleep(d)
+		waited += d
 	}
 }
 
@@ -164,7 +198,7 @@ func (r *Run) Output(cmd string, stdin io.Reader) (string, error) {
 
 // Root runs script as root, with the guest password for sudo on stdin.
 func (r *Run) Root(script string, args ...string) error {
-	return r.Exec(guest.RootCommand(script, args...), strings.NewReader(r.Secret(GuestPassword)+"\n"))
+	return r.Exec(guest.RootCommand(script, args...), guest.Line(r.Secret(GuestPassword)))
 }
 
 // SSHCommand is the ssh command line that reaches r.Addr.

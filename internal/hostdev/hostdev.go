@@ -87,7 +87,7 @@ func Holders(s Stick) string {
 
 func Unmount(s Stick) error {
 	if out, err := exec.Command("udisksctl", "unmount", "-b", s.Device).CombinedOutput(); err != nil {
-		return failure.Wrap(failure.Conflict, err, "could not unmount %s on the host: %s%s", s.Device, out, Holders(s))
+		return failure.Wrap(failure.Conflict, err, "could not unmount %s on the host; close what holds it and run again: %s\n%s", s.Device, bytes.TrimSpace(out), Holders(s))
 	}
 	return nil
 }

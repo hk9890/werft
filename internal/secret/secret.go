@@ -40,6 +40,9 @@ func Read(spec Spec, store Store, term Terminal, note func(string)) (string, err
 		note("pass cannot give " + spec.Pass + ", so it is asked for")
 	}
 	v, err := term.ReadSecret(spec.Prompt)
+	if err != nil && spec.Pass != "" {
+		return "", failure.Wrap(failure.KindOf(err), err, "pass cannot give %s", spec.Pass)
+	}
 	if err != nil {
 		return "", err
 	}

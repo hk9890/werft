@@ -51,3 +51,11 @@ func TestRead(t *testing.T) {
 		t.Errorf("empty answer: %v", err)
 	}
 }
+
+func TestAnEmptyPassEntryIsAskedFor(t *testing.T) {
+	tm := &term{value: "typed"}
+	v, err := secret.Read(secret.Spec{Pass: "vm/guest-password", Prompt: "Password"}, store{"vm/guest-password": ""}, tm, func(string) {})
+	if err != nil || v != "typed" || !tm.asked {
+		t.Errorf("Read = %q, %v, asked %v", v, err, tm.asked)
+	}
+}

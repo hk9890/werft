@@ -54,15 +54,18 @@ real adapters.
   build clones of build VMs (new name, UUID, MAC) and the qcow2 NVRAM rewrite for migration, and
   will build lease domains.
 - **`internal/guest`** — The guest port and its OpenSSH adapter: run a command, run a script with
-  data on stdin, copy files, probe readiness. It passes a werft-owned `ssh_config` with `-F`, so the
-  user's `SendEnv LC_*` never applies. It keeps login attempts few, because sshd
-  `PerSourcePenalties` punishes failures.
+  data on stdin, copy files, probe readiness. A secret goes on stdin, never on the command line. A
+  copy empties the target directory and sends the files as one tar stream over one login. The
+  adapter passes a werft-owned `ssh_config` with `-F`, so the user's `SendEnv LC_*` never applies.
+  It keeps login attempts few, because sshd `PerSourcePenalties` punishes failures: a wait for SSH
+  pauses 1 s after the first attempt and doubles the pause up to 8 s.
 - **`internal/guest/assets`** — Generic guest helpers in the binary with `go:embed`:
   `wait-for-package-manager.sh`, `unlock-keyring.js`, `pinentry-auto`, the hostname script, the
   generalize script, and the seal script.
 - **`internal/console`** — Typing at the boot console: screenshot, decode with Go `image/png`, detect
   "not black and still for 4 frames", send key codes with `DomainSendKey`. No keystroke passes
-  through a `virsh` process.
+  through a `virsh` process. The timings are those of `vm`: a screenshot every 2 s, at most 120 s.
+  The wait stops when its context ends, so SIGINT stops it before anything is typed.
 - **`internal/lifecycle`** — `list`, `start` and `stop` for any domain. `list` gets disk use from
   the storage API and counts native reset points plus the `.bak` files of `vm`. It finds the `.bak`
   files in a listing of the NVRAM directory, as `vm` did, and not through the storage pool: `vm`
@@ -79,8 +82,8 @@ real adapters.
 - **`internal/ansi`** — A writer that strips terminal escape sequences, for the provision log.
 - **`internal/recipe`** — Loads and validates a recipe (TOML, `github.com/BurntSushi/toml` as in
   revier). A recipe error fails before any step runs.
-- **`internal/secret`** — Reads a secret from `pass`, else a TTY prompt, else fails. Holds it in
-  memory only and gives it to steps as stdin data.
+- **`internal/secret`** — Reads a secret from `pass`, else a TTY prompt, else fails with
+  `secret_unavailable`. Holds it in memory only and gives it to steps as stdin data.
 - **`internal/hostdev`** — Host side of USB passthrough: `findmnt`, `udevadm`, `fuser`,
   `udisksctl`. Finds the stick, makes sure no host process uses it, and unmounts and releases it.
 - **`internal/config`**, **`internal/state`**, **`internal/build`** — `config.toml` (pool, lease
@@ -282,8 +285,10 @@ changes. Seal removes no secrets: a `full` lease holds them by design
 
 `prepare` and `provision` are lists of steps run by `internal/pipeline`. A step has:
 
-- a **check**, run in preflight before any step runs: validate inputs, ask every question, declare
-  secrets. So all questions come before any destructive action.
+- a **check**, run in preflight before any step runs: validate inputs, queue questions, declare
+  secrets. The runner asks the queued questions after every check passed, so a failed check, such
+  as a key stick that a program holds, costs no question. All questions come before any secret and
+  any destructive action.
 - a **run**.
 - an optional **cleanup**, pushed on a stack before the run starts, so a half-done step is undone.
   On success, failure and SIGINT the runner pops the stack in reverse. Each cleanup must be safe
@@ -293,7 +298,7 @@ changes. Seal removes no secrets: a `full` lease holds them by design
 
 The runner catches SIGINT and SIGTERM only after preflight and the secrets. An interrupt during a
 question, a secret prompt or `pass` ends werft before any change. After that, the runner checks
-for an interrupt before each step.
+for an interrupt before each step, and an interrupt ends every wait of a step at once.
 
 Steps share one run context (domain, address, guest family, secrets, log writer). On failure the
 runner stops, leaves the VM running, and prints the SSH command and log path. The log file gets
@@ -318,7 +323,7 @@ All generic.
 | `wait-session` | Wait for the desktop session |
 | `unlock-keyring` | Unlock the GNOME keyring |
 | `sudo-grant` | Grant passwordless sudo, and revoke it in cleanup |
-| `usb-passthrough` | Attach a host USB stick, and release it in cleanup |
+| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup |
 | `pinentry` | Install a pinentry stub with the passphrase in tmpfs and a gpg-agent line; remove them in cleanup |
 | `run` | Run a guest command or script, with an optional secret on stdin |
 | `checks` | Copy a host check directory into the guest and run its entry script; a failure is `checks_failed` |

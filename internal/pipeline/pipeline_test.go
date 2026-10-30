@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/pipeline"
@@ -15,17 +16,25 @@ import (
 )
 
 type stub struct {
-	name    string
-	log     *[]string
-	failRun bool
-	declare string
-	cancel  context.CancelFunc
+	name      string
+	log       *[]string
+	failRun   bool
+	failCheck bool
+	ask       string
+	declare   string
+	cancel    context.CancelFunc
 }
 
 func (s *stub) Check(r *pipeline.Run) error {
 	*s.log = append(*s.log, "check "+s.name)
+	if s.ask != "" {
+		r.Ask(s.ask)
+	}
 	if s.declare != "" {
 		r.Declare(s.declare, secret.Spec{Prompt: s.declare})
+	}
+	if s.failCheck {
+		return failure.New(failure.Conflict, "%s is busy", s.name)
 	}
 	return nil
 }
@@ -206,5 +215,71 @@ func TestFamilySkipsStep(t *testing.T) {
 	want := []string{"check a", "check b", "run b "}
 	if !slices.Equal(log, want) {
 		t.Errorf("log = %q\nwant  %q", log, want)
+	}
+}
+
+func TestEveryCheckComesBeforeTheFirstQuestion(t *testing.T) {
+	var log []string
+	r := newRun(&log)
+	entries := []pipeline.Entry{
+		{Name: "a", Step: &stub{name: "a", log: &log, ask: "reset?", declare: "s1"}},
+		{Name: "b", Step: &stub{name: "b", log: &log, ask: "replace?"}},
+	}
+	if err := pipeline.Execute(r, entries); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"check a", "check b", "confirm reset?", "confirm replace?", "secret s1", "run a v-s1", "run b "}
+	if !slices.Equal(log, want) {
+		t.Errorf("log = %q\nwant  %q", log, want)
+	}
+
+	log = nil
+	r = newRun(&log)
+	entries[1].Step = &stub{name: "b", log: &log, failCheck: true}
+	if err := pipeline.Execute(r, entries); !failure.Is(err, failure.Conflict) {
+		t.Fatalf("err = %v", err)
+	}
+	if want := []string{"check a", "check b"}; !slices.Equal(log, want) {
+		t.Errorf("a failed check still asked: log = %q", log)
+	}
+
+	log = nil
+	r = newRun(&log)
+	r.Yes = true
+	entries[1].Step = &stub{name: "b", log: &log}
+	if err := pipeline.Execute(r, entries); err != nil || slices.Contains(log, "confirm reset?") {
+		t.Errorf("--yes still asked: %v, log = %q", err, log)
+	}
+}
+
+// SIGINT ends a wait at once, not after its pause.
+func TestInterruptEndsAPause(t *testing.T) {
+	var log []string
+	r := newRun(&log)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.Ctx = ctx
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	err := r.Poll(time.Hour, time.Hour, "the guest", func() bool { return false })
+	if err == nil || !strings.Contains(err.Error(), "interrupted while waiting: the guest") {
+		t.Fatalf("err = %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("the wait took %v after the interrupt", d)
+	}
+}
+
+func TestPollLoginPausesGrow(t *testing.T) {
+	var log []string
+	r := newRun(&log)
+	var pauses []time.Duration
+	r.Sleep = func(d time.Duration) { pauses = append(pauses, d) }
+	err := r.PollLogin(20*time.Second, "no SSH", func() bool { return false })
+	if !failure.Is(err, failure.Timeout) || err.Error() != "no SSH within 20s" {
+		t.Fatalf("err = %v", err)
+	}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 5 * time.Second}
+	if !slices.Equal(pauses, want) {
+		t.Errorf("pauses = %v, want %v", pauses, want)
 	}
 }

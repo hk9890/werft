@@ -87,10 +87,10 @@ func (p *PrepareSSH) Run(r *pipeline.Run) error {
 		}
 		return false
 	}
-	if r.Poll(sshdBootTimeout, pollInterval, "", answers) != nil {
+	if r.PollLogin(sshdBootTimeout, "", answers) != nil {
 		r.Printf("\n%s has no SSH server. Log in at its desktop, open a terminal and run:\n\n      sudo apt install -y openssh-server                         (Ubuntu)\n      sudo ufw allow ssh && sudo systemctl enable --now sshd     (Omarchy)\n\n  The run continues once SSH answers.\n", r.Domain)
 		p.window.show(r)
-		if err := r.Poll(personTimeout, pollInterval, "no SSH server answered in "+r.Domain, answers); err != nil {
+		if err := r.PollLogin(personTimeout, "no SSH server answered in "+r.Domain, answers); err != nil {
 			return err
 		}
 	}

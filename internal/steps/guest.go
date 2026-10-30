@@ -1,7 +1,6 @@
 package steps
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"path"
@@ -187,11 +186,7 @@ func (u Upload) Run(r *pipeline.Run) error {
 	for _, f := range u.Files {
 		files = append(files, guest.File{Name: path.Base(f), Source: f})
 	}
-	var tar bytes.Buffer
-	if err := guest.WriteTar(&tar, files); err != nil {
-		return failure.Wrap(failure.Failed, err, "pack the files for %s", r.Domain)
-	}
-	if err := r.Exec(guest.UploadCommand(r.GuestDir), &tar); err != nil {
+	if err := guest.Copy(r.Ctx, r.Shell, r.Addr, r.GuestDir, files, r.Out); err != nil {
 		return failure.Wrap(failure.Failed, err, "could not copy the files into %s", r.Domain)
 	}
 	return nil
@@ -235,7 +230,7 @@ func (UnlockKeyring) Run(r *pipeline.Run) error {
 		return err
 	}
 	r.Printf("Unlocking the default keyring in %s", r.Domain)
-	keyring, err := r.Output(sessionEnv+" gjs "+guest.Quote(r.GuestDir+"/unlock-keyring.js"), strings.NewReader(r.Secret(pipeline.GuestPassword)+"\n"))
+	keyring, err := r.Output(sessionEnv+" gjs "+guest.Quote(r.GuestDir+"/unlock-keyring.js"), guest.Line(r.Secret(pipeline.GuestPassword)))
 	if err != nil {
 		return failure.Wrap(failure.Failed, err, "the password did not unlock or create the default keyring in %s", r.Domain)
 	}
@@ -325,26 +320,18 @@ func (p *Pinentry) Check(r *pipeline.Run) error {
 func (p *Pinentry) Run(r *pipeline.Run) error {
 	r.Printf("Routing GPG passphrase prompts in %s to pinentry-auto", r.Domain)
 	p.domain = r.Domain
-	return r.Exec(shCommand(pinentryScript, r.GuestDir), strings.NewReader(r.Secret(p.Secret)+"\n"))
+	return r.Exec(guest.ScriptCommand(pinentryScript, r.GuestDir), guest.Line(r.Secret(p.Secret)))
 }
 
 func (p *Pinentry) Cleanup(r *pipeline.Run) error {
 	if p.domain == "" {
 		return nil
 	}
-	if err := onGuest(r, p.domain, func() error { return r.Exec(shCommand(pinentryRemove, r.GuestDir), nil) }); err != nil {
+	if err := onGuest(r, p.domain, func() error { return r.Exec(guest.ScriptCommand(pinentryRemove, r.GuestDir), nil) }); err != nil {
 		return failure.Wrap(failure.Failed, err, "could not remove pinentry-auto from ~/.gnupg/gpg-agent.conf in %s", p.domain)
 	}
 	p.domain = ""
 	return nil
-}
-
-func shCommand(script string, args ...string) string {
-	words := []string{"sh -c", guest.Quote(script), "sh"}
-	for _, a := range args {
-		words = append(words, guest.Quote(a))
-	}
-	return strings.Join(words, " ")
 }
 
 // Run runs a command in the guest directory, with a secret on stdin when one
@@ -366,7 +353,7 @@ func (s Run) Run(r *pipeline.Run) error {
 	r.Printf("Running in %s: %s", r.Domain, s.Command)
 	var stdin io.Reader
 	if s.Secret != "" {
-		stdin = strings.NewReader(r.Secret(s.Secret) + "\n")
+		stdin = guest.Line(r.Secret(s.Secret))
 	}
 	cmd := fmt.Sprintf("mkdir -p %s && cd %s && %s", guest.Quote(r.GuestDir), guest.Quote(r.GuestDir), s.Command)
 	if err := r.Exec(cmd, stdin); err != nil {
@@ -391,11 +378,7 @@ func (c Checks) Run(r *pipeline.Run) error {
 		entry = "run.sh"
 	}
 	dir := r.GuestDir + "/" + path.Base(c.Dir)
-	var tar bytes.Buffer
-	if err := guest.WriteTar(&tar, []guest.File{{Name: ".", Source: c.Dir}}); err != nil {
-		return failure.Wrap(failure.Failed, err, "pack %s", c.Dir)
-	}
-	if err := r.Exec(guest.UploadCommand(dir), &tar); err != nil {
+	if err := guest.Copy(r.Ctx, r.Shell, r.Addr, dir, []guest.File{{Name: ".", Source: c.Dir}}, r.Out); err != nil {
 		return failure.Wrap(failure.Failed, err, "could not copy the checks into %s", r.Domain)
 	}
 	r.Printf("Running the checks of %s in %s", c.Dir, r.Domain)

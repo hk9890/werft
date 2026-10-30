@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // SSHProxy connects ssh to an AF_VSOCK address.
@@ -24,12 +25,23 @@ type OpenSSH struct {
 	KeyOnly bool
 }
 
+// LoginPause is the pause after the attempt-th SSH login of a wait that
+// failed: 1s, then doubling up to 8s. The attempts stay few on purpose: sshd
+// (PerSourcePenalties, OpenSSH 9.8 and later) refuses every connection from
+// a source whose failed and unauthenticated ones add up.
+func LoginPause(attempt int) time.Duration {
+	return time.Second << min(attempt-1, 3)
+}
+
 // keyOnlyTag selects the werft key alone in the werft ssh_config.
 const keyOnlyTag = "werft-key-only"
 
 func (o OpenSSH) Run(ctx context.Context, addr Addr, cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	c := exec.CommandContext(ctx, "ssh", o.Args(addr, cmd)...)
 	c.Stdin, c.Stdout, c.Stderr = stdin, stdout, stderr
+	// When ctx ends, ssh is killed; a child of it, such as the proxy, can
+	// still hold its output open. Wait gives up on that after the delay.
+	c.WaitDelay = time.Second
 	err := c.Run()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() > 0 && exit.ExitCode() != 255 {
