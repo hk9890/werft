@@ -90,8 +90,8 @@ func TestProvisionAsksEverythingBeforeItChangesAnything(t *testing.T) {
 	if _, err := provision(t, w, false); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
-	w.assertSequence("questions, then secrets, then the first change",
-		"^confirm testvm is running and will be reset", "^find stick /media/tester/MASTER-KEY$",
+	w.assertSequence("checks, then questions, then secrets, then the first change",
+		"^find stick /media/tester/MASTER-KEY$", "^confirm testvm is running and will be reset",
 		"^confirm testvm-full exists and will be replaced",
 		"^pass show vm/guest-password$", "^secret Password of tester", "^secret GPG passphrase",
 		"^DestroyDomain testvm$", "^RevertSnapshot")
@@ -179,15 +179,19 @@ func TestProvisionNeedsTheBase(t *testing.T) {
 	}
 }
 
-func TestProvisionRefusesABusyStick(t *testing.T) {
+// GNOME opens a Files window on a plugged-in stick, and that window would
+// make the unmount at the hand-over fail after the reset.
+func TestProvisionRefusesABusyStickBeforeAnyQuestion(t *testing.T) {
 	w := newWorld(t)
+	must(t, w.fake.StartDomain(vm))
+	w.defineClone()
 	w.host.holders = "nautilus 1234"
-	_, err := provision(t, w, true)
-	if !failure.Is(err, failure.Conflict) || !strings.Contains(err.Error(), "nautilus") {
+	_, err := provision(t, w, false)
+	if !failure.Is(err, failure.Conflict) || !strings.Contains(err.Error(), "nautilus") || !strings.Contains(err.Error(), "nothing changed") {
 		t.Fatalf("err = %v", err)
 	}
-	if w.index("^(RevertSnapshot|StartDomain|host unmount)") >= 0 {
-		t.Error("provision changed something")
+	if i := w.index("^(confirm|secret|pass show|DestroyDomain|RevertSnapshot|StartDomain|host unmount)"); i >= 0 {
+		t.Errorf("a busy stick got as far as %q", w.entries()[i])
 	}
 }
 

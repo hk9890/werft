@@ -1,7 +1,7 @@
 // Package pipeline runs the steps of prepare and provision (docs/DESIGN.md,
-// "Provision pipeline"). Every step's check runs before any step runs, so all
-// questions come before the first destructive action, and every secret is
-// read after the last question. SIGINT and SIGTERM are caught only after
+// "Provision pipeline"). Every step's check runs before the first question,
+// so a failed check costs no answer; every question comes before the first
+// secret, and every secret before the first destructive action. SIGINT and SIGTERM are caught only after
 // that, so they end a prompt as they always do. A step's cleanup is pushed
 // before the step runs, and the stack is popped in reverse on success, on
 // failure and on SIGINT.
@@ -24,8 +24,8 @@ import (
 
 // Step is one step of a pipeline.
 type Step interface {
-	// Check validates inputs, asks every question and declares the secrets
-	// the step needs. It changes nothing.
+	// Check validates inputs, queues its questions with Ask and declares
+	// the secrets the step needs. It changes nothing.
 	Check(r *Run) error
 	Run(r *Run) error
 }
@@ -72,6 +72,9 @@ func Execute(r *Run, entries []Entry) error {
 		if err := e.Step.Check(r); err != nil {
 			return err
 		}
+	}
+	if err := r.askQuestions(); err != nil {
+		return err
 	}
 	if err := r.readSecrets(); err != nil {
 		return err

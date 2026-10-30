@@ -6,6 +6,7 @@ package console
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"image"
@@ -76,21 +77,41 @@ type Prompt struct {
 	// Still is how many screenshots in a row must not change before the
 	// prompt counts as up.
 	Still int
+	// Sleep pauses between two screenshots. When nil, the wait sleeps on
+	// its own and ends early when the context ends.
 	Sleep func(time.Duration)
 }
 
-// DefaultPrompt allows for Omarchy, whose console stays black and still for
-// some 20s between its boot menu and the disk prompt.
-var DefaultPrompt = Prompt{Timeout: 120 * time.Second, Interval: 2 * time.Second, Still: 4, Sleep: time.Sleep}
+// DefaultPrompt has the timings of vm. They allow for Omarchy, whose console
+// stays black and still for some 20s between its boot menu and the disk
+// prompt.
+var DefaultPrompt = Prompt{Timeout: 120 * time.Second, Interval: 2 * time.Second, Still: 4}
+
+func (p Prompt) sleep(ctx context.Context) {
+	if p.Sleep != nil {
+		p.Sleep(p.Interval)
+		return
+	}
+	t := time.NewTimer(p.Interval)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
 
 // WaitForPrompt returns once the console shows something other than black
 // and holds still: the prompt waits, the boot stages before it move on. A
 // screenshot that matches either of the two before it counts as still, so a
-// blinking cursor cannot keep the prompt from settling.
-func WaitForPrompt(h virt.Hypervisor, domain string, p Prompt) error {
+// blinking cursor cannot keep the prompt from settling. It stops when ctx
+// ends, as on SIGINT.
+func WaitForPrompt(ctx context.Context, h virt.Hypervisor, domain string, p Prompt) error {
 	var last, before [32]byte
 	still := 0
 	for waited := time.Duration(0); ; waited += p.Interval {
+		if err := ctx.Err(); err != nil {
+			return failure.Wrap(failure.Failed, err, "interrupted while waiting for the prompt of %s; nothing was typed", domain)
+		}
 		var buf bytes.Buffer
 		if _, err := h.Screenshot(domain, &buf); err == nil {
 			sum := sha256.Sum256(buf.Bytes())
@@ -107,7 +128,7 @@ func WaitForPrompt(h virt.Hypervisor, domain string, p Prompt) error {
 		if waited >= p.Timeout {
 			return failure.New(failure.Timeout, "the console of %s did not settle on a prompt within %v; nothing was typed", domain, p.Timeout)
 		}
-		p.Sleep(p.Interval)
+		p.sleep(ctx)
 	}
 }
 

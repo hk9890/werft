@@ -3,6 +3,7 @@ package guest_test
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -133,5 +134,58 @@ func TestWriteConfigOffersTheKeysInOrder(t *testing.T) {
 		if got.String() != want {
 			t.Errorf("KeyOnly %v: ssh resolves\n%swant\n%s", keyOnly, got.String(), want)
 		}
+	}
+}
+
+func TestScriptCommandKeepsStdinFree(t *testing.T) {
+	cmd := guest.ScriptCommand(`read -r line; printf '%s|%s' "$1" "$line"`, "it's")
+	if cmd != `sh -c 'read -r line; printf '\''%s|%s'\'' "$1" "$line"' sh 'it'\''s'` {
+		t.Errorf("cmd = %s", cmd)
+	}
+	c := exec.Command("sh", "-c", cmd)
+	c.Stdin = guest.Line("s3cr t")
+	out, err := c.Output()
+	if err != nil || string(out) != "it's|s3cr t" {
+		t.Errorf("ran as %q, %v", out, err)
+	}
+}
+
+// shellFunc is a guest.Shell that runs in a function.
+type shellFunc func(cmd string, stdin io.Reader) error
+
+func (f shellFunc) Run(_ context.Context, _ guest.Addr, cmd string, stdin io.Reader, _, _ io.Writer) error {
+	return f(cmd, stdin)
+}
+
+// Copy replaces the directory with the files, in one login. The command
+// runs here in a shell, with the directory under a temp dir.
+func TestCopy(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "guest dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stale"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logins := 0
+	sh := shellFunc(func(cmd string, stdin io.Reader) error {
+		logins++
+		c := exec.Command("sh", "-c", cmd)
+		c.Stdin = stdin
+		return c.Run()
+	})
+	err := guest.Copy(context.Background(), sh, guest.Addr{}, dir, []guest.File{{Name: "helper", Data: []byte("h"), Mode: 0o755}}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "stale")); !os.IsNotExist(err) {
+		t.Error("the old content stayed")
+	}
+	info, err := os.Stat(filepath.Join(dir, "helper"))
+	if err != nil || info.Mode().Perm() != 0o755 {
+		t.Errorf("helper: %v, %v", info, err)
+	}
+	if logins != 1 {
+		t.Errorf("%d logins, want 1", logins)
 	}
 }

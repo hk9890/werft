@@ -20,7 +20,6 @@ import (
 // Timeouts. The person timeouts wait for someone at the guest's window.
 const (
 	sshTimeout       = 300 * time.Second
-	sshInterval      = 5 * time.Second
 	sessionTimeout   = 180 * time.Second
 	mountTimeout     = 60 * time.Second
 	shutdownTimeout  = 120 * time.Second
@@ -72,7 +71,8 @@ func (s Reset) Check(r *pipeline.Run) error {
 	if state, err := r.H.DomainState(r.Domain); err != nil || state == virt.StateShutOff {
 		return err
 	}
-	return r.Confirm(r.Domain + " is running and will be reset to '" + s.label() + "'. Everything in it is lost.")
+	r.Ask(r.Domain + " is running and will be reset to '" + s.label() + "'. Everything in it is lost.")
+	return nil
 }
 
 func (s Reset) Run(r *pipeline.Run) error {
@@ -117,8 +117,11 @@ func boot(r *pipeline.Run) error {
 	r.Printf("Waiting for the disk password prompt of %s", r.Domain)
 	p := console.DefaultPrompt
 	p.Sleep = r.Sleep
-	if err := console.WaitForPrompt(r.H, r.Domain, p); err != nil {
-		return failure.Wrap(failure.KindOf(err), err, "open the window to look: virt-viewer -c qemu:///system %s", r.Domain)
+	if err := console.WaitForPrompt(r.Ctx, r.H, r.Domain, p); err != nil {
+		if !failure.Is(err, failure.Timeout) {
+			return err
+		}
+		return failure.Wrap(failure.Timeout, err, "open the window to look: virt-viewer -c qemu:///system %s", r.Domain)
 	}
 	r.Printf("Typing the disk password of %s at its console", r.Domain)
 	return console.Type(r.H, r.Domain, r.Secret(pipeline.GuestPassword))
@@ -132,7 +135,7 @@ func (WaitSSH) Check(*pipeline.Run) error { return nil }
 func (WaitSSH) Run(r *pipeline.Run) error { return waitSSH(r) }
 
 func waitSSH(r *pipeline.Run) error {
-	err := r.Poll(sshTimeout, sshInterval, "no SSH answer from "+r.Domain, func() bool { return r.Reach("true") })
+	err := r.PollLogin(sshTimeout, "no SSH answer from "+r.Domain, func() bool { return r.Reach("true") })
 	if err != nil && r.LUKS {
 		return failure.Wrap(failure.KindOf(err), err, "if its console asks for the disk password again, the disk refused it; nothing types it twice (virt-viewer -c qemu:///system %s)", r.Domain)
 	}
@@ -156,7 +159,7 @@ func (Poweroff) Run(r *pipeline.Run) error { return poweroff(r) }
 
 func poweroff(r *pipeline.Run) error {
 	r.Printf("Powering %s off from inside", r.Domain)
-	_ = r.Shell.Run(r.Ctx, r.Addr, rootPoweroff, strings.NewReader(r.Secret(pipeline.GuestPassword)+"\n"), io.Discard, io.Discard)
+	_ = r.Shell.Run(r.Ctx, r.Addr, rootPoweroff, guest.Line(r.Secret(pipeline.GuestPassword)), io.Discard, io.Discard)
 	if err := r.Poll(shutdownTimeout, pollInterval, r.Domain+" did not power off", func() bool { return shutOff(r) }); err != nil {
 		return err
 	}

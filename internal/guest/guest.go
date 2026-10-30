@@ -1,9 +1,11 @@
 // Package guest is the guest port: run a command in a guest over SSH, with
-// data on stdin. Copying files and running scripts as root build on it.
+// data on stdin. Scripts, scripts as root and copying files build on it. A
+// secret reaches a guest only as stdin data, never on a command line.
 package guest
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -38,17 +40,28 @@ func Quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// ScriptCommand runs script with sh, with args as its $1... The script
+// travels as an argument, so stdin stays free for data such as a secret.
+func ScriptCommand(script string, args ...string) string {
+	words := []string{"sh -c", Quote(script), "sh"}
+	for _, a := range args {
+		words = append(words, Quote(a))
+	}
+	return strings.Join(words, " ")
+}
+
 // RootCommand runs script as root through sudo, with args as its $1... sudo
 // reads the password from stdin and the script travels as an argument: where
 // sudo needs no password it leaves stdin unread, and a script fed through
 // stdin would then start with the password. -k makes sudo ask every time, so
 // a wrong password cannot hide behind a cached one.
 func RootCommand(script string, args ...string) string {
-	words := []string{"sudo -k -S -p '' sh -c", Quote(script), "sh"}
-	for _, a := range args {
-		words = append(words, Quote(a))
-	}
-	return strings.Join(words, " ")
+	return "sudo -k -S -p '' " + ScriptCommand(script, args...)
+}
+
+// Line is a secret as stdin data: one line.
+func Line(secret string) io.Reader {
+	return strings.NewReader(secret + "\n")
 }
 
 // File is one file or directory to copy into the guest. Name is its path
@@ -61,11 +74,16 @@ type File struct {
 	Mode   fs.FileMode
 }
 
-// UploadCommand empties dir in the guest and unpacks the tar stream on stdin
-// into it.
-func UploadCommand(dir string) string {
+// Copy replaces dir in the guest at addr with files: it empties dir and
+// unpacks the files there from one tar stream, over one SSH login. out gets
+// the output of the guest command.
+func Copy(ctx context.Context, sh Shell, addr Addr, dir string, files []File, out io.Writer) error {
+	var stream bytes.Buffer
+	if err := WriteTar(&stream, files); err != nil {
+		return err
+	}
 	q := Quote(dir)
-	return fmt.Sprintf("rm -rf %s && mkdir -p %s && tar -x -C %s", q, q, q)
+	return sh.Run(ctx, addr, fmt.Sprintf("rm -rf %s && mkdir -p %s && tar -x -C %s", q, q, q), &stream, out, out)
 }
 
 // WriteTar writes files as one tar stream.

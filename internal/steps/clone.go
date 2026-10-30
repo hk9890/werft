@@ -32,7 +32,8 @@ func (Clone) Check(r *pipeline.Run) error {
 	if err != nil || !exists {
 		return err
 	}
-	return r.Confirm(t + " exists and will be replaced. Everything in it is lost.")
+	r.Ask(t + " exists and will be replaced. Everything in it is lost.")
+	return nil
 }
 
 // requireShutOff fails with failure.Conflict unless the domain name is shut
@@ -318,7 +319,8 @@ func (s *Snapshot) Check(r *pipeline.Run) error {
 		return err
 	}
 	s.replace = true
-	return r.Confirm(fmt.Sprintf("%s already has a '%s'. It will be retaken from %s as it is now.", r.Domain, s.Label, r.Domain))
+	r.Ask(fmt.Sprintf("%s already has a '%s'. It will be retaken from %s as it is now.", r.Domain, s.Label, r.Domain))
+	return nil
 }
 
 func (s *Snapshot) Run(r *pipeline.Run) error {

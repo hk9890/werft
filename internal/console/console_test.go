@@ -2,6 +2,7 @@ package console_test
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -76,7 +77,7 @@ func TestWaitForPromptNeedsAStillScreen(t *testing.T) {
 	f := running(t)
 	f.SetScreenshot("vm", "image/png", screen(t, true))
 	sleeps := 0
-	if err := console.WaitForPrompt(f, "vm", prompt(&sleeps)); err != nil {
+	if err := console.WaitForPrompt(context.Background(), f, "vm", prompt(&sleeps)); err != nil {
 		t.Fatal(err)
 	}
 	if sleeps != 4 {
@@ -88,7 +89,7 @@ func TestWaitForPromptIgnoresABlackScreen(t *testing.T) {
 	f := running(t)
 	f.SetScreenshot("vm", "image/png", screen(t, false))
 	sleeps := 0
-	err := console.WaitForPrompt(f, "vm", prompt(&sleeps))
+	err := console.WaitForPrompt(context.Background(), f, "vm", prompt(&sleeps))
 	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "nothing was typed") {
 		t.Errorf("err = %v", err)
 	}
@@ -98,11 +99,11 @@ func TestWaitForPromptReadsPPM(t *testing.T) {
 	f := running(t)
 	f.SetScreenshot("vm", "image/x-portable-pixmap", append([]byte("P6\n2 1\n255\n"), 0, 0, 0, 9, 9, 9))
 	sleeps := 0
-	if err := console.WaitForPrompt(f, "vm", prompt(&sleeps)); err != nil {
+	if err := console.WaitForPrompt(context.Background(), f, "vm", prompt(&sleeps)); err != nil {
 		t.Error(err)
 	}
 	f.SetScreenshot("vm", "image/x-portable-pixmap", append([]byte("P6\n2 1\n255\n"), 0, 0, 0, 0, 0, 0))
-	if err := console.WaitForPrompt(f, "vm", prompt(&sleeps)); !failure.Is(err, failure.Timeout) {
+	if err := console.WaitForPrompt(context.Background(), f, "vm", prompt(&sleeps)); !failure.Is(err, failure.Timeout) {
 		t.Errorf("a black PPM counted as a prompt: %v", err)
 	}
 }
@@ -124,5 +125,74 @@ func TestType(t *testing.T) {
 	}
 	if err := console.Type(f, "vm", "ä"); err == nil || len(f.SentKeys("vm")) != len(want) {
 		t.Error("an untypeable password was typed in part")
+	}
+}
+
+// The characters vm_test.sh types, each with its US key.
+func TestTypeShiftedAndPunctuation(t *testing.T) {
+	f := running(t)
+	if err := console.Type(f, "vm", `Q!a-_"\`); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]uint32{{42, 16}, {42, 2}, {30}, {12}, {42, 12}, {42, 40}, {43}, {28}}
+	keys := f.SentKeys("vm")
+	if len(keys) != len(want) {
+		t.Fatalf("keys = %v", keys)
+	}
+	for i := range want {
+		if !slices.Equal(keys[i], want[i]) {
+			t.Errorf("key %d = %v, want %v", i, keys[i], want[i])
+		}
+	}
+}
+
+// A cursor that blinks between two screens still lets the prompt settle.
+func TestWaitForPromptSettlesWithABlinkingCursor(t *testing.T) {
+	f := running(t)
+	on, off := screen(t, true), screen(t, true)
+	off = append(off[:len(off):len(off)], 0) // another hash, the same image
+	f.SetScreenshot("vm", "image/png", on)
+	shots := 0
+	p := console.Prompt{Timeout: 20 * time.Second, Interval: 2 * time.Second, Still: 4, Sleep: func(time.Duration) {
+		shots++
+		if shots%2 == 1 {
+			f.SetScreenshot("vm", "image/png", off)
+		} else {
+			f.SetScreenshot("vm", "image/png", on)
+		}
+	}}
+	if err := console.WaitForPrompt(context.Background(), f, "vm", p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// SIGINT ends the wait for the disk prompt during its pause, and nothing is
+// typed.
+func TestWaitForPromptStopsOnInterrupt(t *testing.T) {
+	f := running(t)
+	f.SetScreenshot("vm", "image/png", screen(t, false))
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	err := console.WaitForPrompt(ctx, f, "vm", console.Prompt{Timeout: time.Hour, Interval: time.Hour, Still: 4})
+	if err == nil || !strings.Contains(err.Error(), "interrupted") || !strings.Contains(err.Error(), "nothing was typed") {
+		t.Fatalf("err = %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("the wait took %v after the interrupt", d)
+	}
+	if len(f.SentKeys("vm")) != 0 {
+		t.Error("keys were typed")
+	}
+}
+
+// A console that cannot be read never counts as a prompt.
+func TestWaitForPromptSkipsAFailedScreenshot(t *testing.T) {
+	f := running(t)
+	f.SetScreenshot("vm", "image/png", screen(t, true))
+	f.FailOn("Screenshot", failure.New(failure.Failed, "no screen"))
+	sleeps := 0
+	if err := console.WaitForPrompt(context.Background(), f, "vm", prompt(&sleeps)); !failure.Is(err, failure.Timeout) {
+		t.Errorf("err = %v", err)
 	}
 }
