@@ -52,6 +52,7 @@ type UsbPassthrough struct {
 	Label string
 
 	stick     hostdev.Stick
+	mount     string
 	domain    string
 	unmounted bool
 }
@@ -71,11 +72,12 @@ func (u *UsbPassthrough) Check(r *pipeline.Run) error {
 		return failure.New(failure.Conflict, "a program holds the stick at %s:\n%s\nclose it, leave the stick mounted, and run again; nothing changed", mount, holders)
 	}
 	u.stick = s
+	u.mount = mount
 	return nil
 }
 
 func (u *UsbPassthrough) Run(r *pipeline.Run) error {
-	r.Printf("Handing the stick %s to %s", u.Label, r.Domain)
+	r.Printf("Handing the stick at %s to %s", u.mount, r.Domain)
 	if err := r.Host.UnmountStick(u.stick); err != nil {
 		return err
 	}

@@ -75,4 +75,7 @@ func TestProvisionTakesTheStickAtKeyMount(t *testing.T) {
 	if w.index("^find stick /media/tester/BACKUP$") < 0 || w.index("^find stick /media/tester/MASTER-KEY$") >= 0 {
 		t.Errorf("want the stick at --key only:\n  %s", strings.Join(w.entries(), "\n  "))
 	}
+	if out := w.out.String(); !strings.Contains(out, "Handing the stick at /media/tester/BACKUP to testvm") {
+		t.Errorf("the hand-over does not name the stick at --key:\n%s", out)
+	}
 }
