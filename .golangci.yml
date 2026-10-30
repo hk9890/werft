@@ -2,6 +2,9 @@ version: "2"
 
 run:
   timeout: 5m
+  # The live tests sit behind this tag; without it the linter never sees them.
+  build-tags:
+    - live
 
 linters:
   default: none
