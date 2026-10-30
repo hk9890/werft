@@ -52,3 +52,14 @@ func TestPrepareRecipe(t *testing.T) {
 		t.Errorf("prepare --recipe = %+v", r)
 	}
 }
+
+func TestProvisionKeyNeedsAUSBPassthroughStep(t *testing.T) {
+	recipe := filepath.Join(t.TempDir(), "recipe.toml")
+	if err := os.WriteFile(recipe, []byte("[[steps]]\ntype = \"snapshot\"\nlabel = \"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := runCLI("", false, "provision", "--key", "/media/tester/BACKUP", "--recipe", recipe, "vm")
+	if r.code != 2 || !strings.Contains(r.stderr, "has no usb-passthrough step") {
+		t.Errorf("provision --key = %+v", r)
+	}
+}

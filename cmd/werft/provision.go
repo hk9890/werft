@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,8 +23,11 @@ import (
 
 func (c *cli) cmdProvision(args []string) error {
 	fs := flag.NewFlagSet("provision", flag.ContinueOnError)
-	yes := fs.Bool("yes", false, "reset a running build VM and replace <name>-full without asking")
+	var yes bool
+	fs.BoolVar(&yes, "yes", false, "reset a running build VM and replace <name>-full without asking")
+	fs.BoolVar(&yes, "y", false, "short for --yes")
 	recipePath := fs.String("recipe", "", "the recipe file; default: the recipe config.toml names for <name>")
+	key := fs.String("key", "", "the mount point of the stick the usb-passthrough step hands over; default: its label under /media/$USER or /run/media/$USER")
 	if err := c.parseFlags(fs, "provision", args); err != nil {
 		return err
 	}
@@ -44,6 +48,9 @@ func (c *cli) cmdProvision(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *key != "" && !slices.ContainsFunc(rec.Steps, func(s recipe.Step) bool { return s.Type == "usb-passthrough" }) {
+		return failure.New(failure.Usage, "--key: the recipe %s has no usb-passthrough step", rec.Path)
+	}
 
 	dir, err := state.Root()
 	if err != nil {
@@ -60,12 +67,13 @@ func (c *cli) cmdProvision(args []string) error {
 	defer func() { _ = log.Close() }()
 
 	plainLog := ansi.Strip(log)
-	r, done, err := c.buildVMRun(name, *yes, io.MultiWriter(c.stderr, plainLog))
+	r, done, err := c.buildVMRun(name, yes, io.MultiWriter(c.stderr, plainLog))
 	if err != nil {
 		return err
 	}
 	defer done()
 	r.LogPath = logPath
+	r.KeyMount = *key
 	r.PasswordSpec = passwordSpec(rec.GuestPassword, r.User, name)
 	r.Printf("Provisioning %s with the recipe %s; log: %s", name, rec.Path, logPath)
 	if err := pipeline.Execute(r, steps.FromRecipe(rec)); err != nil {
@@ -82,7 +90,9 @@ func (c *cli) cmdProvision(args []string) error {
 
 func (c *cli) cmdPrepare(args []string) error {
 	fs := flag.NewFlagSet("prepare", flag.ContinueOnError)
-	yes := fs.Bool("yes", false, "retake an existing provision-base without asking")
+	var yes bool
+	fs.BoolVar(&yes, "yes", false, "retake an existing provision-base without asking")
+	fs.BoolVar(&yes, "y", false, "short for --yes")
 	recipePath := fs.String("recipe", "", "the recipe whose guest_password prepare uses; default: the recipe config.toml names for <name>")
 	if err := c.parseFlags(fs, "prepare", args); err != nil {
 		return err
@@ -110,7 +120,7 @@ func (c *cli) cmdPrepare(args []string) error {
 	if err := guestEnsureKey(dir.SSHKey()); err != nil {
 		return failure.Wrap(failure.Failed, err, "create the werft SSH key")
 	}
-	r, done, err := c.buildVMRun(name, *yes, c.stderr)
+	r, done, err := c.buildVMRun(name, yes, c.stderr)
 	if err != nil {
 		return err
 	}

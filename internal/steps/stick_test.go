@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/steps"
 )
 
 // The key stick scenarios of vm_test.sh: the host lets go of the stick only
@@ -60,4 +62,20 @@ func TestTheStickStaysOnTheHostWithoutASession(t *testing.T) {
 		t.Errorf("the stick was touched: %q", w.entries()[i])
 	}
 	w.assertSequence("automatic login is still restored", "pgrep -u", "mv -f .*custom.conf")
+}
+
+// --key points provision at a stick mounted elsewhere than its label says.
+func TestProvisionTakesTheStickAtKeyMount(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun(true)
+	r.KeyMount = "/media/tester/BACKUP"
+	if err := pipeline.Execute(r, steps.FromRecipe(setupRecipe(t))); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	if w.index("^find stick /media/tester/BACKUP$") < 0 || w.index("^find stick /media/tester/MASTER-KEY$") >= 0 {
+		t.Errorf("want the stick at --key only:\n  %s", strings.Join(w.entries(), "\n  "))
+	}
+	if out := w.out.String(); !strings.Contains(out, "Handing the stick at /media/tester/BACKUP to testvm") {
+		t.Errorf("the hand-over does not name the stick at --key:\n%s", out)
+	}
 }

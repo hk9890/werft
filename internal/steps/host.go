@@ -46,17 +46,22 @@ func (Viewer) Cleanup(r *pipeline.Run) error {
 // UsbPassthrough hands a host USB stick to the guest, live only: the device
 // never enters the persistent XML, so neither a reset point nor the clone
 // references it. The host lets go of the stick first; the cleanup takes it
-// back.
+// back. The stick is the one mounted at Run.KeyMount, or with its label
+// under the user's media directory.
 type UsbPassthrough struct {
 	Label string
 
 	stick     hostdev.Stick
+	mount     string
 	domain    string
 	unmounted bool
 }
 
 func (u *UsbPassthrough) Check(r *pipeline.Run) error {
-	mount := r.Host.StickMount(u.Label)
+	mount := r.KeyMount
+	if mount == "" {
+		mount = r.Host.StickMount(u.Label)
+	}
 	s, err := r.Host.FindStick(mount)
 	if err != nil {
 		return err
@@ -67,11 +72,12 @@ func (u *UsbPassthrough) Check(r *pipeline.Run) error {
 		return failure.New(failure.Conflict, "a program holds the stick at %s:\n%s\nclose it, leave the stick mounted, and run again; nothing changed", mount, holders)
 	}
 	u.stick = s
+	u.mount = mount
 	return nil
 }
 
 func (u *UsbPassthrough) Run(r *pipeline.Run) error {
-	r.Printf("Handing the stick %s to %s", u.Label, r.Domain)
+	r.Printf("Handing the stick at %s to %s", u.mount, r.Domain)
 	if err := r.Host.UnmountStick(u.stick); err != nil {
 		return err
 	}

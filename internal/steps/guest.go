@@ -83,17 +83,20 @@ func (LUKSMark) Run(r *pipeline.Run) error {
 	if err != nil {
 		return err
 	}
+	desc = strings.TrimRight(desc, "\n")
 	var kept []string
-	for _, line := range strings.Split(desc, "\n") {
-		if line != domxml.LUKSMarker && line != "" {
-			kept = append(kept, line)
+	if desc != "" {
+		for _, line := range strings.Split(desc, "\n") {
+			if line != domxml.LUKSMarker {
+				kept = append(kept, line)
+			}
 		}
 	}
 	if luks {
 		r.Printf("The disk of %s asks for a password at boot; werft types the guest password there", r.Domain)
 		kept = append(kept, domxml.LUKSMarker)
 	}
-	if next := strings.Join(kept, "\n"); next != strings.TrimRight(desc, "\n") {
+	if next := strings.Join(kept, "\n"); next != desc {
 		return r.H.SetDomainDescription(r.Domain, next)
 	}
 	return nil

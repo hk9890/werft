@@ -149,7 +149,9 @@ func (c *cli) cmdReset(args []string) error {
 
 func (c *cli) cmdMigrate(args []string) error {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
-	yes := fs.Bool("yes", false, "migrate without asking")
+	var yes bool
+	fs.BoolVar(&yes, "yes", false, "migrate without asking")
+	fs.BoolVar(&yes, "y", false, "short for --yes")
 	if err := c.parseFlags(fs, "migrate", args); err != nil {
 		return err
 	}
@@ -170,7 +172,7 @@ func (c *cli) cmdMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.confirm(*yes, migrationQuestion(m)); err != nil {
+	if err := c.confirm(yes, migrationQuestion(m)); err != nil {
 		return err
 	}
 	if len(m.Export) > 0 {

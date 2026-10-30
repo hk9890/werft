@@ -335,24 +335,26 @@ All generic.
 | `verify-guest-password` | Check the guest password with one `sudo` call |
 | `detect-guest` | Detect the family (`ubuntu` or `omarchy`) and the session process |
 | `hostname` | Set the guest hostname to the domain name |
-| `luks-mark` | Probe the root disk for LUKS and set the LUKS marker |
+| `luks-mark` | Probe the root disk for LUKS and set or remove the LUKS marker line; the rest of the description, blank lines too, stays |
 | `autologin` | Turn GDM autologin on, and off again in cleanup; `prepare` checks it is off |
 | `upload` | Copy the embedded helpers and the recipe files into the guest |
 | `wait-session` | Wait for the desktop session |
 | `unlock-keyring` | Unlock the GNOME keyring |
 | `sudo-grant` | Grant passwordless sudo, and revoke it in cleanup |
-| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup |
+| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup |
 | `pinentry` | Install a pinentry stub with the passphrase in tmpfs and a gpg-agent line; remove them in cleanup |
 | `run` | Run a guest command or script, with an optional secret on stdin |
 | `checks` | Copy a host check directory into the guest and run its entry script; a failure is `checks_failed` |
 | `reboot`, `poweroff` | Power off from inside the guest; `reboot` then boots and waits for SSH |
-| `clone` | Delete the old clone, define a new one from generated XML, copy the viewer settings; the steps after it act on the clone |
+| `clone` | Refuse a source that is not shut off (a `poweroff` step comes first), delete the old clone, define a new one from generated XML, copy the viewer settings; the steps after it act on the clone |
 | `generalize` | Boot the clone, give it a new machine-id, new SSH host keys and its hostname, power it off |
 | `snapshot` | Take a reset point |
 | `undo` | Run the cleanup of an earlier step now, so a temporary change ends where the recipe says |
 
 `prepare` is a fixed built-in step list; it needs no recipe. Its two waits for a person (sshd install,
-disk password) stay, with a hint for each.
+disk password) stay, with a hint for each. The disk password wait ends with a DHCP lease, as
+`lifecycle.WaitAddress` does: a vsock CID is in the live XML from the start, so it is no sign that
+the guest left its initramfs.
 
 The clone gets a copy of each writable disk and of the NVRAM, made with `StorageVolCreateXMLFrom`
 in the pool of the original (the NVRAM in the `nvram` pool). An NVRAM template does not work:
@@ -360,7 +362,9 @@ firmware autoselection refuses a qcow2 template. A read-only or shareable disk, 
 installer ISO, stays shared. Preflight finds the volume of each writable disk and of the NVRAM; one
 outside every storage pool fails there, before anything changes. An NVRAM in the NVRAM directory
 that no pool lists yet passes preflight; the run makes a pool list it before it removes the old
-clone. A copy that fails deletes the copies made so far. Before `clone` removes the old
+clone. `clone` refuses a running source build VM with `conflict`: libvirt copies the disk of a
+running guest without an error, and the copy is inconsistent. A copy that fails deletes the copies
+made so far. Before `clone` removes the old
 `<name>-full`, it checks again that it is shut off. It deletes the old NVRAM through the storage
 API: an undefine that deletes the NVRAM unlinks the file, but its pool keeps the name, and the new
 copy under that name fails. It also deletes the `.bak` NVRAM copies of the old clone's `vm` reset
@@ -423,6 +427,7 @@ line 1, guest password on line 2) goes away.
 - On error with `--json`, stdout holds `{"error": {"kind": "...", "message": "..."}}`, with the
   kind from the table below.
 - Without a TTY no command prompts; a missing confirmation fails and names the flag (`--yes`).
+  `-y` is short for `--yes` on `reset`, `prepare`, `provision` and `migrate`, as in `vm`.
 - JSON holds no secret. It gives the path of the lease private key.
 
 Exit codes are part of the contract:

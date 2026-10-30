@@ -49,6 +49,7 @@ VM whose UEFI variables are raw, because a reset point would leave them out.
 ```sh
 werft prepare ubuntu-26-04                   # once: werft key and your own key, hostname, provision-base
 werft provision ubuntu-26-04                 # reset, run the recipe, clone to ubuntu-26-04-full
+werft provision --key /media/$USER/BACKUP ubuntu-26-04  # the key stick at another mount point
 ```
 
 ### Leases (target)
