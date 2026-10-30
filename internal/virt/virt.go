@@ -37,6 +37,9 @@ type Hypervisor interface {
 	SetDomainDescription(name, description string) error
 
 	CreateSnapshot(domain, name, description string) error
+	// RedefineSnapshot adds the metadata of a snapshot that exists already in
+	// the disks: xml is a full snapshot description, with its domain.
+	RedefineSnapshot(domain, xml string) error
 	Snapshots(domain string) ([]string, error)
 	SnapshotXML(domain, name string) (string, error)
 	RevertSnapshot(domain, name string) error
@@ -48,6 +51,9 @@ type Hypervisor interface {
 	RefreshPool(name string) error
 	PoolInfo(name string) (PoolInfo, error)
 
+	// Volumes is the names of the volumes in pool, as libvirt knows them
+	// since its last refresh.
+	Volumes(pool string) ([]string, error)
 	CreateVolume(pool, xml string) (Volume, error)
 	// CreateVolumeFrom creates a volume in pool from xml, filled with the
 	// content of volume from in pool fromPool, converted to the format xml names.

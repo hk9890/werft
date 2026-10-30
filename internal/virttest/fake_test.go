@@ -202,6 +202,9 @@ func TestVolumes(t *testing.T) {
 	if v.Path != "/pool/a.raw" {
 		t.Errorf("path = %q", v.Path)
 	}
+	if names, err := f.Volumes("pool"); err != nil || len(names) != 1 || names[0] != "a.raw" {
+		t.Errorf("volumes = %q, %v", names, err)
+	}
 	_, err = f.CreateVolume("pool", "<volume><name>a.raw</name></volume>")
 	mustKind(t, err, failure.Conflict)
 
@@ -333,5 +336,30 @@ func TestVolumeByPath(t *testing.T) {
 	}
 	if _, _, err := f.VolumeByPath("/elsewhere"); !failure.Is(err, failure.NotFound) {
 		t.Errorf("VolumeByPath of a path in no pool = %v", err)
+	}
+}
+
+func TestRedefineSnapshotTakesTheDomainOfTheDescription(t *testing.T) {
+	f := virttest.New()
+	if _, err := f.DefineDomain(vmXML); err != nil {
+		t.Fatal(err)
+	}
+	then := strings.Replace(vmXML, "<name>vm1</name>", "<name>vm1</name><description>then</description>", 1)
+	snap := `<domainsnapshot><name>old</name><creationTime>1</creationTime><state>shutoff</state>` + then + `</domainsnapshot>`
+	if err := f.RedefineSnapshot("vm1", snap); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.RedefineSnapshot("vm1", snap); err != nil {
+		t.Errorf("a second redefine must replace the first: %v", err)
+	}
+	mustKind(t, f.RedefineSnapshot("vm1", `<domainsnapshot><name>x</name></domainsnapshot>`), failure.Failed)
+	if names, _ := f.Snapshots("vm1"); len(names) != 1 || names[0] != "old" {
+		t.Errorf("snapshots = %q", names)
+	}
+	if err := f.RevertSnapshot("vm1", "old"); err != nil {
+		t.Fatal(err)
+	}
+	if desc, _ := f.DomainDescription("vm1"); desc != "then" {
+		t.Errorf("description after revert = %q, want the one of the snapshot domain", desc)
 	}
 }

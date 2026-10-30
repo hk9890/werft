@@ -7,6 +7,7 @@ import (
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
@@ -168,7 +169,7 @@ func TestProvisionYesWithoutTerminalNeedsASecret(t *testing.T) {
 
 func TestProvisionNeedsTheBase(t *testing.T) {
 	w := newWorld(t)
-	must(t, w.fake.DeleteSnapshot(vm, steps.ProvisionBase))
+	must(t, w.fake.DeleteSnapshot(vm, resetpoint.ProvisionBase))
 	_, err := provision(t, w, true)
 	if !failure.Is(err, failure.NotFound) || !strings.Contains(err.Error(), "werft prepare testvm") {
 		t.Fatalf("err = %v", err)

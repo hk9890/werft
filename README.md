@@ -2,7 +2,7 @@
 
 Disposable test VMs from stock images, on one Linux workstation with libvirt. Built for agents first: get a VM, reach it over SSH, test something in it, give it back.
 
-**Status:** early. `werft list`, `start`, `stop`, `prepare` and `provision` exist; the lease commands do not yet. What werft will do is in [docs/PRODUCT.md](docs/PRODUCT.md), how it will work in [docs/DESIGN.md](docs/DESIGN.md).
+**Status:** early. `werft list`, `start`, `stop`, `snapshot`, `snapshots`, `reset`, `migrate`, `prepare` and `provision` exist; the lease commands do not yet. What werft will do is in [docs/PRODUCT.md](docs/PRODUCT.md), how it will work in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Requirements
 

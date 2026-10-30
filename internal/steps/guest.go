@@ -13,6 +13,7 @@ import (
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/guest/assets"
 	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/secret"
 )
 
@@ -134,7 +135,7 @@ func (a *Autologin) Check(r *pipeline.Run) error {
 func (a *Autologin) Run(r *pipeline.Run) error {
 	if a.Prepare {
 		if !r.Probe(autologinOffProbe) {
-			return failure.New(failure.Conflict, "automatic login is on in %s, or %s is missing; the base must keep it off so %s asks for a password (provision turns it on for its own run). Turn it off there (Settings, System, Users) and run werft prepare %s again", r.Domain, gdmConf, r.Domain+FullSuffix, r.Domain)
+			return failure.New(failure.Conflict, "automatic login is on in %s, or %s is missing; the base must keep it off so %s asks for a password (provision turns it on for its own run). Turn it off there (Settings, System, Users) and run werft prepare %s again", r.Domain, gdmConf, r.Domain+resetpoint.FullSuffix, r.Domain)
 		}
 		return nil
 	}

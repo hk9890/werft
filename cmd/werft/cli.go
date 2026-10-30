@@ -45,8 +45,12 @@ func init() {
 	commands = []command{
 		{name: "help", args: "[command]", summary: "show the usage of werft or of one command", run: (*cli).cmdHelp},
 		{name: "list", summary: "list all VMs: state, disk use, reset points, LUKS marker, address", run: (*cli).cmdList},
+		{name: "migrate", args: "[--yes] <name>", summary: "move a build VM from the reset points of vm to native ones: keep provision-base (clean on -full), export clean-install", run: (*cli).cmdMigrate},
 		{name: "prepare", args: "[--yes] <name>", summary: "make a stock install the base provision starts from: werft key, hostname, provision-base", run: (*cli).cmdPrepare},
 		{name: "provision", args: "[--yes] [--recipe file] <name>", summary: "run the recipe on <name> from provision-base and keep the result as <name>-full", run: (*cli).cmdProvision},
+		{name: "reset", args: "[--yes] <name> [label]", summary: "roll a shut-off VM back to a reset point (default label: clean-install)", run: (*cli).cmdReset},
+		{name: "snapshot", args: "[--replace] <name> [label]", summary: "take a reset point of a shut-off VM (default label: clean-install); --replace retakes one", run: (*cli).cmdSnapshot},
+		{name: "snapshots", args: "<name>", summary: "list the reset points of a VM, and those vm keeps", run: (*cli).cmdSnapshots},
 		{name: "start", args: "[--view] <name>", summary: "start a VM headless and wait for its address; --view also opens virt-viewer", run: (*cli).cmdStart},
 		{name: "stop", args: "[--force] <name>", summary: "ACPI shutdown and wait; --force forces the VM off at once", run: (*cli).cmdStop},
 		{name: "version", summary: "print the werft version", run: (*cli).cmdVersion},

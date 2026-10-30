@@ -6,9 +6,9 @@ setup repo.
 
 Status: target design. In code: the hypervisor port with its libvirt adapter and fake, `domxml`,
 `failure`, `config`, `state`, the command dispatch with `version` and `help`, `list`, `start` and
-`stop` (`lifecycle`), and the provision pipeline with `prepare` and `provision` (`pipeline`,
-`steps`, `recipe`, `guest`, `console`, `secret`, `hostdev`, `ansi`, and the snapshot and
-legacy-count parts of `resetpoint`).
+`stop` (`lifecycle`), the provision pipeline with `prepare` and `provision` (`pipeline`,
+`steps`, `recipe`, `guest`, `console`, `secret`, `hostdev`, `ansi`), and `snapshot`,
+`snapshots`, `reset` and `migrate` (`resetpoint`).
 
 ## Proposals in short
 
@@ -39,7 +39,8 @@ real adapters.
   gives its errors a kind here; `cmd/werft` maps the kind to the exit code.
 - **`internal/virt`** — The hypervisor port: the interface and the types that cross it. Only the
   calls werft needs: domain lookup/list/define/start/shutdown/destroy/undefine, state, XML,
-  metadata and description; snapshots; pools and volumes; DHCP leases; screenshot, send-key,
+  metadata and description; snapshots, and the redefine of snapshot metadata; pools and volumes,
+  and the volume list of a pool; DHCP leases; screenshot, send-key,
   device attach/detach; libvirt version and free host memory. Objects are addressed by name.
   Metadata and description go to the persistent definition.
 - **`internal/virt/libvirt`** — The go-libvirt adapter. It opens `libvirt-sock` (monolithic daemon)
@@ -50,8 +51,8 @@ real adapters.
   log, and failure injection.
 - **`internal/domxml`** — Pure functions that read, build and edit domain XML with libvirtxml.
   They read disks, loader, NVRAM, UEFI, vsock CID, MACs, description and the LUKS marker. They
-  will build lease domains, clones of build VMs (new name, UUID, MAC), and the qcow2 NVRAM rewrite
-  for migration.
+  build clones of build VMs (new name, UUID, MAC) and the qcow2 NVRAM rewrite for migration, and
+  will build lease domains.
 - **`internal/guest`** — The guest port and its OpenSSH adapter: run a command, run a script with
   data on stdin, copy files, probe readiness. It passes a werft-owned `ssh_config` with `-F`, so the
   user's `SendEnv LC_*` never applies. It keeps login attempts few, because sshd
@@ -113,7 +114,7 @@ real adapters.
 | Build VMs, leases | libvirt domains | libvirt |
 | Lease owner, expiry, stock version | `<metadata>` element of the lease domain, werft namespace | libvirt |
 | Reset points | libvirt snapshot metadata plus qcow2 internal snapshots in disk and NVRAM | libvirt |
-| Stock files, lease overlays | storage pool `werft`, `/var/lib/libvirt/images/werft/` | libvirt |
+| Stock files, lease overlays, `clean-install` exports of `migrate` | storage pool `werft`, `/var/lib/libvirt/images/werft/` | libvirt |
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
 | LUKS marker | domain description line, same format as `vm` writes | libvirt |
 | Image records (user, guest family, systemd version, vsock support, versions) | `~/.local/state/werft/images.toml`, written by `seal` | werft |
@@ -125,8 +126,8 @@ real adapters.
 | Recipes | setup repo; until then `examples/setup/` in werft | setup repo |
 
 werft never opens a file under `/var/lib/libvirt/` directly. Every disk operation goes through the
-storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception: `list` reads the
-file names in the NVRAM directory (`/var/lib/libvirt/qemu/nvram` is `0755`) to count the `.bak`
+storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception: `list` and
+`snapshots` read the file names in the NVRAM directory (`/var/lib/libvirt/qemu/nvram` is `0755`) to count the `.bak`
 files of `vm`. werft creates the `werft` pool on
 first use with `StoragePoolDefineXML` and builds it through the libvirt API, with no sudo.
 
@@ -179,11 +180,17 @@ or later; the host has 12.0. Results:
 
 - Invariant "both halves or neither" moves into libvirt. The rollback after a half-done snapshot
   and the unrecoverable half-done reset go away.
-- `snapshot`, `snapshots` and `reset` need no sudo.
+- `snapshot`, `snapshots`, `reset` and `migrate` need no sudo.
 - After migration, `list` counts only native reset points. Until then it also counts the `.bak`
   files of `vm`.
 - The VM must still be shut off. werft takes no memory snapshots.
 - `--replace` still deletes before it creates. libvirt cannot rename a snapshot.
+
+The commands keep the interface of `vm`: `snapshot [--replace] <name> [label]`,
+`snapshots <name>` and `reset [--yes] <name> [label]`, with the default label `clean-install`.
+`snapshot` and `reset` take the domain lock. `reset` makes all checks (shut off, guard, label
+exists) before it asks; without a TTY it needs `--yes`. `snapshots` also lists the `.bak` labels
+of `vm`, and names `werft migrate` for them.
 
 ### Raw-NVRAM guard
 
@@ -198,17 +205,50 @@ The error names `werft migrate <domain>`. A BIOS domain (no NVRAM) passes.
 
 ### One-time migration
 
-`werft migrate <domain>` moves a build VM from `qemu-img` snapshots plus `.bak` files to native
-reset points. The two formats cannot share one qcow2 file safely: both use the qcow2 internal
-snapshot table, and the labels are equal. So migration keeps one legacy label per domain:
+`werft migrate [--yes] <domain>` moves a build VM from `qemu-img` snapshots plus `.bak` files to
+native reset points. Both formats use the qcow2 internal snapshot table of one disk, and the
+labels are equal, so migration keeps one label per domain:
 
-1. Require shut off and confirm. The kept label defaults to `provision-base` (`clean` on `-full`).
-2. Optional: export the other legacy labels to flat files in the `werft` pool.
-3. Restore the kept label the legacy way (`qemu-img snapshot -a`, `.bak` copy). Last use of sudo.
-4. Delete all legacy internal disk snapshots.
-5. Convert the NVRAM to qcow2 in the `nvram` pool (`StorageVolCreateXMLFrom`). Redefine the domain
-   with `format='qcow2'` and an explicit loader path. Delete the raw NVRAM and the `.bak` files.
-6. Take a native reset point with the kept label.
+- **Kept:** `provision-base`, or `clean` on a `-full` domain. It becomes a native reset point.
+- **Exported:** `clean-install`, the untouched vendor install. It goes to two flat qcow2 volumes in
+  the `werft` pool (`pool` in `config.toml`): `<domain>-clean-install.qcow2` (disk) and
+  `<domain>-clean-install_VARS.qcow2` (NVRAM).
+- **Deleted:** every other label.
+
+`vm` took its `qemu-img` snapshots of the first disk only, and marks each with
+`<nvram>.<label>.bak`. migrate finds the labels in the volume list of the NVRAM pool, after a pool
+refresh. It needs no root:
+
+- libvirt accepts the metadata of a `qemu-img` snapshot that exists in the disk
+  (`DomainSnapshotCreateXML` with the redefine flag). It then reverts and deletes the snapshot
+  through `qemu-img`, as root. A redefine does not check the disk; a revert to a snapshot the disk
+  lacks fails. A delete of a snapshot the disk lacks passes.
+- The `.bak` files and the raw NVRAM are volumes of the NVRAM pool. `StorageVolCreateXMLFrom`
+  converts them to qcow2, and `StorageVolDelete` removes them.
+
+Steps:
+
+1. Check before any change: shut off, libvirt 11.4 or later, UEFI with an NVRAM, every writable
+   disk qcow2, disk and NVRAM in a storage pool, an explicit loader path. Take the domain lock, then
+   confirm.
+2. Export `clean-install`: revert the disk to it, copy the disk and the `.bak` to the `werft` pool,
+   then delete the label and its `.bak`. A copy is flat: it has no internal snapshots.
+3. Delete each other label and its `.bak`.
+4. Revert the disk to the kept label. Make `<domain>_VARS.qcow2` in the NVRAM pool from its `.bak`.
+   Redefine the domain with `format='qcow2'` and the explicit loader; libvirt fills the firmware
+   features in again from the descriptor of that loader. A failed redefine deletes the new NVRAM.
+5. Delete the raw NVRAM and the `.bak` of the kept label, then the kept `qemu-img` snapshot. Take a
+   native reset point with the kept label.
+
+Each step can run again. A run that stops before step 4 starts again from the `.bak` files; an
+export volume that exists is complete, because libvirt deletes a copy that fails. A run that
+stops in step 5 continues there: the kept label is still the redefined snapshot of `vm`, and its
+domain names the raw NVRAM. When the native snapshot fails, the error names
+`werft snapshot <domain> <label>`.
+
+A domain without the kept label, for example a vendor install that `vm` never prepared, keeps its
+current disk and NVRAM: steps 2 and 3 run, the qcow2 NVRAM is a copy of the current one, and the
+domain gets no reset point. `werft prepare` or `werft snapshot` takes one.
 
 After migration `vm` refuses the domain, because it finds no `.bak` file. This is a safe failure.
 The two tools run side by side, one per domain.
@@ -417,8 +457,6 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 ## Open questions
 
-- **Legacy labels on migration.** Keep only the kept label, or export `clean-install` to a flat
-  file? `clean-install` is never used by `provision` today.
 - **Reaping without a command.** Also a systemd user timer that runs `werft reap`?
 - **SSH library.** OpenSSH child processes (proposed), or `golang.org/x/crypto/ssh` with an AF_VSOCK
   dialer: no process per call, but a different path from the one the agent uses.

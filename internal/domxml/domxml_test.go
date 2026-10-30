@@ -129,3 +129,41 @@ func TestParseRejectsGarbage(t *testing.T) {
 		t.Error("Parse accepted broken XML")
 	}
 }
+
+// legacyOS is the os element of a build VM that vm manages: firmware
+// autoselection with secure boot, the loader libvirt picked, raw NVRAM.
+const legacyOS = `<domain type='kvm'><name>vm</name><os firmware='efi'>
+<type arch='x86_64' machine='q35'>hvm</type>
+<firmware><feature enabled='yes' name='secure-boot'/></firmware>
+<loader readonly='yes' secure='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.ms.fd</loader>
+<nvram template='/usr/share/OVMF/OVMF_VARS_4M.ms.fd' templateFormat='raw' format='raw'>/nvram/vm_VARS.fd</nvram>
+<boot dev='hd'/></os></domain>`
+
+func TestQCOW2NVRAM(t *testing.T) {
+	d, err := domxml.Parse(legacyOS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := domxml.QCOW2NVRAM(d, "/nvram/vm_VARS.qcow2"); err != nil {
+		t.Fatal(err)
+	}
+	nv, _ := domxml.NVRAMOf(d)
+	if nv != (domxml.NVRAM{Path: "/nvram/vm_VARS.qcow2", Format: "qcow2"}) {
+		t.Errorf("NVRAM = %+v", nv)
+	}
+	l, _ := domxml.LoaderOf(d)
+	if l != (domxml.Loader{Path: "/usr/share/OVMF/OVMF_CODE_4M.ms.fd", Type: "pflash", Format: "raw", Readonly: true}) || d.OS.Loader.Secure != "yes" {
+		t.Errorf("loader = %+v, secure %q", l, d.OS.Loader.Secure)
+	}
+	if d.OS.Firmware != "" || d.OS.FirmwareInfo != nil || !domxml.UEFI(d) || len(d.OS.BootDevices) != 1 {
+		t.Errorf("os = %+v", d.OS)
+	}
+
+	auto, err := domxml.Parse(`<domain type='kvm'><name>vm</name><os firmware='efi'><type>hvm</type></os></domain>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := domxml.QCOW2NVRAM(auto, "/nvram/vm_VARS.qcow2"); err == nil {
+		t.Error("QCOW2NVRAM accepted a domain without a loader path")
+	}
+}

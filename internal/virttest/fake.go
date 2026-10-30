@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -531,6 +532,38 @@ func (f *Fake) CreateSnapshot(domain, name, description string) error {
 	return nil
 }
 
+// RedefineSnapshot takes the domain XML from the snapshot description, as
+// libvirt does, and replaces a snapshot of the same name.
+func (f *Fake) RedefineSnapshot(domain, xml string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var x libvirtxml.DomainSnapshot
+	if err := x.Unmarshal(xml); err != nil {
+		return failure.Wrap(failure.Failed, err, "snapshot XML")
+	}
+	if err := f.record("RedefineSnapshot", domain, x.Name); err != nil {
+		return err
+	}
+	d, err := f.domain(domain)
+	if err != nil {
+		return err
+	}
+	if x.Name == "" || x.Domain == nil || x.CreationTime == "" {
+		return failure.New(failure.Failed, "redefine a snapshot of %s: name, creationTime and domain are required", domain)
+	}
+	dx, err := x.Domain.Marshal()
+	if err != nil {
+		return failure.Wrap(failure.Failed, err, "snapshot XML")
+	}
+	s := snapshot{name: x.Name, description: x.Description, xml: dx, state: virt.StateShutOff}
+	if i, err := d.snapshot(x.Name); err == nil {
+		d.snapshots[i] = s
+	} else {
+		d.snapshots = append(d.snapshots, s)
+	}
+	return nil
+}
+
 func (f *Fake) Snapshots(domain string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -728,6 +761,21 @@ func scale(n uint64, unit string) uint64 {
 		return n << 40
 	}
 	return n
+}
+
+func (f *Fake) Volumes(poolName string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("Volumes", poolName); err != nil {
+		return nil, err
+	}
+	p, err := f.activePool(poolName)
+	if err != nil {
+		return nil, err
+	}
+	names := slices.Collect(maps.Keys(p.volumes))
+	slices.Sort(names)
+	return names, nil
 }
 
 func (f *Fake) CreateVolume(poolName, xml string) (virt.Volume, error) {

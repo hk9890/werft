@@ -14,6 +14,7 @@ import (
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/pipeline"
 	"github.com/hk9890/werft/internal/recipe"
+	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
@@ -111,7 +112,7 @@ func (c *cli) cmdPrepare(args []string) error {
 		return err
 	}
 	r.Printf("%s is prepared: werft provision %s", name, name)
-	c.output(map[string]string{"domain": name, "reset_point": steps.ProvisionBase}, func(w io.Writer) {
+	c.output(map[string]string{"domain": name, "reset_point": resetpoint.ProvisionBase}, func(w io.Writer) {
 		_, _ = fmt.Fprintf(w, "%s is prepared\n", name)
 	})
 	return nil
@@ -122,22 +123,27 @@ func buildVMArg(fs *flag.FlagSet, command string) (string, error) {
 		return "", failure.New(failure.Usage, "%s takes one build VM name", command)
 	}
 	name := fs.Arg(0)
-	if base, ok := strings.CutSuffix(name, steps.FullSuffix); ok {
+	if base, ok := strings.CutSuffix(name, resetpoint.FullSuffix); ok {
 		return "", failure.New(failure.Usage, "%s is a result image; %s its build VM, %s", name, command, base)
 	}
 	return name, nil
 }
 
 func configuredRecipe(name string) (string, error) {
+	cfg, err := loadConfig()
+	return cfg.RecipeFor(name), err
+}
+
+func loadConfig() (config.Config, error) {
 	path, err := config.Path()
 	if err != nil {
-		return "", err
+		return config.Config{}, err
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		return "", failure.Wrap(failure.Usage, err, "config")
+		return config.Config{}, failure.Wrap(failure.Usage, err, "config")
 	}
-	return cfg.RecipeFor(name), nil
+	return cfg, nil
 }
 
 func configPathHint() string {

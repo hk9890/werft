@@ -6,6 +6,7 @@ import (
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/resetpoint"
 )
 
 // Prepare is the fixed step list of werft prepare: it turns a stock install
@@ -22,7 +23,7 @@ func Prepare() []pipeline.Entry {
 		{Name: "luks-mark", Step: LUKSMark{}},
 		{Name: "hostname", Step: Hostname{}},
 		{Name: "poweroff", Step: Poweroff{}},
-		{Name: "snapshot", Step: &Snapshot{Label: ProvisionBase}},
+		{Name: "snapshot", Step: &Snapshot{Label: resetpoint.ProvisionBase}},
 	}
 }
 

@@ -77,7 +77,7 @@ echo "PASS  live"
 func TestProvisionLive(t *testing.T) {
 	h := livetest.Connect(t)
 	g := livetest.NewGuest(t, h, "werft-test-pp-prov")
-	clone := g.Name + steps.FullSuffix
+	clone := g.Name + resetpoint.FullSuffix
 	removeClone(t, h, clone)
 	t.Cleanup(func() {
 		if !t.Failed() || os.Getenv("WERFT_TEST_KEEP") == "" {
