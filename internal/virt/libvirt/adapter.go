@@ -260,6 +260,15 @@ func (a *Adapter) CreateSnapshot(domain, name, description string) error {
 	return wrap(err, "create snapshot %s of %s", name, domain)
 }
 
+func (a *Adapter) RedefineSnapshot(domain, xml string) error {
+	d, err := a.dom(domain)
+	if err != nil {
+		return err
+	}
+	_, err = a.l.DomainSnapshotCreateXML(d, xml, uint32(golibvirt.DomainSnapshotCreateRedefine))
+	return wrap(err, "redefine a snapshot of %s", domain)
+}
+
 func (a *Adapter) Snapshots(domain string) ([]string, error) {
 	d, err := a.dom(domain)
 	if err != nil {
@@ -371,6 +380,22 @@ func (a *Adapter) volume(v golibvirt.StorageVol) (virt.Volume, error) {
 		return virt.Volume{}, wrap(err, "path of volume %s", v.Name)
 	}
 	return virt.Volume{Name: v.Name, Path: path}, nil
+}
+
+func (a *Adapter) Volumes(pool string) ([]string, error) {
+	p, err := a.pool(pool)
+	if err != nil {
+		return nil, err
+	}
+	vs, _, err := a.l.StoragePoolListAllVolumes(p, 1, 0)
+	if err != nil {
+		return nil, wrap(err, "volumes of pool %s", pool)
+	}
+	names := make([]string, len(vs))
+	for i, v := range vs {
+		names[i] = v.Name
+	}
+	return names, nil
 }
 
 func (a *Adapter) CreateVolume(pool, xml string) (virt.Volume, error) {

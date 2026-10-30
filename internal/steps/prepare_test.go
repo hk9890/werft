@@ -7,13 +7,14 @@ import (
 
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
 
 func freshWorld(t *testing.T) *world {
 	w := newWorld(t)
-	must(t, w.fake.DeleteSnapshot(vm, steps.ProvisionBase))
+	must(t, w.fake.DeleteSnapshot(vm, resetpoint.ProvisionBase))
 	return w
 }
 

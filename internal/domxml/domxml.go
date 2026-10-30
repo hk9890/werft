@@ -154,3 +154,18 @@ const LUKSMarker = "vm: the disk asks for the guest password at boot"
 func HasLUKSMarker(description string) bool {
 	return slices.Contains(strings.Split(description, "\n"), LUKSMarker)
 }
+
+// QCOW2NVRAM makes d keep its UEFI variables in the qcow2 file path, so a
+// libvirt snapshot holds them. Firmware autoselection knows only raw NVRAM,
+// so d gets its loader as an explicit path, which it must have.
+func QCOW2NVRAM(d *libvirtxml.Domain, path string) error {
+	if d.OS == nil || d.OS.Loader == nil || d.OS.Loader.Path == "" {
+		return fmt.Errorf("domain %s names no loader file to keep when firmware autoselection goes", d.Name)
+	}
+	d.OS.Firmware, d.OS.FirmwareInfo = "", nil
+	if d.OS.Loader.Format == "" {
+		d.OS.Loader.Format = "raw"
+	}
+	d.OS.NVRam = &libvirtxml.DomainNVRam{NVRam: path, Format: "qcow2"}
+	return nil
+}

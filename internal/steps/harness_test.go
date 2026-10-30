@@ -23,8 +23,8 @@ import (
 	"github.com/hk9890/werft/internal/hostdev"
 	"github.com/hk9890/werft/internal/pipeline"
 	"github.com/hk9890/werft/internal/recipe"
+	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/secret"
-	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 	"github.com/hk9890/werft/internal/virttest"
 )
@@ -114,7 +114,7 @@ func newWorld(t *testing.T) *world {
 	must(t, err)
 	_, err = w.fake.DefineDomain(fmt.Sprintf(domainXML, vm, vm, disk.Path))
 	must(t, err)
-	must(t, w.fake.CreateSnapshot(vm, steps.ProvisionBase, ""))
+	must(t, w.fake.CreateSnapshot(vm, resetpoint.ProvisionBase, ""))
 	return w
 }
 
@@ -142,8 +142,8 @@ func (w *world) defineClone() {
 func (w *world) omarchy() {
 	w.shell.omarchy, w.shell.luks = true, true
 	must(w.t, w.fake.SetDomainDescription(vm, "my notes\n"+domxml.LUKSMarker))
-	must(w.t, w.fake.DeleteSnapshot(vm, steps.ProvisionBase))
-	must(w.t, w.fake.CreateSnapshot(vm, steps.ProvisionBase, ""))
+	must(w.t, w.fake.DeleteSnapshot(vm, resetpoint.ProvisionBase))
+	must(w.t, w.fake.CreateSnapshot(vm, resetpoint.ProvisionBase, ""))
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	img.Set(1, 1, color.White)
 	var buf bytes.Buffer

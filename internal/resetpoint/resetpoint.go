@@ -16,6 +16,15 @@ import (
 	"github.com/hk9890/werft/internal/virt"
 )
 
+// Labels and names that carry over from vm.
+const (
+	CleanInstall  = "clean-install"
+	ProvisionBase = "provision-base"
+	// Clean is the reset point provision takes on the -full clone.
+	Clean      = "clean"
+	FullSuffix = "-full"
+)
+
 // MinLibvirt is the first libvirt that snapshots a qcow2 NVRAM with the disk.
 var MinLibvirt = virt.Version{Major: 11, Minor: 4}
 
@@ -107,7 +116,7 @@ func Take(h virt.Hypervisor, domain, label string, replace bool) error {
 	}
 	if exists {
 		if !replace {
-			return failure.New(failure.Conflict, "%s already has a reset point '%s'", domain, label)
+			return failure.New(failure.Conflict, "%s already has a reset point '%s'; werft snapshots %s lists them, --replace retakes it", domain, label, domain)
 		}
 		if err := h.DeleteSnapshot(domain, label); err != nil {
 			return err
@@ -118,6 +127,14 @@ func Take(h virt.Hypervisor, domain, label string, replace bool) error {
 
 // Revert restores the shut-off domain to label.
 func Revert(h virt.Hypervisor, domain, label string) error {
+	if err := CheckRevert(h, domain, label); err != nil {
+		return err
+	}
+	return h.RevertSnapshot(domain, label)
+}
+
+// CheckRevert fails unless Revert can restore the domain to label now.
+func CheckRevert(h virt.Hypervisor, domain, label string) error {
 	if err := requireShutOff(h, domain, "a reset"); err != nil {
 		return err
 	}
@@ -129,13 +146,16 @@ func Revert(h virt.Hypervisor, domain, label string) error {
 		return err
 	}
 	if !exists {
-		return failure.New(failure.NotFound, "%s has no reset point '%s'", domain, label)
+		return failure.New(failure.NotFound, "%s has no reset point '%s'; werft snapshots %s lists them", domain, label, domain)
 	}
-	return h.RevertSnapshot(domain, label)
+	return nil
 }
 
 func requireShutOff(h virt.Hypervisor, domain, what string) error {
 	s, err := h.DomainState(domain)
+	if failure.Is(err, failure.NotFound) {
+		return failure.New(failure.NotFound, "unknown VM %s; werft list shows the VMs", domain)
+	}
 	if err != nil {
 		return err
 	}

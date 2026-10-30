@@ -10,6 +10,7 @@ import (
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
@@ -46,7 +47,7 @@ func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run,
 	if err != nil {
 		return fail(err)
 	}
-	for _, d := range []string{name, name + steps.FullSuffix} {
+	for _, d := range []string{name, name + resetpoint.FullSuffix} {
 		lock, err := dir.LockDomain(d)
 		if err != nil {
 			return fail(err)

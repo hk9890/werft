@@ -202,6 +202,9 @@ func TestVolumes(t *testing.T) {
 	if v.Path != "/pool/a.raw" {
 		t.Errorf("path = %q", v.Path)
 	}
+	if names, err := f.Volumes("pool"); err != nil || len(names) != 1 || names[0] != "a.raw" {
+		t.Errorf("volumes = %q, %v", names, err)
+	}
 	_, err = f.CreateVolume("pool", "<volume><name>a.raw</name></volume>")
 	mustKind(t, err, failure.Conflict)
 
@@ -334,4 +337,82 @@ func TestVolumeByPath(t *testing.T) {
 	if _, _, err := f.VolumeByPath("/elsewhere"); !failure.Is(err, failure.NotFound) {
 		t.Errorf("VolumeByPath of a path in no pool = %v", err)
 	}
+}
+
+func TestRedefineSnapshotTakesTheDomainOfTheDescription(t *testing.T) {
+	f := virttest.New()
+	if _, err := f.DefineDomain(vmXML); err != nil {
+		t.Fatal(err)
+	}
+	then := strings.Replace(vmXML, "<name>vm1</name>", "<name>vm1</name><description>then</description>", 1)
+	snap := `<domainsnapshot><name>old</name><creationTime>1</creationTime><state>shutoff</state>` + then + `</domainsnapshot>`
+	if err := f.RedefineSnapshot("vm1", snap); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.RedefineSnapshot("vm1", snap); err != nil {
+		t.Errorf("a second redefine must replace the first: %v", err)
+	}
+	mustKind(t, f.RedefineSnapshot("vm1", `<domainsnapshot><name>x</name></domainsnapshot>`), failure.Failed)
+	if names, _ := f.Snapshots("vm1"); len(names) != 1 || names[0] != "old" {
+		t.Errorf("snapshots = %q", names)
+	}
+	if err := f.RevertSnapshot("vm1", "old"); err != nil {
+		t.Fatal(err)
+	}
+	if desc, _ := f.DomainDescription("vm1"); desc != "then" {
+		t.Errorf("description after revert = %q, want the one of the snapshot domain", desc)
+	}
+}
+
+func TestSnapshotsRestoreTheDisk(t *testing.T) {
+	f := virttest.New()
+	newPool(t, f)
+	put := func(data string) {
+		t.Helper()
+		if err := f.UploadVolume("pool", "disk.qcow2", strings.NewReader(data), uint64(len(data))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	disk := func() string {
+		d, _ := f.VolumeData("pool", "disk.qcow2")
+		return string(d)
+	}
+	if _, err := f.CreateVolume("pool", "<volume><name>disk.qcow2</name><capacity>1</capacity></volume>"); err != nil {
+		t.Fatal(err)
+	}
+	withDisk := strings.Replace(vmXML, "<devices>", "<devices><disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/pool/disk.qcow2'/><target dev='vda'/></disk>", 1)
+	if _, err := f.DefineDomain(withDisk); err != nil {
+		t.Fatal(err)
+	}
+	put("one")
+	if err := f.CreateSnapshot("vm1", "native", ""); err != nil {
+		t.Fatal(err)
+	}
+	put("two")
+	if err := f.QemuImgSnapshot("pool", "disk.qcow2", "legacy", "three"); err != nil {
+		t.Fatal(err)
+	}
+	snap := func(name string) string {
+		return `<domainsnapshot><name>` + name + `</name><creationTime>1</creationTime><state>shutoff</state><disks><disk name='vda' snapshot='internal'/></disks>` + withDisk + `</domainsnapshot>`
+	}
+	for _, name := range []string{"legacy", "missing"} {
+		if err := f.RedefineSnapshot("vm1", snap(name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := f.RevertSnapshot("vm1", "native"); err != nil || disk() != "one" {
+		t.Errorf("revert to native = %v, disk %q", err, disk())
+	}
+	if err := f.RevertSnapshot("vm1", "legacy"); err != nil || disk() != "three" {
+		t.Errorf("revert to legacy = %v, disk %q", err, disk())
+	}
+	mustKind(t, f.RevertSnapshot("vm1", "missing"), failure.Failed)
+	if err := f.DeleteSnapshot("vm1", "native"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.RedefineSnapshot("vm1", snap("native")); err != nil {
+		t.Fatal(err)
+	}
+	mustKind(t, f.RevertSnapshot("vm1", "native"), failure.Failed)
 }

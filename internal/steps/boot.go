@@ -17,12 +17,6 @@ import (
 	"github.com/hk9890/werft/internal/virt"
 )
 
-// Labels and names that carry over from vm.
-const (
-	ProvisionBase = "provision-base"
-	FullSuffix    = "-full"
-)
-
 // Timeouts. The person timeouts wait for someone at the guest's window.
 const (
 	sshTimeout       = 300 * time.Second
@@ -59,7 +53,7 @@ type Reset struct{ Label string }
 
 func (s Reset) label() string {
 	if s.Label == "" {
-		return ProvisionBase
+		return resetpoint.ProvisionBase
 	}
 	return s.Label
 }

@@ -21,7 +21,7 @@ import (
 // domain UUID, and the clone's UUID is new.
 type Clone struct{}
 
-func target(r *pipeline.Run) string { return r.BuildVM + FullSuffix }
+func target(r *pipeline.Run) string { return r.BuildVM + resetpoint.FullSuffix }
 
 func (Clone) Check(r *pipeline.Run) error {
 	if _, err := sources(r.H, r.BuildVM); err != nil {

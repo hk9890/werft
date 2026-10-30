@@ -36,6 +36,12 @@ What a run creates:
   its overlay, NVRAM and console log. The test removes them.
 - `TestProvisionLive` also makes the clone `werft-test-pp-prov-full`, with its disk and NVRAM copies
   in the `werft-test` pool, and replaces it once. The test removes them.
+- `TestMigrateLive` gives `werft-test-rp-mig` the layout of `vm` without root: a raw NVRAM
+  volume, `qemu-img` snapshots that libvirt takes and then forgets (metadata-only delete), and
+  `.bak` volumes. Its migrate writes the qcow2 NVRAM and the `clean-install` exports into the
+  `werft-test` pool, through a temporary `config.toml` with `pool = "werft-test"`. The domain
+  `werft-test-rp-mig-ci` boots the disk and NVRAM exports to check that they hold `clean-install`.
+  The test removes them.
 - `TestLifecycleLive` also defines the domain `werft-test-lc-legacy`, which never starts. Its NVRAM
   path is in a temporary directory with a `.old.bak` file, which stands for a reset point of `vm`.
   The test removes the domain.

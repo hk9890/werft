@@ -30,6 +30,9 @@ func (c Config) RecipeFor(vm string) string {
 	return c.Recipe
 }
 
+// PoolPath is the directory werft gives the pool when it creates it.
+func (c Config) PoolPath() string { return filepath.Join("/var/lib/libvirt/images", c.Pool) }
+
 func Default() Config { return Config{Pool: "werft"} }
 
 // Path is $XDG_CONFIG_HOME/werft/config.toml, else ~/.config/werft/config.toml.

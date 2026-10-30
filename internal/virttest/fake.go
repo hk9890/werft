@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,6 +58,9 @@ type snapshot struct {
 	description string
 	xml         string
 	state       virt.State
+	// disks is the path of each disk the snapshot holds a qcow2 internal
+	// snapshot in.
+	disks []string
 }
 
 type pool struct {
@@ -70,6 +74,9 @@ type volume struct {
 	path     string
 	capacity uint64
 	data     []byte
+	// internal is the qcow2 internal snapshot table: the data at each
+	// snapshot name. A copy of the volume does not take it.
+	internal map[string][]byte
 }
 
 var _ virt.Hypervisor = (*Fake)(nil)
@@ -527,8 +534,101 @@ func (f *Fake) CreateSnapshot(domain, name, description string) error {
 	if _, err := d.snapshot(name); err == nil {
 		return failure.New(failure.Conflict, "snapshot %s of %s already exists", name, domain)
 	}
-	d.snapshots = append(d.snapshots, snapshot{name: name, description: description, xml: d.xml, state: d.state})
+	x, err := domxml.Parse(d.xml)
+	if err != nil {
+		return failure.Wrap(failure.Failed, err, "domain XML")
+	}
+	var disks []string
+	for _, disk := range domxml.Disks(x) {
+		if v := f.volumeAt(disk.Source); v != nil {
+			v.internal[name] = slices.Clone(v.data)
+			disks = append(disks, disk.Source)
+		}
+	}
+	d.snapshots = append(d.snapshots, snapshot{name: name, description: description, xml: d.xml, state: d.state, disks: disks})
 	return nil
+}
+
+// volumeAt is the volume at path, or nil. The caller holds f.mu.
+func (f *Fake) volumeAt(path string) *volume {
+	for _, p := range f.pools {
+		for _, v := range p.volumes {
+			if v.path == path {
+				if v.internal == nil {
+					v.internal = map[string][]byte{}
+				}
+				return v
+			}
+		}
+	}
+	return nil
+}
+
+// QemuImgSnapshot adds the internal snapshot name with data to the qcow2
+// volume, as qemu-img snapshot -c does: libvirt does not know it until its
+// metadata is redefined.
+func (f *Fake) QemuImgSnapshot(pool, volume, name, data string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, err := f.volume(pool, volume)
+	if err != nil {
+		return err
+	}
+	if v.internal == nil {
+		v.internal = map[string][]byte{}
+	}
+	v.internal[name] = []byte(data)
+	return nil
+}
+
+// RedefineSnapshot takes the domain XML from the snapshot description, as
+// libvirt does, and replaces a snapshot of the same name.
+func (f *Fake) RedefineSnapshot(domain, xml string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var x libvirtxml.DomainSnapshot
+	if err := x.Unmarshal(xml); err != nil {
+		return failure.Wrap(failure.Failed, err, "snapshot XML")
+	}
+	if err := f.record("RedefineSnapshot", domain, x.Name); err != nil {
+		return err
+	}
+	d, err := f.domain(domain)
+	if err != nil {
+		return err
+	}
+	if x.Name == "" || x.Domain == nil || x.CreationTime == "" {
+		return failure.New(failure.Failed, "redefine a snapshot of %s: name, creationTime and domain are required", domain)
+	}
+	dx, err := x.Domain.Marshal()
+	if err != nil {
+		return failure.Wrap(failure.Failed, err, "snapshot XML")
+	}
+	s := snapshot{name: x.Name, description: x.Description, xml: dx, state: virt.StateShutOff, disks: internalDisks(&x)}
+	if i, err := d.snapshot(x.Name); err == nil {
+		d.snapshots[i] = s
+	} else {
+		d.snapshots = append(d.snapshots, s)
+	}
+	return nil
+}
+
+// internalDisks is the source of each disk the snapshot marks internal; all
+// disks when it lists none.
+func internalDisks(x *libvirtxml.DomainSnapshot) []string {
+	internal := map[string]bool{}
+	if x.Disks != nil {
+		for _, disk := range x.Disks.Disks {
+			internal[disk.Name] = disk.Snapshot == "internal"
+		}
+	}
+	var paths []string
+	for _, disk := range domxml.Disks(x.Domain) {
+		if on, listed := internal[disk.Target]; (on || !listed && x.Disks == nil) && disk.Source != "" {
+			paths = append(paths, disk.Source)
+		}
+	}
+	return paths
 }
 
 func (f *Fake) Snapshots(domain string) ([]string, error) {
@@ -577,7 +677,9 @@ func (f *Fake) SnapshotXML(domain, name string) (string, error) {
 	return out, failure.Wrap(failure.Failed, err, "snapshot XML")
 }
 
-// RevertSnapshot restores the domain XML and state of the snapshot.
+// RevertSnapshot restores the domain XML and state of the snapshot, and the
+// data of each disk volume it holds. It fails, as qemu-img does, when such a
+// volume lacks the internal snapshot.
 func (f *Fake) RevertSnapshot(domain, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -591,6 +693,17 @@ func (f *Fake) RevertSnapshot(domain, name string) error {
 	i, err := d.snapshot(name)
 	if err != nil {
 		return err
+	}
+	for _, path := range d.snapshots[i].disks {
+		v := f.volumeAt(path)
+		if v == nil {
+			continue
+		}
+		data, ok := v.internal[name]
+		if !ok {
+			return failure.New(failure.Failed, "disk %s has no internal snapshot %s", path, name)
+		}
+		v.data = slices.Clone(data)
 	}
 	d.xml, d.state, d.liveXML = d.snapshots[i].xml, d.snapshots[i].state, ""
 	return nil
@@ -609,6 +722,11 @@ func (f *Fake) DeleteSnapshot(domain, name string) error {
 	i, err := d.snapshot(name)
 	if err != nil {
 		return err
+	}
+	for _, path := range d.snapshots[i].disks {
+		if v := f.volumeAt(path); v != nil {
+			delete(v.internal, name)
+		}
 	}
 	d.snapshots = slices.Delete(d.snapshots, i, i+1)
 	return nil
@@ -728,6 +846,21 @@ func scale(n uint64, unit string) uint64 {
 		return n << 40
 	}
 	return n
+}
+
+func (f *Fake) Volumes(poolName string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("Volumes", poolName); err != nil {
+		return nil, err
+	}
+	p, err := f.activePool(poolName)
+	if err != nil {
+		return nil, err
+	}
+	names := slices.Collect(maps.Keys(p.volumes))
+	slices.Sort(names)
+	return names, nil
 }
 
 func (f *Fake) CreateVolume(poolName, xml string) (virt.Volume, error) {
