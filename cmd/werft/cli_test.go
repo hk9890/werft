@@ -95,6 +95,33 @@ func TestHelp(t *testing.T) {
 	}
 }
 
+func TestHelpJSON(t *testing.T) {
+	for _, args := range [][]string{{"--json", "help"}, {"--json", "-h"}} {
+		r := runCLI("", false, args...)
+		var doc struct {
+			Commands  []struct{ Name, Args, Summary string }
+			ExitCodes map[string]int `json:"exit_codes"`
+		}
+		if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
+			t.Fatalf("%q: stdout is no JSON: %q", args, r.stdout)
+		}
+		if r.code != 0 || len(doc.Commands) != len(commands) || doc.Commands[1].Name != "version" ||
+			doc.ExitCodes["ok"] != 0 || doc.ExitCodes["needs_confirmation"] != 5 {
+			t.Errorf("%q = %+v", args, doc)
+		}
+	}
+	for _, args := range [][]string{{"--json", "help", "version"}, {"--json", "version", "-h"}} {
+		r := runCLI("", false, args...)
+		var doc struct{ Name, Summary string }
+		if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
+			t.Fatalf("%q: stdout is no JSON: %q", args, r.stdout)
+		}
+		if r.code != 0 || doc.Name != "version" || doc.Summary == "" {
+			t.Errorf("%q = %+v", args, doc)
+		}
+	}
+}
+
 func TestConfirm(t *testing.T) {
 	tests := []struct {
 		name  string

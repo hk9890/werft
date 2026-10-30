@@ -30,6 +30,7 @@ type Hypervisor interface {
 	// DomainMetadata is the metadata element in namespace uri; failure.NotFound
 	// when the domain has none.
 	DomainMetadata(name, uri string) (string, error)
+	// SetDomainMetadata with an empty xml removes the element.
 	SetDomainMetadata(name, uri, key, xml string) error
 	// DomainDescription is empty when the domain has none.
 	DomainDescription(name string) (string, error)

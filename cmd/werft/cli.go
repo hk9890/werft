@@ -141,14 +141,14 @@ func (c *cli) output(v any, text func(w io.Writer)) {
 	text(c.stdout)
 }
 
-// parseFlags parses the flags of command name. -h prints the command's usage
-// and ends the command with errHelpShown.
+// parseFlags parses the flags of command name. -h prints the command's usage,
+// as JSON with --json, and ends the command with errHelpShown.
 func (c *cli) parseFlags(fs *flag.FlagSet, name string, args []string) error {
 	fs.SetOutput(io.Discard)
 	err := fs.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
 		cmd, _ := lookup(name)
-		_, _ = fmt.Fprint(c.stdout, commandUsage(cmd, fs))
+		c.output(commandHelpJSON(cmd, fs), func(w io.Writer) { _, _ = fmt.Fprint(w, commandUsage(cmd, fs)) })
 		return errHelpShown
 	}
 	if err != nil {

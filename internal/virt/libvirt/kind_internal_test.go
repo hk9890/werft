@@ -27,6 +27,7 @@ func TestKindOfMapsLibvirtCodes(t *testing.T) {
 		{lerr(golibvirt.ErrArgumentUnsupported), failure.Unsupported},
 		{lerr(golibvirt.ErrInternalError), failure.Failed},
 		{golibvirt.Error{Code: uint32(golibvirt.ErrOperationFailed), Message: "domain moment s1 already exists"}, failure.Conflict},
+		{golibvirt.Error{Code: uint32(golibvirt.ErrOperationFailed), Message: "domain 'vm1' is already defined with uuid 0b0b"}, failure.Conflict},
 		{golibvirt.Error{Code: uint32(golibvirt.ErrOperationFailed), Message: "cannot open file"}, failure.Failed},
 		{fmt.Errorf("lookup: %w", lerr(golibvirt.ErrNoNetwork)), failure.NotFound},
 		{errors.New("connection reset"), failure.Failed},

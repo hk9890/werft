@@ -26,7 +26,10 @@ the test image is missing.
 What a run creates:
 
 - The storage pool `werft-test` in `/var/lib/libvirt/images/werft-test/`. It stays, with the uploaded
-  base image, so the next run skips the upload. Remove both with
+  base image, so the next run skips the upload. The base volume has the name of the image file.
+  `~/.cache/werft/base-image.lock` lets one run at a time upload it, and a marker file next to the
+  lock records a finished upload; without the marker, the next run uploads again. Remove pool and
+  volumes with
   `virsh -c qemu:///system pool-destroy werft-test && virsh -c qemu:///system pool-undefine werft-test`
   after you delete its volumes.
 - One scratch domain per test, `werft-test-<track>-<name>` (for example `werft-test-fnd-uefi`), with
@@ -47,9 +50,9 @@ The test names never touch a build VM.
 
 Build on `internal/livetest`; `internal/virt/libvirt/uefi_reset_live_test.go` is the model:
 
-- Create the scratch domain with `livetest.NewGuest`. It refuses a name without the `werft-test-`
-  prefix, removes leftovers of an earlier run, and removes the domain and its volumes in
-  `t.Cleanup`.
+- Create the scratch domain with `livetest.NewGuest`, and remove other domains with
+  `livetest.RemoveDomain`. Both refuse a name without the `werft-test-` prefix. `NewGuest`
+  removes leftovers of an earlier run, and removes the domain and its volumes in `t.Cleanup`.
 - Give each domain and volume the prefix of your track, so parallel runs do not collide.
 - Reach the guest with `Guest.Boot`, `Guest.Run` and `Guest.SSH`: root over vsock, with the test key
   as the `ssh.ephemeral-authorized_keys-all` credential. The cloud image has no SSH host keys and

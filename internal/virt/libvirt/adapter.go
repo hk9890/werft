@@ -41,9 +41,10 @@ func kindOf(err error) failure.Kind {
 		golibvirt.ErrOperationUnsupported, golibvirt.ErrConfigUnsupported:
 		return failure.Unsupported
 	case golibvirt.ErrOperationFailed:
-		// libvirt reports a taken domain or snapshot name with this generic
-		// code; only the message tells it apart.
-		if strings.Contains(lerr.Message, "already exists") {
+		// libvirt reports a taken domain or snapshot name, and a domain UUID
+		// taken under another name, with this generic code; only the message
+		// tells them apart.
+		if strings.Contains(lerr.Message, "already exists") || strings.Contains(lerr.Message, "is already defined with uuid") {
 			return failure.Conflict
 		}
 	}
@@ -201,8 +202,14 @@ func (a *Adapter) SetDomainMetadata(name, uri, key, xml string) error {
 	if err != nil {
 		return err
 	}
-	err = a.l.DomainSetMetadata(d, int32(golibvirt.DomainMetadataElement), golibvirt.OptString{xml},
-		golibvirt.OptString{key}, golibvirt.OptString{uri}, golibvirt.DomainAffectConfig)
+	// Only a NULL value removes the element; libvirt parses an empty string
+	// as XML and fails.
+	var value, keyArg golibvirt.OptString
+	if xml != "" {
+		value, keyArg = golibvirt.OptString{xml}, golibvirt.OptString{key}
+	}
+	err = a.l.DomainSetMetadata(d, int32(golibvirt.DomainMetadataElement), value, keyArg,
+		golibvirt.OptString{uri}, golibvirt.DomainAffectConfig)
 	return wrap(err, "set metadata %s of %s", uri, name)
 }
 
@@ -471,34 +478,49 @@ func (a *Adapter) Screenshot(domain string, w io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// go-libvirt decodes the MIME type from the end-of-stream packet, which is
-	// empty, so a screenshot that streamed fine still fails to decode. The
-	// image itself names its format.
 	cw := &countingWriter{w: w}
 	mime, err := a.l.DomainScreenshot(d, cw, 0, 0)
-	var lerr golibvirt.Error
-	if err != nil && (cw.n == 0 || errors.As(err, &lerr)) {
-		return "", wrap(err, "screenshot of %s", domain)
-	}
-	if err == nil && len(mime) > 0 {
+	switch {
+	case cw.err != nil:
+		return "", wrap(cw.err, "screenshot of %s", domain)
+	case err == nil && len(mime) > 0:
 		return mime[0], nil
+	case err == nil || (cw.n > 0 && isEmptyMIMEDecode(err)):
+		return imageMIME(cw.head), nil
 	}
-	return imageMIME(cw.head), nil
+	return "", wrap(err, "screenshot of %s", domain)
 }
 
+// isEmptyMIMEDecode is go-libvirt's failure to decode the MIME type from the
+// end-of-stream packet, which is empty: a screenshot that streamed fine. The
+// error type is internal to go-libvirt, so only its message identifies it.
+func isEmptyMIMEDecode(err error) bool {
+	msg := err.Error()
+	return strings.HasPrefix(msg, "xdr:") && strings.Contains(msg, "EOF while decoding")
+}
+
+// countingWriter keeps the first bytes, which name the image format, and the
+// first write error. It hides that error from go-libvirt and drops the rest
+// of the stream: go-libvirt stops reading on a write error, and the next
+// stream packet then blocks the connection for good.
 type countingWriter struct {
 	w    io.Writer
 	n    int
 	head []byte
+	err  error
 }
 
 func (c *countingWriter) Write(p []byte) (int, error) {
+	if c.err != nil {
+		return len(p), nil
+	}
 	if len(c.head) < 8 {
 		c.head = append(c.head, p[:min(len(p), 8-len(c.head))]...)
 	}
 	n, err := c.w.Write(p)
 	c.n += n
-	return n, err
+	c.err = err
+	return len(p), nil
 }
 
 func imageMIME(head []byte) string {

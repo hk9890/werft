@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -17,7 +18,7 @@ func (c *cli) cmdHelp(args []string) error {
 	}
 	switch fs.NArg() {
 	case 0:
-		_, _ = fmt.Fprint(c.stdout, usage())
+		c.output(helpJSON(), func(w io.Writer) { _, _ = fmt.Fprint(w, usage()) })
 		return nil
 	case 1:
 		cmd, ok := lookup(fs.Arg(0))
@@ -27,6 +28,37 @@ func (c *cli) cmdHelp(args []string) error {
 		return cmd.run(c, []string{"--help"})
 	}
 	return failure.New(failure.Usage, "help takes at most one command")
+}
+
+type commandJSON struct {
+	Name    string     `json:"name"`
+	Args    string     `json:"args"`
+	Summary string     `json:"summary"`
+	Flags   []flagJSON `json:"flags,omitempty"`
+}
+
+type flagJSON struct {
+	Name    string `json:"name"`
+	Usage   string `json:"usage"`
+	Default string `json:"default"`
+}
+
+func helpJSON() map[string]any {
+	cmds := make([]commandJSON, len(commands))
+	for i, cmd := range commands {
+		cmds[i] = commandJSON{Name: cmd.name, Args: cmd.args, Summary: cmd.summary}
+	}
+	codes := map[failure.Kind]int{"ok": 0}
+	maps.Copy(codes, exitCodes)
+	return map[string]any{"commands": cmds, "exit_codes": codes}
+}
+
+func commandHelpJSON(cmd command, fs *flag.FlagSet) commandJSON {
+	out := commandJSON{Name: cmd.name, Args: cmd.args, Summary: cmd.summary}
+	fs.VisitAll(func(f *flag.Flag) {
+		out.Flags = append(out.Flags, flagJSON{Name: f.Name, Usage: f.Usage, Default: f.DefValue})
+	})
+	return out
 }
 
 func usage() string {

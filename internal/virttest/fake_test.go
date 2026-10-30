@@ -88,6 +88,28 @@ func TestLifecycle(t *testing.T) {
 	mustKind(t, err, failure.NotFound)
 }
 
+func TestUndefineOfARunningDomainKeepsItUntilItStops(t *testing.T) {
+	f := virttest.New()
+	if _, err := f.DefineDomain(vmXML); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.StartDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.UndefineDomain("vm1", virt.UndefineKeepNVRAM); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := f.DomainState("vm1"); err != nil || s != virt.StateRunning {
+		t.Errorf("state after undefine = %v, %v; want still running", s, err)
+	}
+	mustKind(t, f.UndefineDomain("vm1", virt.UndefineKeepNVRAM), failure.Conflict)
+	if err := f.DestroyDomain("vm1"); err != nil {
+		t.Fatalf("destroy of the transient domain: %v", err)
+	}
+	_, err := f.Domain("vm1")
+	mustKind(t, err, failure.NotFound)
+}
+
 func TestUndefineNVRAMDeletesTheVolume(t *testing.T) {
 	f := virttest.New()
 	newPool(t, f)

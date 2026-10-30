@@ -35,7 +35,10 @@ type Fake struct {
 }
 
 type domain struct {
-	uuid       string
+	uuid string
+	// transient is a running domain that was undefined; it goes away when
+	// it stops.
+	transient  bool
 	xml        string
 	liveXML    string
 	state      virt.State
@@ -129,12 +132,15 @@ func (f *Fake) domain(name string) (*domain, error) {
 }
 
 // SetState puts a domain in a state, as a guest that powers itself off or
-// crashes would.
+// crashes would. A transient domain that shuts off goes away.
 func (f *Fake) SetState(name string, s virt.State) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if d, ok := f.domains[name]; ok {
 		d.state = s
+		if s == virt.StateShutOff && d.transient {
+			delete(f.domains, name)
+		}
 	}
 }
 
@@ -256,8 +262,11 @@ func (f *Fake) DefineDomain(xml string) (virt.Domain, error) {
 		x.UUID = newUUID()
 	}
 	for name, d := range f.domains {
-		if (name == x.Name) != (d.uuid == x.UUID) {
+		switch {
+		case name == x.Name && d.uuid != x.UUID:
 			return virt.Domain{}, failure.New(failure.Conflict, "domain %s already exists with uuid %s", name, d.uuid)
+		case name != x.Name && d.uuid == x.UUID:
+			return virt.Domain{}, failure.New(failure.Conflict, "domain %s is already defined with uuid %s", name, d.uuid)
 		}
 	}
 	out, err := x.Marshal()
@@ -265,7 +274,7 @@ func (f *Fake) DefineDomain(xml string) (virt.Domain, error) {
 		return virt.Domain{}, failure.Wrap(failure.Failed, err, "define domain")
 	}
 	if d, ok := f.domains[x.Name]; ok {
-		d.xml = out
+		d.xml, d.transient = out, false
 	} else {
 		f.domains[x.Name] = &domain{uuid: x.UUID, xml: out, state: virt.StateShutOff, metadata: map[string]string{}}
 	}
@@ -333,12 +342,17 @@ func (f *Fake) stop(method, name string) error {
 		return failure.New(failure.Conflict, "domain %s is not running", name)
 	}
 	d.state, d.liveXML, d.devices = virt.StateShutOff, "", nil
+	if d.transient {
+		delete(f.domains, name)
+	}
 	return nil
 }
 
 // UndefineDomain follows libvirt: a domain with snapshots needs
 // UndefineSnapshots, a domain with NVRAM needs UndefineNVRAM or
 // UndefineKeepNVRAM. UndefineNVRAM deletes a pool volume at the NVRAM path.
+// A running domain becomes transient: it keeps running and goes away when it
+// stops.
 func (f *Fake) UndefineDomain(name string, flags virt.UndefineFlags) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -348,6 +362,9 @@ func (f *Fake) UndefineDomain(name string, flags virt.UndefineFlags) error {
 	d, err := f.domain(name)
 	if err != nil {
 		return err
+	}
+	if d.transient {
+		return failure.New(failure.Conflict, "cannot undefine transient domain %s", name)
 	}
 	if len(d.snapshots) > 0 && flags&virt.UndefineSnapshots == 0 {
 		return failure.New(failure.Conflict, "cannot delete inactive domain %s with %d snapshots", name, len(d.snapshots))
@@ -364,7 +381,11 @@ func (f *Fake) UndefineDomain(name string, flags virt.UndefineFlags) error {
 			return failure.New(failure.Conflict, "cannot undefine domain %s with nvram", name)
 		}
 	}
-	delete(f.domains, name)
+	if d.state == virt.StateShutOff {
+		delete(f.domains, name)
+	} else {
+		d.transient = true
+	}
 	return nil
 }
 

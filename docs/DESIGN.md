@@ -69,8 +69,8 @@ real adapters.
   memory only and gives it to steps as stdin data.
 - **`internal/hostdev`** — Host side of USB passthrough: `findmnt`, `udevadm`, `fuser`,
   `udisksctl`. Finds the stick, makes sure no host process uses it, and unmounts and releases it.
-- **`internal/config`**, **`internal/state`**, **`internal/build`** — `config.toml` (URI, pool,
-  lease limits, lifetime, recipe per build VM); paths, locks and image records under
+- **`internal/config`**, **`internal/state`**, **`internal/build`** — `config.toml` (pool, lease
+  limits, lifetime, recipe per build VM; the URI is fixed to `qemu:///system`); paths, locks and image records under
   `~/.local/state/werft/`; the ldflags version stamp.
 - **`internal/livetest`** — Live-test helpers behind build tag `live`: the `werft-test` pool, the
   base image, a scratch UEFI domain, and vsock SSH ([TESTING.md](TESTING.md)).
@@ -337,7 +337,9 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 - **go-libvirt has no release tags.** Pin the pseudo-version. Known defect: `DomainScreenshot`
   decodes the MIME type from the empty end-of-stream packet and fails after the image streamed. The
-  adapter takes the format from the image header instead. The `internal/virt` interface keeps a
+  adapter takes the format from the image header instead. A write error in a stream blocks the
+  connection, so the adapter keeps the error from go-libvirt and returns it after the stream ends.
+  The `internal/virt` interface keeps a
   `virsh` adapter possible. Live tests catch protocol drift.
 - **Firmware autoselection.** All firmware descriptors in `/usr/share/qemu/firmware/` are raw, so
   autoselection can reject `format='qcow2'`. Use an explicit loader path. The live test

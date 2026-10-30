@@ -90,11 +90,21 @@ func checkDefineReservesTheName(t *testing.T, h virt.Hypervisor, g *livetest.Gue
 	livetest.Must(t, err, "inactive XML")
 	d, err := domxml.Parse(x)
 	livetest.Must(t, err, "parse")
+	uuid := d.UUID
 	d.UUID = ""
 	again, err := d.Marshal()
 	livetest.Must(t, err, "marshal")
 	_, err = h.DefineDomain(again)
 	mustKind(t, err, failure.Conflict, "define of a taken name")
+
+	const other = "werft-test-fnd-uuid"
+	livetest.RemoveDomain(t, h, other)
+	t.Cleanup(func() { livetest.RemoveDomain(t, h, other) })
+	d.Name, d.UUID = other, uuid
+	sameUUID, err := d.Marshal()
+	livetest.Must(t, err, "marshal")
+	_, err = h.DefineDomain(sameUUID)
+	mustKind(t, err, failure.Conflict, "define of a taken UUID under a new name")
 }
 
 func checkMetadataAndDescription(t *testing.T, h virt.Hypervisor, g *livetest.Guest) {
@@ -108,6 +118,9 @@ func checkMetadataAndDescription(t *testing.T, h virt.Hypervisor, g *livetest.Gu
 	if !strings.Contains(m, `owner="test"`) {
 		t.Errorf("metadata = %q", m)
 	}
+	livetest.Must(t, h.SetDomainMetadata(g.Name, uri, "werft", ""), "clear metadata")
+	_, err = h.DomainMetadata(g.Name, uri)
+	mustKind(t, err, failure.NotFound, "metadata after clear")
 
 	desc, err := h.DomainDescription(g.Name)
 	if err != nil || desc != "" {

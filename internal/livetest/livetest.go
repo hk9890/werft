@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -22,7 +24,6 @@ const (
 	Pool         = "werft-test"
 	PoolPath     = "/var/lib/libvirt/images/werft-test"
 	DomainPrefix = "werft-test-"
-	baseVolume   = "ubuntu-26.04-minimal.img"
 	ovmfCode     = "/usr/share/OVMF/OVMF_CODE_4M.fd"
 	ovmfVars     = "/usr/share/OVMF/OVMF_VARS_4M.fd"
 	sshProxy     = "/usr/lib/systemd/systemd-ssh-proxy"
@@ -68,15 +69,34 @@ func EnsurePool(t *testing.T, h virt.Hypervisor) {
 }
 
 // BaseImage uploads image into the pool once and returns the volume path;
-// later runs reuse the volume.
+// later runs reuse the volume. The volume has the name of the image file. A
+// marker file next to the lock records a finished upload, so a volume that
+// an interrupted run left half written is uploaded again. The lock keeps
+// runs in parallel from using a volume while one of them uploads it.
 func BaseImage(t *testing.T, h virt.Hypervisor, image string) string {
 	t.Helper()
-	if path, err := h.VolumePath(Pool, baseVolume); err == nil {
-		return path
+	cache := filepath.Join(os.Getenv("HOME"), ".cache/werft")
+	Must(t, os.MkdirAll(cache, 0o755), "create "+cache)
+	lock, err := os.OpenFile(filepath.Join(cache, "base-image.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	Must(t, err, "open base image lock")
+	defer func() { _ = lock.Close() }()
+	Must(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_EX), "lock base image")
+
+	st, err := os.Stat(image)
+	Must(t, err, "stat "+image)
+	name := filepath.Base(image)
+	marker := filepath.Join(cache, Pool+"-"+name+".uploaded")
+	size := strconv.FormatInt(st.Size(), 10)
+	if done, err := os.ReadFile(marker); err == nil && string(done) == size {
+		if path, err := h.VolumePath(Pool, name); err == nil {
+			return path
+		}
 	}
-	Upload(t, h, baseVolume, image)
-	Must(t, h.RefreshPool(Pool), "refresh pool")
-	path, err := h.VolumePath(Pool, baseVolume)
+	_ = os.Remove(marker)
+	_ = h.DeleteVolume(Pool, name)
+	Upload(t, h, name, image)
+	Must(t, os.WriteFile(marker, []byte(size), 0o644), "write "+marker)
+	path, err := h.VolumePath(Pool, name)
 	Must(t, err, "base volume path")
 	return path
 }
@@ -133,8 +153,13 @@ func NewKey(t *testing.T) Key {
 }
 
 // RemoveDomain forces off and undefines a domain, with its snapshot
-// metadata, and ignores a domain that is gone.
-func RemoveDomain(h virt.Hypervisor, name string) {
+// metadata, and ignores a domain that is gone. It refuses a name without
+// DomainPrefix, so it never touches a domain a live test did not create.
+func RemoveDomain(t *testing.T, h virt.Hypervisor, name string) {
+	t.Helper()
+	if !strings.HasPrefix(name, DomainPrefix) {
+		t.Fatalf("live test domain %q does not start with %q", name, DomainPrefix)
+	}
 	_ = h.DestroyDomain(name)
 	_ = h.UndefineDomain(name, virt.UndefineSnapshots|virt.UndefineKeepNVRAM)
 }
@@ -142,7 +167,7 @@ func RemoveDomain(h virt.Hypervisor, name string) {
 // DeleteVolumes ignores a volume that is gone. It refreshes the pool first,
 // so it also finds a file QEMU created, such as a console log.
 func DeleteVolumes(h virt.Hypervisor, names ...string) {
-	_ = h.RefreshPool(Pool)
+	_ = refresh(h)
 	for _, name := range names {
 		_ = h.DeleteVolume(Pool, name)
 	}
@@ -151,7 +176,7 @@ func DeleteVolumes(h virt.Hypervisor, names ...string) {
 // ConsoleTail is the last 60 lines of a serial log volume. It reads through
 // the pool, which needs no root.
 func ConsoleTail(h virt.Hypervisor, volume string) string {
-	_ = h.RefreshPool(Pool)
+	_ = refresh(h)
 	var buf bytes.Buffer
 	if err := h.DownloadVolume(Pool, volume, &buf); err != nil {
 		return err.Error()
@@ -161,6 +186,20 @@ func ConsoleTail(h virt.Hypervisor, volume string) string {
 		lines = lines[len(lines)-60:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// refresh makes the pool list files QEMU created, such as a console log.
+// libvirt refuses it while another run builds a volume in the pool, so it
+// tries again for some seconds.
+func refresh(h virt.Hypervisor) error {
+	var err error
+	for range 15 {
+		if err = h.RefreshPool(Pool); err == nil {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return err
 }
 
 // hostKeyDropin makes sshd create its host keys. A cloud image ships without
@@ -199,20 +238,17 @@ func (g *Guest) volumes() []string {
 // when the test ends, unless the test failed and WERFT_TEST_KEEP is set.
 func NewGuest(t *testing.T, h virt.Hypervisor, name string) *Guest {
 	t.Helper()
-	if !strings.HasPrefix(name, DomainPrefix) {
-		t.Fatalf("live test domain %q does not start with %q", name, DomainPrefix)
-	}
 	g := &Guest{T: t, H: h, Name: name}
+	RemoveDomain(t, h, name)
 	EnsurePool(t, h)
 	base := BaseImage(t, h, Image(t))
-	RemoveDomain(h, name)
 	DeleteVolumes(h, g.volumes()...)
 	t.Cleanup(func() {
 		if t.Failed() && os.Getenv("WERFT_TEST_KEEP") != "" {
 			t.Logf("kept %s for inspection; the next run removes it", name)
 			return
 		}
-		RemoveDomain(h, name)
+		RemoveDomain(t, h, name)
 		DeleteVolumes(h, g.volumes()...)
 	})
 
