@@ -52,11 +52,13 @@ func (c *cli) cmdList(args []string) error {
 	return nil
 }
 
-// bytesText is n in binary units, as virsh vol-info shows it.
-func bytesText(n uint64) string {
-	if n == 0 {
+// bytesText is n in binary units, as virsh vol-info shows it, or "-" when
+// it is unknown.
+func bytesText(p *uint64) string {
+	if p == nil {
 		return "-"
 	}
+	n := *p
 	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
 	v, i := float64(n), 0
 	for v >= 1024 && i < len(units)-1 {
@@ -101,15 +103,21 @@ func (c *cli) cmdStart(args []string) error {
 	} else {
 		c.progress("%s started (headless, no window)", name)
 	}
+	viewerOpen := false
 	if *view {
 		if err := c.openViewer(name); err != nil {
 			c.progress("warning: no viewer window: %v; open one on the desktop: virt-viewer -c qemu:///system %s", err, name)
 		} else {
+			viewerOpen = true
 			c.progress("virt-viewer attached: Shift+F11 fullscreen, Shift+F12 release cursor")
 		}
 	}
-	if started.LUKS {
-		c.progress("The disk of %s asks for its password at the console; werft does not type it. Type it in the viewer: werft start --view %s", name, name)
+	if started.LUKS && !started.AlreadyRunning {
+		if viewerOpen {
+			c.progress("The disk of %s asks for its password at the console; werft does not type it. Type it in the open viewer window", name)
+		} else {
+			c.progress("The disk of %s asks for its password at the console; werft does not type it. Type it in the viewer: werft start --view %s", name, name)
+		}
 	}
 	c.progress("Waiting up to %v for an address", lifecycle.AddressTimeout)
 	addr := lifecycle.WaitAddress(h, name, c.sleep)

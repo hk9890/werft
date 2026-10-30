@@ -60,7 +60,7 @@ func TestPrepareCopiesTheKey(t *testing.T) {
 		t.Fatalf("prepare: %v", err)
 	}
 	w.assertSequence("the key goes in before the first root step",
-		"^ssh-copy-id .*/id_ed25519.pub tester@192.168.122.01$", "^ssh true$", "sh -c 'true' sh$")
+		"^ssh-copy-id .*/id_ed25519.pub tester@192.168.122.1$", "^ssh true$", "sh -c 'true' sh$")
 }
 
 func TestPrepareAddsTheKeyOverTheUsersOwnKey(t *testing.T) {

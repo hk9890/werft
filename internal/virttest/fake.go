@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -850,19 +849,6 @@ func (f *Fake) VolumeInfo(pool, name string) (virt.VolumeInfo, error) {
 	}
 	used := uint64(len(v.data))
 	return virt.VolumeInfo{Capacity: max(v.capacity, used), Allocation: used}, nil
-}
-
-func (f *Fake) Volumes(poolName string) ([]string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err := f.record("Volumes", poolName); err != nil {
-		return nil, err
-	}
-	p, err := f.pool(poolName)
-	if err != nil {
-		return nil, err
-	}
-	return slices.Sorted(maps.Keys(p.volumes)), nil
 }
 
 func (f *Fake) VolumeByPath(path string) (string, string, error) {

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,15 +15,21 @@ import (
 	"github.com/hk9890/werft/internal/virttest"
 )
 
-const lifecycleVM = `<domain type='kvm'><name>vm1</name><os><type>hvm</type></os><devices>
+// lifecycleVM has its disk in the default pool and its NVRAM in nvramDir.
+func lifecycleVM(nvramDir string) string {
+	return `<domain type='kvm'><name>vm1</name><os><type>hvm</type>
+<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
+<nvram format='raw'>` + nvramDir + `/vm1_VARS.fd</nvram></os><devices>
 <disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/img/vm1.qcow2'/><target dev='vda'/></disk>
 <interface type='network'><mac address='52:54:00:00:00:01'/><source network='default'/></interface>
 </devices></domain>`
+}
 
 type lifecycleHost struct {
-	fake    *virttest.Fake
-	viewed  []string
-	viewErr error
+	fake     *virttest.Fake
+	nvramDir string
+	viewed   []string
+	viewErr  error
 }
 
 func newLifecycleHost(t *testing.T) *lifecycleHost {
@@ -32,10 +41,18 @@ func newLifecycleHost(t *testing.T) *lifecycleHost {
 	if _, err := f.CreateVolume("default", "<volume><name>vm1.qcow2</name><capacity unit='G'>20</capacity></volume>"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.DefineDomain(lifecycleVM); err != nil {
+	dir := t.TempDir()
+	if _, err := f.DefineDomain(lifecycleVM(dir)); err != nil {
 		t.Fatal(err)
 	}
-	return &lifecycleHost{fake: f}
+	return &lifecycleHost{fake: f, nvramDir: dir}
+}
+
+func (lh *lifecycleHost) setLUKS(t *testing.T) {
+	t.Helper()
+	if err := lh.fake.SetDomainDescription("vm1", "vm: the disk asks for the guest password at boot"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (lh *lifecycleHost) run(args ...string) result {
@@ -63,20 +80,45 @@ func TestListText(t *testing.T) {
 	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME STATE USED SIZE RESET LUKS ADDRESS" {
 		t.Errorf("header = %q", lines[0])
 	}
-	if got := strings.Join(strings.Fields(lines[1]), " "); got != "vm1 shut off - 20.00 GiB 0 - -" {
+	if got := strings.Join(strings.Fields(lines[1]), " "); got != "vm1 shut off 0 B 20.00 GiB 0 - -" {
 		t.Errorf("row = %q", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(lh.nvramDir, "vm1_VARS.fd.clean.bak"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lh.setLUKS(t)
+	if err := lh.fake.StartDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	lh.fake.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5"})
+	r = lh.run("list")
+	lines = strings.Split(strings.TrimSpace(r.stdout), "\n")
+	if got := strings.Join(strings.Fields(lines[len(lines)-1]), " "); r.code != 0 || got != "vm1 running 0 B 20.00 GiB 1 yes 192.168.122.5" {
+		t.Errorf("row of the running VM = %q, %+v", got, r)
 	}
 }
 
 func TestListJSON(t *testing.T) {
 	lh := newLifecycleHost(t)
+	outside := strings.NewReplacer("vm1", "vm2", "/img/", "/elsewhere/", "52:54:00:00:00:01", "52:54:00:00:00:02").Replace(lifecycleVM(lh.nvramDir))
+	if _, err := lh.fake.DefineDomain(outside); err != nil {
+		t.Fatal(err)
+	}
 	r := lh.run("--json", "list")
 	var doc []map[string]any
 	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
 		t.Fatalf("stdout is no JSON: %q", r.stdout)
 	}
-	if r.code != 0 || len(doc) != 1 || doc[0]["name"] != "vm1" || doc[0]["size_bytes"] != float64(20<<30) || doc[0]["luks"] != false {
-		t.Errorf("list --json = %+v", doc)
+	if r.code != 0 || len(doc) != 2 {
+		t.Fatalf("list --json = %+v", r)
+	}
+	want := map[string]any{"name": "vm1", "state": "shut off", "used_bytes": float64(0), "size_bytes": float64(20 << 30), "reset_points": float64(0), "luks": false, "address": ""}
+	if !reflect.DeepEqual(doc[0], want) {
+		t.Errorf("entry = %v, want %v", doc[0], want)
+	}
+	if v, ok := doc[1]["used_bytes"]; !ok || v != nil || doc[1]["size_bytes"] != nil {
+		t.Errorf("entry of a disk in no pool = %v, want null sizes", doc[1])
 	}
 
 	empty := &lifecycleHost{fake: virttest.New()}
@@ -116,16 +158,38 @@ func TestStartWithoutAddressOrViewerStillSucceeds(t *testing.T) {
 	if r.code != 0 || r.stdout != "" || !strings.Contains(r.stderr, "No address yet") || !strings.Contains(r.stderr, "no viewer window: no display here") {
 		t.Errorf("start = %+v", r)
 	}
+
+	if err := lh.fake.DestroyDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	r = lh.run("--json", "start", "vm1")
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
+		t.Fatalf("stdout is no JSON: %q", r.stdout)
+	}
+	if r.code != 0 || doc["address"] != "" || !strings.Contains(r.stderr, "No address yet") {
+		t.Errorf("start --json without a lease = %+v", r)
+	}
 }
 
 func TestStartTellsAboutTheDiskPassword(t *testing.T) {
 	lh := newLifecycleHost(t)
-	if err := lh.fake.SetDomainDescription("vm1", "vm: the disk asks for the guest password at boot"); err != nil {
+	lh.setLUKS(t)
+	r := lh.run("start", "vm1")
+	if r.code != 0 || !strings.Contains(r.stderr, "werft does not type it. Type it in the viewer: werft start --view vm1") || len(lh.fake.SentKeys("vm1")) != 0 {
+		t.Errorf("start of a LUKS VM = %+v", r)
+	}
+
+	if r := lh.run("start", "vm1"); r.code != 0 || strings.Contains(r.stderr, "password") {
+		t.Errorf("start of a running LUKS VM = %+v; it is unlocked already", r)
+	}
+
+	if err := lh.fake.DestroyDomain("vm1"); err != nil {
 		t.Fatal(err)
 	}
-	r := lh.run("start", "vm1")
-	if r.code != 0 || !strings.Contains(r.stderr, "werft does not type it") || len(lh.fake.SentKeys("vm1")) != 0 {
-		t.Errorf("start of a LUKS VM = %+v", r)
+	r = lh.run("start", "--view", "vm1")
+	if r.code != 0 || !strings.Contains(r.stderr, "Type it in the open viewer window") || strings.Contains(r.stderr, "werft start --view") {
+		t.Errorf("start --view of a LUKS VM = %+v", r)
 	}
 }
 
@@ -159,6 +223,14 @@ func TestLifecycleExitCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	lh.fake.IgnoreShutdown("vm1")
+	paused := strings.ReplaceAll(lifecycleVM(lh.nvramDir), "vm1", "paused")
+	if _, err := lh.fake.DefineDomain(strings.Replace(paused, "52:54:00:00:00:01", "52:54:00:00:00:03", 1)); err != nil {
+		t.Fatal(err)
+	}
+	lh.fake.SetState("paused", virt.StatePaused)
+	if r := lh.run("start", "paused"); !strings.Contains(r.stderr, "virsh -c qemu:///system resume paused") {
+		t.Errorf("start of a paused VM = %+v", r)
+	}
 	tests := []struct {
 		args []string
 		code int
@@ -166,6 +238,7 @@ func TestLifecycleExitCodes(t *testing.T) {
 		{[]string{"stop", "vm1"}, 7},
 		{[]string{"stop", "none"}, 3},
 		{[]string{"start", "none"}, 3},
+		{[]string{"start", "paused"}, 4},
 		{[]string{"stop"}, 2},
 		{[]string{"start", "a", "b"}, 2},
 		{[]string{"list", "extra"}, 2},

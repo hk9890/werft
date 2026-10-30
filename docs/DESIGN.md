@@ -63,9 +63,12 @@ real adapters.
   "not black and still for 4 frames", send key codes with `DomainSendKey`. No keystroke passes
   through a `virsh` process.
 - **`internal/lifecycle`** — `list`, `start` and `stop` for any domain. `list` gets disk use from
-  the storage API and counts native reset points plus the `.bak` files of `vm` in the pool of the
-  NVRAM, so it needs no root. The address is `vsock/<cid>`, else the IPv4 DHCP lease. `start` opens
-  no viewer without `--view`, does not type a disk password, and waits 60 s for a DHCP lease; no
+  the storage API and counts native reset points plus the `.bak` files of `vm`. It finds the `.bak`
+  files in a listing of the NVRAM directory, as `vm` did, and not through the storage pool: `vm`
+  writes them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
+  The address is `vsock/<cid>`, else the IPv4 DHCP lease (`virt.DomainAddresses`, the same rule
+  that `prepare` and `provision` use). `start` opens no viewer without `--view`, does not type a
+  disk password, and waits 60 s for a DHCP lease. It gives the address only when a lease came; no
   lease is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.
 - **`internal/resetpoint`**, **`internal/image`**, **`internal/lease`** — Reset points, raw-NVRAM
   guard and migration; stock image catalog and seal; lease lifecycle and reap. See the sections
@@ -122,7 +125,9 @@ real adapters.
 | Recipes | setup repo; until then `examples/setup/` in werft | setup repo |
 
 werft never opens a file under `/var/lib/libvirt/` directly. Every disk operation goes through the
-storage API, because `/var/lib/libvirt/images` is `0711 root`. werft creates the `werft` pool on
+storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception: `list` reads the
+file names in the NVRAM directory (`/var/lib/libvirt/qemu/nvram` is `0755`) to count the `.bak`
+files of `vm`. werft creates the `werft` pool on
 first use with `StoragePoolDefineXML` and builds it through the libvirt API, with no sudo.
 
 ## Lease lifecycle
@@ -294,7 +299,7 @@ The guest login is `$USER` with the werft key and `~/.ssh/id_ed25519`, through t
 `ssh_config`. It sets `IdentitiesOnly`, so no other agent key uses up sshd's `MaxAuthTries`.
 `prepare` checks the werft key alone (`ssh -P werft-key-only`, which the config maps to that key).
 When the guest refuses it, `prepare` adds the key over a login with the user's key, else with
-`ssh-copy-id`, which asks for the password. The address is the vsock CID when the domain has one, else the DHCP lease of each MAC;
+`ssh-copy-id`, which asks for the password. The address is the vsock CID when the domain has one, else the IPv4 DHCP lease of each MAC;
 the first that answers SSH wins. A cleanup reaches its domain again by the same rule, because the
 guest can reboot and the run can move on to the clone after the step ran.
 

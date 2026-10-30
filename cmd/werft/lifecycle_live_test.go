@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,26 +19,23 @@ import (
 )
 
 // TestLifecycleLive drives werft list, start and stop against a scratch
-// domain on qemu:///system. list also reads every other domain on the host,
-// and changes none.
+// domain on qemu:///system, and list against a domain with a vm reset point.
+// list also reads every other domain on the host, and changes none.
 func TestLifecycleLive(t *testing.T) {
 	h := livetest.Connect(t)
 	g := livetest.NewGuest(t, h, "werft-test-lc-life")
 
-	// A legacy vm reset point is a copy of the NVRAM named
-	// <nvram>.<label>.bak next to it.
-	legacy := g.VarsVolume() + ".old.bak"
-	livetest.DeleteVolumes(h, legacy)
-	t.Cleanup(func() { livetest.DeleteVolumes(h, legacy) })
-	_, err := h.CreateVolume(livetest.Pool, fmt.Sprintf("<volume><name>%s</name><capacity>0</capacity></volume>", legacy))
-	livetest.Must(t, err, "create legacy reset point")
 	livetest.Must(t, h.CreateSnapshot(g.Name, "native", ""), "create reset point")
 	livetest.Must(t, h.SetDomainDescription(g.Name, domxml.LUKSMarker), "set LUKS marker")
+	legacy := legacyDomain(t, h)
 
 	e := listEntry(t, g.Name)
-	if e["state"] != "shut off" || e["reset_points"] != float64(2) || e["luks"] != true ||
-		e["size_bytes"] != float64(10<<30) || e["used_bytes"] == nil || e["address"] != nil {
+	if e["state"] != "shut off" || e["reset_points"] != float64(1) || e["luks"] != true ||
+		e["size_bytes"] != float64(10<<30) || e["used_bytes"] == nil || e["address"] != "" {
 		t.Errorf("list entry of the shut-off domain = %v", e)
+	}
+	if e := listEntry(t, legacy); e["reset_points"] != float64(1) {
+		t.Errorf("list entry of the domain with a vm reset point = %v, want 1 reset point", e)
 	}
 	livetest.Must(t, h.SetDomainDescription(g.Name, ""), "remove LUKS marker")
 
@@ -72,6 +71,26 @@ func TestLifecycleLive(t *testing.T) {
 	if doc := werftJSON(t, 3, "stop", "werft-test-lc-none"); doc["error"] == nil {
 		t.Errorf("stop of an unknown domain = %v", doc)
 	}
+}
+
+// legacyDomain defines a domain that is never started, with a raw NVRAM
+// path in a temporary directory and a vm reset point next to it: a copy
+// named <nvram>.<label>.bak. vm wrote these copies with sudo cp, outside the
+// storage API, so werft must find them in the directory.
+func legacyDomain(t *testing.T, h virt.Hypervisor) string {
+	t.Helper()
+	const name = "werft-test-lc-legacy"
+	livetest.RemoveDomain(t, h, name)
+	dir := t.TempDir()
+	nvram := filepath.Join(dir, name+"_VARS.fd")
+	livetest.Must(t, os.WriteFile(nvram+".old.bak", nil, 0o600), "write legacy reset point")
+	_, err := h.DefineDomain(fmt.Sprintf(`<domain type='kvm'><name>%s</name><memory unit='MiB'>256</memory><os>
+<type arch='x86_64' machine='q35'>hvm</type>
+<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
+<nvram format='raw'>%s</nvram></os><features><acpi/></features></domain>`, name, nvram))
+	livetest.Must(t, err, "define "+name)
+	t.Cleanup(func() { livetest.RemoveDomain(t, h, name) })
+	return name
 }
 
 func werftJSON(t *testing.T, code int, args ...string) map[string]any {

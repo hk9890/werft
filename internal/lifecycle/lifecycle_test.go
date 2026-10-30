@@ -2,6 +2,8 @@ package lifecycle_test
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,13 +16,13 @@ import (
 	"github.com/hk9890/werft/internal/virttest"
 )
 
-// buildVM is a build VM as vm left it: raw NVRAM in the nvram pool, a qcow2
-// disk in the default pool, an installer ISO, one NIC.
-func buildVM(name string) string {
+// buildVM is a build VM as vm left it: raw NVRAM in nvramDir, a qcow2 disk
+// in the default pool, an installer ISO, one NIC.
+func buildVM(name, nvramDir string) string {
 	return `<domain type='kvm'><name>` + name + `</name><os>
 <type arch='x86_64' machine='q35'>hvm</type>
 <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
-<nvram format='raw'>/nvram/` + name + `_VARS.fd</nvram></os><devices>
+<nvram format='raw'>` + nvramDir + `/` + name + `_VARS.fd</nvram></os><devices>
 <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='/iso/install.iso'/><target dev='sda'/><readonly/></disk>
 <disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/img/` + name + `.qcow2'/><target dev='vda'/></disk>
 <interface type='network'><mac address='52:54:00:00:00:01'/><source network='default'/></interface>
@@ -48,14 +50,14 @@ func volume(t *testing.T, f *virttest.Fake, pool, name, capacity, data string) {
 func host(t *testing.T) *virttest.Fake {
 	t.Helper()
 	f := virttest.New()
-	must(t, virt.EnsurePool(f, "nvram", "/nvram"))
 	must(t, virt.EnsurePool(f, "default", "/img"))
-	_, err := f.DefineDomain(buildVM("ubuntu"))
+	nvramDir := t.TempDir()
+	_, err := f.DefineDomain(buildVM("ubuntu", nvramDir))
 	must(t, err)
 	volume(t, f, "default", "ubuntu.qcow2", "20", "12345")
-	volume(t, f, "nvram", "ubuntu_VARS.fd", "0", "")
-	volume(t, f, "nvram", "ubuntu_VARS.fd.provision-base.bak", "0", "")
-	volume(t, f, "nvram", "ubuntu_VARS.fd.clean-install.bak", "0", "")
+	for _, name := range []string{"ubuntu_VARS.fd", "ubuntu_VARS.fd.provision-base.bak", "ubuntu_VARS.fd.clean-install.bak"} {
+		must(t, os.WriteFile(filepath.Join(nvramDir, name), nil, 0o600))
+	}
 	must(t, f.CreateSnapshot("ubuntu", "native", ""))
 	must(t, f.SetDomainDescription("ubuntu", "notes\n"+domxml.LUKSMarker))
 	_, err = f.DefineDomain(vsockVM)
@@ -74,8 +76,9 @@ func TestList(t *testing.T) {
 
 	got, err := lifecycle.List(f)
 	must(t, err)
+	used, size := uint64(5), uint64(20<<30)
 	want := []lifecycle.Entry{
-		{Name: "ubuntu", State: "shut off", Used: 5, Size: 20 << 30, ResetPoints: 3, LUKS: true},
+		{Name: "ubuntu", State: "shut off", Used: &used, Size: &size, ResetPoints: 3, LUKS: true},
 		{Name: "werft-a", State: "running", Address: "vsock/3"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -141,8 +144,12 @@ func TestWaitAddress(t *testing.T) {
 
 	must(t, f.StartDomain("werft-a"))
 	waited = 0
-	if got := lifecycle.WaitAddress(f, "werft-a", func(d time.Duration) { waited += d }); got != "vsock/3" || waited < lifecycle.AddressTimeout {
-		t.Errorf("WaitAddress without a lease = %q after %v; want the CID after the full wait", got, waited)
+	if got := lifecycle.WaitAddress(f, "werft-a", func(d time.Duration) { waited += d }); got != "" || waited < lifecycle.AddressTimeout {
+		t.Errorf("WaitAddress without a lease = %q after %v; want none after the full wait, though the domain has a CID", got, waited)
+	}
+	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:02", IP: "192.168.122.9"})
+	if got := lifecycle.WaitAddress(f, "werft-a", noSleep); got != "vsock/3" {
+		t.Errorf("WaitAddress with a lease = %q, want the CID", got)
 	}
 }
 

@@ -6,9 +6,7 @@ package lifecycle
 import (
 	"fmt"
 	"io"
-	"net"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -29,17 +27,17 @@ const (
 )
 
 // Entry is one domain in the list. Used and Size are the allocation and
-// capacity of its first disk, zero when that disk is in no storage pool.
+// capacity of its first disk, nil when that disk is in no storage pool.
 // ResetPoints counts native snapshots and the reset points vm keeps.
-// Address is set only while the domain runs.
+// Address is empty unless the domain runs.
 type Entry struct {
-	Name        string `json:"name"`
-	State       string `json:"state"`
-	Used        uint64 `json:"used_bytes,omitempty"`
-	Size        uint64 `json:"size_bytes,omitempty"`
-	ResetPoints int    `json:"reset_points"`
-	LUKS        bool   `json:"luks"`
-	Address     string `json:"address,omitempty"`
+	Name        string  `json:"name"`
+	State       string  `json:"state"`
+	Used        *uint64 `json:"used_bytes"`
+	Size        *uint64 `json:"size_bytes"`
+	ResetPoints int     `json:"reset_points"`
+	LUKS        bool    `json:"luks"`
+	Address     string  `json:"address"`
 }
 
 // List describes every domain, sorted by name. A domain that goes away
@@ -100,7 +98,7 @@ func describe(h virt.Hypervisor, name string) (Entry, error) {
 
 // diskUsage is the allocation and capacity of the first disk, as vm shows
 // them. A disk outside every pool, such as a block device, has none.
-func diskUsage(h virt.Hypervisor, d *libvirtxml.Domain) (used, size uint64) {
+func diskUsage(h virt.Hypervisor, d *libvirtxml.Domain) (used, size *uint64) {
 	for _, disk := range domxml.Disks(d) {
 		if disk.Device != "disk" || (disk.Source == "" && disk.Volume == "") {
 			continue
@@ -109,52 +107,26 @@ func diskUsage(h virt.Hypervisor, d *libvirtxml.Domain) (used, size uint64) {
 		if volume == "" {
 			var err error
 			if pool, volume, err = h.VolumeByPath(disk.Source); err != nil {
-				return 0, 0
+				return nil, nil
 			}
 		}
 		info, err := h.VolumeInfo(pool, volume)
 		if err != nil {
-			return 0, 0
+			return nil, nil
 		}
-		return info.Allocation, info.Capacity
+		return &info.Allocation, &info.Capacity
 	}
-	return 0, 0
+	return nil, nil
 }
 
 // Address is how to reach a running domain: vsock/<cid> when it has a vsock
-// CID, else the first IPv4 DHCP lease of its MACs, else empty.
+// CID, else its first IPv4 DHCP lease, else empty.
 func Address(h virt.Hypervisor, name string) string {
-	cid, ip := addresses(h, name)
-	if cid != "" {
+	cid, ips := virt.DomainAddresses(h, name)
+	if cid != "" || len(ips) == 0 {
 		return cid
 	}
-	return ip
-}
-
-func addresses(h virt.Hypervisor, name string) (cid, ip string) {
-	text, err := h.DomainXML(name, false)
-	if err != nil {
-		return "", ""
-	}
-	d, err := domxml.Parse(text)
-	if err != nil {
-		return "", ""
-	}
-	if c, ok := domxml.VsockCID(d); ok {
-		cid = "vsock/" + strconv.FormatUint(uint64(c), 10)
-	}
-	for _, i := range domxml.Interfaces(d) {
-		if i.Network == "" || i.MAC == "" {
-			continue
-		}
-		leases, _ := h.DHCPLeases(i.Network, i.MAC)
-		for _, l := range leases {
-			if net.ParseIP(l.IP).To4() != nil {
-				return cid, l.IP
-			}
-		}
-	}
-	return cid, ""
+	return ips[0]
 }
 
 // Started says what Start found and did.
@@ -165,7 +137,8 @@ type Started struct {
 	LUKS bool
 }
 
-// Start starts the domain unless it runs already. No viewer opens.
+// Start starts the domain unless it runs already. A paused domain is a
+// conflict. No viewer opens.
 func Start(h virt.Hypervisor, name string) (Started, error) {
 	state, err := domainState(h, name)
 	if err != nil {
@@ -175,6 +148,9 @@ func Start(h virt.Hypervisor, name string) (Started, error) {
 	if err != nil {
 		return Started{}, err
 	}
+	if state == virt.StatePaused {
+		return Started{}, failure.New(failure.Conflict, "%s is paused; resume it: virsh -c qemu:///system resume %s", name, name)
+	}
 	s := Started{AlreadyRunning: state == virt.StateRunning, LUKS: domxml.HasLUKSMarker(desc)}
 	if s.AlreadyRunning {
 		return s, nil
@@ -183,13 +159,17 @@ func Start(h virt.Hypervisor, name string) (Started, error) {
 }
 
 // WaitAddress waits up to AddressTimeout for the guest to take a DHCP lease,
-// the sign that it is up, and returns Address. It returns an empty string
-// when no lease comes: the guest can still be booting.
+// the sign that it is up, and then returns Address. It returns an empty
+// string when no lease comes, also for a domain with a vsock CID: the guest
+// can still be booting, or hang before its network is up.
 func WaitAddress(h virt.Hypervisor, name string, sleep func(time.Duration)) string {
-	poll(AddressTimeout, sleep, func() bool {
-		_, ip := addresses(h, name)
-		return ip != ""
+	up := poll(AddressTimeout, sleep, func() bool {
+		_, ips := virt.DomainAddresses(h, name)
+		return len(ips) > 0
 	})
+	if !up {
+		return ""
+	}
 	return Address(h, name)
 }
 

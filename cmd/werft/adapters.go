@@ -24,9 +24,9 @@ const guestDir = "/tmp/werft-provision"
 // the domain locks of name and of its clone, and writes the werft
 // ssh_config. close releases what it holds.
 func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run, close func(), err error) {
-	h, err := c.dial()
+	h, err := c.hypervisor()
 	if err != nil {
-		return nil, nil, failure.Wrap(failure.Failed, err, "libvirt")
+		return nil, nil, err
 	}
 	var closers []func()
 	close = func() {

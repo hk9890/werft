@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -257,7 +258,8 @@ func (h *recorder) SendKey(domain string, keys []uint32) error {
 }
 
 func (h *recorder) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {
-	return []virt.DHCPLease{{MAC: mac, IP: "192.168.122." + mac[len(mac)-2:]}}, nil
+	last, _ := strconv.ParseUint(mac[len(mac)-2:], 16, 8)
+	return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last)}}, nil
 }
 
 // shell is the guest. It answers while a domain runs, logs "ssh <command>",
@@ -335,16 +337,8 @@ func (s *shell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.R
 
 // address is the IP the recorder leases to the domain's MAC.
 func (s *shell) address(domain string) string {
-	text, _ := s.w.fake.DomainXML(domain, false)
-	d, err := domxml.Parse(text)
-	if err != nil {
-		return ""
-	}
-	for _, i := range domxml.Interfaces(d) {
-		leases, _ := s.w.h.DHCPLeases(i.Network, i.MAC)
-		for _, l := range leases {
-			return l.IP
-		}
+	if _, ips := virt.DomainAddresses(s.w.h, domain); len(ips) > 0 {
+		return ips[0]
 	}
 	return ""
 }

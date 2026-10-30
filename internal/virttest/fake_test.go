@@ -223,15 +223,10 @@ func TestVolumes(t *testing.T) {
 	if p, _ := f.PoolInfo("pool"); p.Allocation != 10 || p.Available != 90 {
 		t.Errorf("pool info = %+v", p)
 	}
-	if names, err := f.Volumes("pool"); err != nil || !reflect.DeepEqual(names, []string{"a.raw", "b.qcow2"}) {
-		t.Errorf("volumes = %q, %v", names, err)
-	}
 	if err := f.DeleteVolume("pool", "a.raw"); err != nil {
 		t.Fatal(err)
 	}
 	mustKind(t, f.DeleteVolume("pool", "a.raw"), failure.NotFound)
-	_, err = f.Volumes("none")
-	mustKind(t, err, failure.NotFound)
 }
 
 func TestIgnoreShutdown(t *testing.T) {
