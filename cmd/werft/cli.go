@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/virt"
@@ -25,6 +26,9 @@ type cli struct {
 	// readSecret reads a line from the terminal without echo.
 	readSecret func() (string, error)
 	dial       func() (virt.Hypervisor, error)
+	// openViewer opens a detached viewer window on a domain.
+	openViewer func(domain string) error
+	sleep      func(time.Duration)
 }
 
 type command struct {
@@ -40,8 +44,11 @@ var commands []command
 func init() {
 	commands = []command{
 		{name: "help", args: "[command]", summary: "show the usage of werft or of one command", run: (*cli).cmdHelp},
+		{name: "list", summary: "list all VMs: state, disk use, reset points, LUKS marker, address", run: (*cli).cmdList},
 		{name: "prepare", args: "[--yes] <name>", summary: "make a stock install the base provision starts from: werft key, hostname, provision-base", run: (*cli).cmdPrepare},
 		{name: "provision", args: "[--yes] [--recipe file] <name>", summary: "run the recipe on <name> from provision-base and keep the result as <name>-full", run: (*cli).cmdProvision},
+		{name: "start", args: "[--view] <name>", summary: "start a VM headless and wait for its address; --view also opens virt-viewer", run: (*cli).cmdStart},
+		{name: "stop", args: "[--force] <name>", summary: "ACPI shutdown and wait; --force forces the VM off at once", run: (*cli).cmdStop},
 		{name: "version", summary: "print the werft version", run: (*cli).cmdVersion},
 	}
 }

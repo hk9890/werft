@@ -5,9 +5,10 @@ bash tool `vm` in [`scripts/vm/`](https://github.com/carlo9890/setup/tree/main/s
 setup repo.
 
 Status: target design. In code: the hypervisor port with its libvirt adapter and fake, `domxml`,
-`failure`, `config`, `state`, the command dispatch with `version` and `help`, and the provision
-pipeline with `prepare` and `provision` (`pipeline`, `steps`, `recipe`, `guest`, `console`,
-`secret`, `hostdev`, `ansi`, and the snapshot part of `resetpoint`).
+`failure`, `config`, `state`, the command dispatch with `version` and `help`, `list`, `start` and
+`stop` (`lifecycle`), and the provision pipeline with `prepare` and `provision` (`pipeline`,
+`steps`, `recipe`, `guest`, `console`, `secret`, `hostdev`, `ansi`, and the snapshot and
+legacy-count parts of `resetpoint`).
 
 ## Proposals in short
 
@@ -48,8 +49,9 @@ real adapters.
 - **`internal/virttest`** — The fake hypervisor: in-memory domains, volumes and snapshots, a call
   log, and failure injection.
 - **`internal/domxml`** — Pure functions that read, build and edit domain XML with libvirtxml.
-  They read disks, loader, NVRAM, UEFI, vsock CID, MACs and description. They will build lease
-  domains, clones of build VMs (new name, UUID, MAC), and the qcow2 NVRAM rewrite for migration.
+  They read disks, loader, NVRAM, UEFI, vsock CID, MACs, description and the LUKS marker. They
+  will build lease domains, clones of build VMs (new name, UUID, MAC), and the qcow2 NVRAM rewrite
+  for migration.
 - **`internal/guest`** — The guest port and its OpenSSH adapter: run a command, run a script with
   data on stdin, copy files, probe readiness. It passes a werft-owned `ssh_config` with `-F`, so the
   user's `SendEnv LC_*` never applies. It keeps login attempts few, because sshd
@@ -60,6 +62,11 @@ real adapters.
 - **`internal/console`** — Typing at the boot console: screenshot, decode with Go `image/png`, detect
   "not black and still for 4 frames", send key codes with `DomainSendKey`. No keystroke passes
   through a `virsh` process.
+- **`internal/lifecycle`** — `list`, `start` and `stop` for any domain. `list` gets disk use from
+  the storage API and counts native reset points plus the `.bak` files of `vm` in the pool of the
+  NVRAM, so it needs no root. The address is `vsock/<cid>`, else the IPv4 DHCP lease. `start` opens
+  no viewer without `--view`, does not type a disk password, and waits 60 s for a DHCP lease; no
+  lease is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.
 - **`internal/resetpoint`**, **`internal/image`**, **`internal/lease`** — Reset points, raw-NVRAM
   guard and migration; stock image catalog and seal; lease lifecycle and reap. See the sections
   below.
@@ -168,7 +175,8 @@ or later; the host has 12.0. Results:
 - Invariant "both halves or neither" moves into libvirt. The rollback after a half-done snapshot
   and the unrecoverable half-done reset go away.
 - `snapshot`, `snapshots` and `reset` need no sudo.
-- `list` counts reset points from libvirt, not from `.bak` file names.
+- After migration, `list` counts only native reset points. Until then it also counts the `.bak`
+  files of `vm`.
 - The VM must still be shut off. werft takes no memory snapshots.
 - `--replace` still deletes before it creates. libvirt cannot rename a snapshot.
 

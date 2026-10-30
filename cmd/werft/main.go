@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -18,6 +19,8 @@ func main() {
 		tty:        term.IsTerminal(int(os.Stdin.Fd())),
 		readSecret: readPassword,
 		dial:       dialLibvirt,
+		openViewer: openViewer,
+		sleep:      time.Sleep,
 	}
 	os.Exit(c.run(os.Args[1:]))
 }

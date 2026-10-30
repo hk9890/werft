@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/user"
@@ -81,6 +82,18 @@ func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run,
 }
 
 func dialLibvirt() (virt.Hypervisor, error) { return libvirt.Dial() }
+
+// openViewer opens virt-viewer in a session of its own, so the window
+// outlives werft. Over SSH to the host there is no display, and the viewer
+// would fail without a word.
+func openViewer(domain string) error {
+	host := steps.System{}
+	if !host.HasDisplay() {
+		return errors.New("no display here")
+	}
+	_, err := host.OpenViewer(domain, false)
+	return err
+}
 
 var guestEnsureKey = guest.EnsureKey
 

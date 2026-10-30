@@ -57,6 +57,8 @@ type Hypervisor interface {
 	DeleteVolume(pool, name string) error
 	VolumePath(pool, name string) (string, error)
 	VolumeInfo(pool, name string) (VolumeInfo, error)
+	// Volumes is the names of the volumes in pool, as of its last refresh.
+	Volumes(pool string) ([]string, error)
 	// VolumeByPath is the pool and name of the volume at path.
 	VolumeByPath(path string) (pool, name string, err error)
 

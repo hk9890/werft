@@ -5,23 +5,17 @@ package steps
 import (
 	"bytes"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/hk9890/werft/internal/console"
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/pipeline"
 	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/virt"
 )
-
-// LUKSMarker is the line in a domain description that says the disk asks
-// for the guest password at boot. vm writes the same line, so a migrated
-// domain keeps it. The description is libvirt's, not the disk's: a reset
-// keeps it, and a clone copies it.
-const LUKSMarker = "vm: the disk asks for the guest password at boot"
 
 // Labels and names that carry over from vm.
 const (
@@ -45,7 +39,7 @@ const (
 
 func hasLUKSMarker(r *pipeline.Run, domain string) bool {
 	desc, err := r.H.DomainDescription(domain)
-	return err == nil && slices.Contains(strings.Split(desc, "\n"), LUKSMarker)
+	return err == nil && domxml.HasLUKSMarker(desc)
 }
 
 // declareDiskPassword declares the guest password, which must be typeable,

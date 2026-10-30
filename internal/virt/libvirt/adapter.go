@@ -446,6 +446,22 @@ func (a *Adapter) VolumeInfo(pool, name string) (virt.VolumeInfo, error) {
 	return virt.VolumeInfo{Capacity: capacity, Allocation: allocation}, nil
 }
 
+func (a *Adapter) Volumes(pool string) ([]string, error) {
+	p, err := a.pool(pool)
+	if err != nil {
+		return nil, err
+	}
+	vs, _, err := a.l.StoragePoolListAllVolumes(p, 1, 0)
+	if err != nil {
+		return nil, wrap(err, "volumes of pool %s", pool)
+	}
+	names := make([]string, len(vs))
+	for i, v := range vs {
+		names[i] = v.Name
+	}
+	return names, nil
+}
+
 func (a *Adapter) VolumeByPath(path string) (string, string, error) {
 	v, err := a.l.StorageVolLookupByPath(path)
 	if err != nil {

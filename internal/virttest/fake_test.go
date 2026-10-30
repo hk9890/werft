@@ -223,10 +223,36 @@ func TestVolumes(t *testing.T) {
 	if p, _ := f.PoolInfo("pool"); p.Allocation != 10 || p.Available != 90 {
 		t.Errorf("pool info = %+v", p)
 	}
+	if names, err := f.Volumes("pool"); err != nil || !reflect.DeepEqual(names, []string{"a.raw", "b.qcow2"}) {
+		t.Errorf("volumes = %q, %v", names, err)
+	}
 	if err := f.DeleteVolume("pool", "a.raw"); err != nil {
 		t.Fatal(err)
 	}
 	mustKind(t, f.DeleteVolume("pool", "a.raw"), failure.NotFound)
+	_, err = f.Volumes("none")
+	mustKind(t, err, failure.NotFound)
+}
+
+func TestIgnoreShutdown(t *testing.T) {
+	f := virttest.New()
+	if _, err := f.DefineDomain(vmXML); err != nil {
+		t.Fatal(err)
+	}
+	f.IgnoreShutdown("vm1")
+	if err := f.StartDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.ShutdownDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := f.DomainState("vm1"); s != virt.StateRunning {
+		t.Errorf("state after an ignored shutdown = %v", s)
+	}
+	if err := f.DestroyDomain("vm1"); err != nil {
+		t.Fatal(err)
+	}
+	mustKind(t, f.ShutdownDomain("vm1"), failure.Conflict)
 }
 
 func TestGuestDevices(t *testing.T) {

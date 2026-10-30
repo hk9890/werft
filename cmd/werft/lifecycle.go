@@ -1,0 +1,167 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"text/tabwriter"
+
+	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/lifecycle"
+	"github.com/hk9890/werft/internal/virt"
+)
+
+func (c *cli) hypervisor() (virt.Hypervisor, error) {
+	h, err := c.dial()
+	if err != nil {
+		return nil, failure.Wrap(failure.Failed, err, "libvirt")
+	}
+	return h, nil
+}
+
+func (c *cli) cmdList(args []string) error {
+	fs := flag.NewFlagSet("list", flag.ContinueOnError)
+	if err := c.parseFlags(fs, "list", args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return failure.New(failure.Usage, "list takes no arguments")
+	}
+	h, err := c.hypervisor()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = h.Close() }()
+	entries, err := lifecycle.List(h)
+	if err != nil {
+		return err
+	}
+	c.output(entries, func(w io.Writer) {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "NAME\tSTATE\tUSED\tSIZE\tRESET\tLUKS\tADDRESS")
+		for _, e := range entries {
+			luks := "-"
+			if e.LUKS {
+				luks = "yes"
+			}
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+				e.Name, e.State, bytesText(e.Used), bytesText(e.Size), e.ResetPoints, luks, orDash(e.Address))
+		}
+		_ = tw.Flush()
+	})
+	return nil
+}
+
+// bytesText is n in binary units, as virsh vol-info shows it.
+func bytesText(n uint64) string {
+	if n == 0 {
+		return "-"
+	}
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	v, i := float64(n), 0
+	for v >= 1024 && i < len(units)-1 {
+		v /= 1024
+		i++
+	}
+	if i == 0 {
+		return fmt.Sprintf("%d B", n)
+	}
+	return fmt.Sprintf("%.2f %s", v, units[i])
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+func (c *cli) cmdStart(args []string) error {
+	fs := flag.NewFlagSet("start", flag.ContinueOnError)
+	view := fs.Bool("view", false, "also open a virt-viewer window: Shift+F11 fullscreen, Shift+F12 release cursor")
+	if err := c.parseFlags(fs, "start", args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return failure.New(failure.Usage, "start takes one VM name")
+	}
+	name := fs.Arg(0)
+	h, err := c.hypervisor()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = h.Close() }()
+
+	started, err := lifecycle.Start(h, name)
+	if err != nil {
+		return err
+	}
+	if started.AlreadyRunning {
+		c.progress("%s is already running", name)
+	} else {
+		c.progress("%s started (headless, no window)", name)
+	}
+	if *view {
+		if err := c.openViewer(name); err != nil {
+			c.progress("warning: no viewer window: %v; open one on the desktop: virt-viewer -c qemu:///system %s", err, name)
+		} else {
+			c.progress("virt-viewer attached: Shift+F11 fullscreen, Shift+F12 release cursor")
+		}
+	}
+	if started.LUKS {
+		c.progress("The disk of %s asks for its password at the console; werft does not type it. Type it in the viewer: werft start --view %s", name, name)
+	}
+	c.progress("Waiting up to %v for an address", lifecycle.AddressTimeout)
+	addr := lifecycle.WaitAddress(h, name, c.sleep)
+	if addr == "" {
+		c.progress("No address yet; werft list shows it once the guest is up")
+	}
+	c.output(map[string]any{"domain": name, "state": "running", "already_running": started.AlreadyRunning, "address": addr},
+		func(w io.Writer) {
+			if addr != "" {
+				_, _ = fmt.Fprintf(w, "address: %s   ssh %s\n", addr, addr)
+			}
+		})
+	return nil
+}
+
+func (c *cli) cmdStop(args []string) error {
+	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
+	var force bool
+	fs.BoolVar(&force, "force", false, "force the VM off at once instead of an ACPI shutdown")
+	fs.BoolVar(&force, "f", false, "short for --force")
+	if err := c.parseFlags(fs, "stop", args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return failure.New(failure.Usage, "stop takes one VM name")
+	}
+	name := fs.Arg(0)
+	h, err := c.hypervisor()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = h.Close() }()
+
+	stopped, err := lifecycle.Stop(h, name, force, c.sleep, c.stderr)
+	if err != nil {
+		return err
+	}
+	result := stopResults[stopped]
+	c.output(map[string]string{"domain": name, "state": "shut off", "result": result.json}, func(w io.Writer) {
+		_, _ = fmt.Fprintf(w, result.text+"\n", name)
+	})
+	return nil
+}
+
+var stopResults = map[lifecycle.Stopped]struct{ json, text string }{
+	lifecycle.AlreadyShutOff: {"already_shut_off", "%s is already shut off"},
+	lifecycle.ShutDown:       {"shut_down", "%s is shut off"},
+	lifecycle.ForcedOff:      {"forced_off", "%s forced off"},
+}
+
+// progress writes a line for the person who watches: to stderr, so stdout
+// keeps only the result.
+func (c *cli) progress(format string, args ...any) {
+	_, _ = fmt.Fprintf(c.stderr, format+"\n", args...)
+}

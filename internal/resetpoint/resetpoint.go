@@ -5,6 +5,7 @@ package resetpoint
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
@@ -42,6 +43,44 @@ func Guard(h virt.Hypervisor, domain string) error {
 		}
 	}
 	return nil
+}
+
+// Legacy is the labels of the reset points vm keeps for domain: a copy of
+// the NVRAM named <nvram>.<label>.bak next to it, found through the storage
+// pool that holds the NVRAM, so no root is needed. A domain without NVRAM,
+// or with an NVRAM outside every pool, has none.
+func Legacy(h virt.Hypervisor, domain string) ([]string, error) {
+	text, err := h.DomainXML(domain, true)
+	if err != nil {
+		return nil, err
+	}
+	d, err := domxml.Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	nv, ok := domxml.NVRAMOf(d)
+	if !ok || nv.Path == "" {
+		return nil, nil
+	}
+	pool, name, err := h.VolumeByPath(nv.Path)
+	if failure.Is(err, failure.NotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	volumes, err := h.Volumes(pool)
+	if err != nil {
+		return nil, err
+	}
+	var labels []string
+	for _, v := range volumes {
+		rest, ok := strings.CutPrefix(v, name+".")
+		if label, ok2 := strings.CutSuffix(rest, ".bak"); ok && ok2 && label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return labels, nil
 }
 
 func Has(h virt.Hypervisor, domain, label string) (bool, error) {

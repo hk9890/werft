@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/guest/assets"
@@ -84,13 +85,13 @@ func (LUKSMark) Run(r *pipeline.Run) error {
 	}
 	var kept []string
 	for _, line := range strings.Split(desc, "\n") {
-		if line != LUKSMarker && line != "" {
+		if line != domxml.LUKSMarker && line != "" {
 			kept = append(kept, line)
 		}
 	}
 	if luks {
 		r.Printf("The disk of %s asks for a password at boot; werft types the guest password there", r.Domain)
-		kept = append(kept, LUKSMarker)
+		kept = append(kept, domxml.LUKSMarker)
 	}
 	if next := strings.Join(kept, "\n"); next != strings.TrimRight(desc, "\n") {
 		return r.H.SetDomainDescription(r.Domain, next)

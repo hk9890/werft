@@ -140,7 +140,7 @@ func (w *world) defineClone() {
 // prepare sets, and a console that shows the disk prompt.
 func (w *world) omarchy() {
 	w.shell.omarchy, w.shell.luks = true, true
-	must(w.t, w.fake.SetDomainDescription(vm, "my notes\n"+steps.LUKSMarker))
+	must(w.t, w.fake.SetDomainDescription(vm, "my notes\n"+domxml.LUKSMarker))
 	must(w.t, w.fake.DeleteSnapshot(vm, steps.ProvisionBase))
 	must(w.t, w.fake.CreateSnapshot(vm, steps.ProvisionBase, ""))
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))

@@ -3,7 +3,9 @@ package domxml
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 
 	"libvirt.org/go/libvirtxml"
 )
@@ -142,3 +144,13 @@ func Interfaces(d *libvirtxml.Domain) []Interface {
 }
 
 func Description(d *libvirtxml.Domain) string { return d.Description }
+
+// LUKSMarker is the line in a domain description that says the disk asks
+// for the guest password at boot. vm writes the same line, so a migrated
+// domain keeps it. The description is libvirt's, not the disk's: a reset
+// keeps it, and a clone copies it.
+const LUKSMarker = "vm: the disk asks for the guest password at boot"
+
+func HasLUKSMarker(description string) bool {
+	return slices.Contains(strings.Split(description, "\n"), LUKSMarker)
+}

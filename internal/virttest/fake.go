@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,6 +49,8 @@ type domain struct {
 	devices    []string
 	screenshot []byte
 	screenMIME string
+	// ignoresACPI is a guest that does not react to ShutdownDomain.
+	ignoresACPI bool
 }
 
 type snapshot struct {
@@ -319,18 +322,35 @@ func (f *Fake) StartDomain(name string) error {
 	return nil
 }
 
-// ShutdownDomain shuts the domain off at once.
+// ShutdownDomain shuts the domain off at once, unless IgnoreShutdown was
+// called for it.
 func (f *Fake) ShutdownDomain(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d, ok := f.domains[name]; ok && d.ignoresACPI && d.state != virt.StateShutOff {
+		return f.record("ShutdownDomain", name)
+	}
 	return f.stop("ShutdownDomain", name)
 }
 
+// IgnoreShutdown makes the guest of domain ignore the ACPI shutdown request,
+// as a guest that hangs or has no ACPI handler does.
+func (f *Fake) IgnoreShutdown(domain string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d, ok := f.domains[domain]; ok {
+		d.ignoresACPI = true
+	}
+}
+
 func (f *Fake) DestroyDomain(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.stop("DestroyDomain", name)
 }
 
+// stop shuts the domain off. The caller holds f.mu.
 func (f *Fake) stop(method, name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	if err := f.record(method, name); err != nil {
 		return err
 	}
@@ -830,6 +850,19 @@ func (f *Fake) VolumeInfo(pool, name string) (virt.VolumeInfo, error) {
 	}
 	used := uint64(len(v.data))
 	return virt.VolumeInfo{Capacity: max(v.capacity, used), Allocation: used}, nil
+}
+
+func (f *Fake) Volumes(poolName string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("Volumes", poolName); err != nil {
+		return nil, err
+	}
+	p, err := f.pool(poolName)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(p.volumes)), nil
 }
 
 func (f *Fake) VolumeByPath(path string) (string, string, error) {
