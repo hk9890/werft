@@ -326,16 +326,16 @@ All generic.
 | `boot` | Start the VM; type the disk password when the LUKS marker is set. A VM that runs already gets no keys: its screen can be a desktop |
 | `viewer` | Open a viewer; `undo` or a successful run closes it, a failed run leaves it open |
 | `wait-ssh` | Wait until sshd answers; `prepare` also installs the werft key and the user's own key |
-| `verify-guest-password` | Check the guest password with one `sudo` call |
+| `verify-guest-password` | Check the guest password with one `sudo` call; a lost SSH connection is `failed` and blames no password |
 | `detect-guest` | Detect the family (`ubuntu` or `omarchy`) and the session process |
 | `hostname` | Set the guest hostname to the domain name |
-| `luks-mark` | Probe the root disk for LUKS and set or remove the LUKS marker line; the rest of the description, blank lines too, stays |
+| `luks-mark` | Probe the root disk for LUKS and set or remove the LUKS marker line; the rest of the description, blank lines too, stays. A probe whose connection drops fails the step and keeps the marker |
 | `autologin` | Turn GDM autologin on, and off again in cleanup; `prepare` checks it is off |
 | `upload` | Copy the embedded helpers and the recipe files into the guest |
 | `wait-session` | Wait for the desktop session |
 | `unlock-keyring` | Unlock the GNOME keyring |
 | `sudo-grant` | Grant passwordless sudo, and revoke it in cleanup |
-| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup |
+| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup. A failed detach leaves the stick in the guest, mounts nothing on the host, and is tried again at the end of the run |
 | `pinentry` | Install a pinentry stub with the passphrase in tmpfs and a gpg-agent line; remove them in cleanup |
 | `run` | Run a guest command or script, with an optional secret on stdin |
 | `checks` | Copy a host check directory into the guest and run its entry script; a script that fails is `checks_failed`, a lost SSH connection is `failed` |
