@@ -4,12 +4,7 @@ How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). w
 bash tool `vm` in [`scripts/vm/`](https://github.com/carlo9890/setup/tree/main/scripts/vm) of the
 setup repo.
 
-Status: phase 1 of the roadmap (parity with `vm`) is in code: the hypervisor port with its
-libvirt adapter and fake, `domxml`, `failure`, `config`, `state`, the command dispatch with
-`version` and `help`, `list`, `start` and `stop` (`lifecycle`), the provision pipeline with
-`prepare` and `provision` (`pipeline`, `steps`, `recipe`, `guest`, `console`, `secret`, `hostdev`,
-`ansi`), and `snapshot`, `snapshots`, `reset` and `migrate` (`resetpoint`). Stock images, seal and
-leases are target design.
+Status of each phase: [PRODUCT.md, "Roadmap"](PRODUCT.md#roadmap).
 
 ## Proposals in short
 
@@ -33,9 +28,9 @@ Each row is a proposal until the user accepts it.
 policy packages run against fakes. Same shape as revier: ports outside, one place that wires the
 real adapters.
 
-- **`cmd/werft`** — Entry point. One file per command: flag parsing, text and JSON rendering, the
-  map from error kind to exit code, the confirmation prompt. It builds the real adapters in one
-  place. No command logic.
+- **`cmd/werft`** — Entry point. One file per command group: flag parsing, text and JSON
+  rendering, the map from error kind to exit code, the confirmation prompt. It builds the real
+  adapters in one place. No command logic.
 - **`internal/failure`** — The error kinds of [Agent interface](#agent-interface). Every package
   gives its errors a kind here; `cmd/werft` maps the kind to the exit code.
 - **`internal/virt`** — The hypervisor port: the interface and the types that cross it. Only the
@@ -60,9 +55,7 @@ real adapters.
   adapter passes a werft-owned `ssh_config` with `-F`, so the user's `SendEnv LC_*` never applies.
   It keeps login attempts few, because sshd `PerSourcePenalties` punishes failures: a wait for SSH
   pauses 1 s after the first attempt and doubles the pause up to 8 s.
-- **`internal/guest/assets`** — Generic guest helpers in the binary with `go:embed`:
-  `wait-for-package-manager.sh`, `unlock-keyring.js`, `pinentry-auto`, the hostname script, the
-  generalize script, and the seal script.
+- **`internal/guest/assets`** — Generic guest helpers, embedded in the binary with `go:embed`.
 - **`internal/console`** — Typing at the boot console: screenshot, decode with Go `image/png`, detect
   "not black and still for 4 frames", send key codes with `DomainSendKey`. No keystroke passes
   through a `virsh` process. The timings are those of `vm`: a screenshot every 2 s, at most 120 s.
@@ -90,8 +83,8 @@ real adapters.
 - **`internal/config`**, **`internal/state`**, **`internal/build`** — `config.toml` (pool, lease
   limits, lifetime, recipe per build VM; the URI is fixed to `qemu:///system`); paths, locks and image records under
   `~/.local/state/werft/`; the ldflags version stamp.
-- **`internal/livetest`** — Live-test helpers behind build tag `live`: the `werft-test` pool, the
-  base image, a scratch UEFI domain, and vsock SSH ([TESTING.md](TESTING.md)).
+- **`internal/livetest`** — Live-test helpers behind build tag `live`
+  ([TESTING.md](TESTING.md#write-a-live-test)).
 
 ## Data model
 
@@ -458,11 +451,6 @@ Exit codes are part of the contract:
 - Leases run in parallel. Limits: the memory budget, pool free space, and the 253 addresses of the
   NAT range.
 - A stock version is deleted only when no lease domain names it in its metadata.
-
-## Testing
-
-The reset-point design depends on a live test that a revert of a shut-off domain restores a changed
-UEFI variable. It exists and passes; see [TESTING.md](TESTING.md).
 
 ## Migration from `vm`
 

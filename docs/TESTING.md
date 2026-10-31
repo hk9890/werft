@@ -12,12 +12,14 @@ the test image is missing.
 
 ## Live test setup
 
-1. Put your user in group `libvirt`. The tests need no sudo.
+1. Put your user in group `libvirt`.
 2. Download the test image once, and check it against `SHA256SUMS` from the same directory:
 
    ```sh
    mkdir -p ~/.cache/werft/images && cd ~/.cache/werft/images
    curl -fLO https://cloud-images.ubuntu.com/minimal/releases/resolute/release/ubuntu-26.04-minimal-cloudimg-amd64.img
+   curl -fLO https://cloud-images.ubuntu.com/minimal/releases/resolute/release/SHA256SUMS
+   sha256sum -c --ignore-missing SHA256SUMS
    ```
 
    Set `WERFT_TEST_IMAGE` to use another UEFI cloud image.
@@ -28,29 +30,16 @@ What a run creates:
 - The storage pool `werft-test` in `/var/lib/libvirt/images/werft-test/`. It stays, with the uploaded
   base image, so the next run skips the upload. The base volume has the name of the image file.
   `~/.cache/werft/base-image.lock` lets one run at a time upload it, and a marker file next to the
-  lock records a finished upload; without the marker, the next run uploads again. Remove pool and
-  volumes with
-  `virsh -c qemu:///system pool-destroy werft-test && virsh -c qemu:///system pool-undefine werft-test`
-  after you delete its volumes.
-- One scratch domain per test, `werft-test-<track>-<name>` (for example `werft-test-fnd-uefi`), with
-  its overlay, NVRAM and console log. The test removes them.
-- `TestProvisionLive` also makes the clone `werft-test-pp-prov-full`, with its disk and NVRAM copies
-  in the `werft-test` pool, and replaces it once. The test removes them.
-- `TestMigrateLive` gives `werft-test-rp-mig` the layout of `vm` without root: a raw NVRAM
-  volume, `qemu-img` snapshots that libvirt takes and then forgets (metadata-only delete), and
-  `.bak` volumes. Its migrate writes the qcow2 NVRAM and the `clean-install` exports into the
-  `werft-test` pool, through a temporary `config.toml` with `pool = "werft-test"`. The domain
-  `werft-test-rp-mig-ci` boots the disk and NVRAM exports to check that they hold `clean-install`.
-  The test removes them.
-- `TestSecureBootMigrateLive` gives `werft-test-pg-sb` the firmware of a virt-manager build VM
-  (Secure Boot, `OVMF_CODE_4M.ms.fd`, SMM, an empty SATA cdrom) and the raw NVRAM volume
-  `werft-test-pg-sb_VARS.fd`. Its migrate writes `werft-test-pg-sb_VARS.qcow2` into the `werft-test`
-  pool. The test removes them.
-- `TestPrepareKeysLive` runs the `boot` and `wait-ssh` steps of `prepare` on `werft-test-pg-keys`.
-  The test removes it.
-- `TestLifecycleLive` also defines the domain `werft-test-lc-legacy`, which never starts. Its NVRAM
-  path is in a temporary directory with a `.old.bak` file, which stands for a reset point of `vm`.
-  The test removes the domain.
+  lock records a finished upload; without the marker, the next run uploads again.
+- Each test makes domains and volumes named `werft-test-<track>-*` in pool `werft-test` and removes
+  them. List them with the `werft-test-` expression in [OVERVIEW.md](OVERVIEW.md#finding-things).
+
+To remove the pool:
+
+1. List its volumes: `virsh -c qemu:///system vol-list werft-test`.
+2. Delete each volume: `virsh -c qemu:///system vol-delete --pool werft-test <vol>`.
+3. Stop the pool: `virsh -c qemu:///system pool-destroy werft-test`.
+4. Remove it: `virsh -c qemu:///system pool-undefine werft-test`.
 
 No test changes a build VM. `TestLifecycleLive` runs `werft list`, which reads every domain on the
 host, build VMs included, and changes none.
@@ -82,6 +71,6 @@ Build on `internal/livetest`; `internal/virt/libvirt/uefi_reset_live_test.go` is
 
 ## Minimum checks before opening a PR
 
-1. `mise run check` passes (fmt, vet, lint and unit tests, the same as CI).
+1. `mise run check` passes. CI runs the same task.
 2. If a change touches `internal/virt/` or anything a live test covers: `mise run test:live`
-   passes, and the PR says so.
+   passes.
