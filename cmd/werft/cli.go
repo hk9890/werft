@@ -18,7 +18,10 @@ import (
 // cli is one invocation: its streams, whether stdin is a terminal, and the
 // global flags.
 type cli struct {
-	stdin  io.Reader
+	stdin io.Reader
+	// lines reads the answers from stdin; one reader keeps what it buffered
+	// for the next question.
+	lines  *bufio.Reader
 	stdout io.Writer
 	stderr io.Writer
 	tty    bool
@@ -189,7 +192,10 @@ func (c *cli) confirm(yes bool, question string) error {
 		return failure.New(failure.NeedsConfirmation, "%s: needs confirmation and stdin is no terminal; pass --yes", question)
 	}
 	_, _ = fmt.Fprintf(c.stderr, "%s [y/N] ", question)
-	line, _ := bufio.NewReader(c.stdin).ReadString('\n')
+	if c.lines == nil {
+		c.lines = bufio.NewReader(c.stdin)
+	}
+	line, _ := c.lines.ReadString('\n')
 	switch strings.ToLower(strings.TrimSpace(line)) {
 	case "y", "yes":
 		return nil

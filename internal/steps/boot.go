@@ -93,7 +93,9 @@ func shutOff(r *pipeline.Run) bool {
 
 // Boot starts the domain. An encrypted guest takes no address before its
 // disk is open, so the password is typed first, once: keys sent before the
-// prompt are lost, and cryptsetup allows few tries.
+// prompt are lost, and cryptsetup allows few tries. A domain that runs
+// already gets no keys: its screen can be a desktop, and the password would
+// go to the window that has focus.
 type Boot struct{}
 
 func (Boot) Check(r *pipeline.Run) error {
@@ -104,12 +106,17 @@ func (Boot) Check(r *pipeline.Run) error {
 func (Boot) Run(r *pipeline.Run) error { return boot(r) }
 
 func boot(r *pipeline.Run) error {
-	if !r.Running() {
-		if err := r.H.StartDomain(r.Domain); err != nil {
-			return err
+	if r.Running() {
+		r.LUKS = false
+		if hasLUKSMarker(r, r.Domain) {
+			r.Printf("%s runs already, so werft types no disk password; if its console asks for it, type it there: %s", r.Domain, ViewerCommand(r.Domain))
 		}
-		r.Printf("%s started (headless, no window)", r.Domain)
+		return nil
 	}
+	if err := r.H.StartDomain(r.Domain); err != nil {
+		return err
+	}
+	r.Printf("%s started (headless, no window)", r.Domain)
 	r.LUKS = hasLUKSMarker(r, r.Domain)
 	if !r.LUKS {
 		return nil

@@ -66,8 +66,9 @@ real adapters.
   writes them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
   The address is `vsock/<cid>`, else the IPv4 DHCP lease (`virt.DomainAddresses`, the same rule
   that `prepare` and `provision` use). `start` opens no viewer without `--view`, does not type a
-  disk password, and waits 60 s for a DHCP lease. It gives the address only when a lease came; no
-  lease is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.
+  disk password, and waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
+  it expires, also after the domain stopped. It gives the address only when a lease came; no lease
+  is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.
 - **`internal/resetpoint`**, **`internal/image`**, **`internal/lease`** — Reset points, raw-NVRAM
   guard and migration; stock image catalog and seal; lease lifecycle and reap. See the sections
   below.
@@ -322,7 +323,7 @@ All generic.
 | Step | Does |
 |---|---|
 | `reset` | Force off the VM and revert it to a reset point |
-| `boot` | Start the VM; type the disk password when the LUKS marker is set |
+| `boot` | Start the VM; type the disk password when the LUKS marker is set. A VM that runs already gets no keys: its screen can be a desktop |
 | `viewer` | Open a viewer; `undo` or a successful run closes it, a failed run leaves it open |
 | `wait-ssh` | Wait until sshd answers; `prepare` also installs the werft key and the user's own key |
 | `verify-guest-password` | Check the guest password with one `sudo` call |
@@ -337,7 +338,7 @@ All generic.
 | `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup |
 | `pinentry` | Install a pinentry stub with the passphrase in tmpfs and a gpg-agent line; remove them in cleanup |
 | `run` | Run a guest command or script, with an optional secret on stdin |
-| `checks` | Copy a host check directory into the guest and run its entry script; a failure is `checks_failed` |
+| `checks` | Copy a host check directory into the guest and run its entry script; a script that fails is `checks_failed`, a lost SSH connection is `failed` |
 | `reboot`, `poweroff` | Power off from inside the guest; `reboot` then boots and waits for SSH |
 | `clone` | Refuse a source that is not shut off (a `poweroff` step comes first), delete the old clone, define a new one from generated XML, copy the viewer settings; the steps after it act on the clone |
 | `generalize` | Boot the clone, give it a new machine-id, new SSH host keys and its hostname, power it off |
@@ -345,9 +346,9 @@ All generic.
 | `undo` | Run the cleanup of an earlier step now, so a temporary change ends where the recipe says |
 
 `prepare` is a fixed built-in step list; it needs no recipe. Its two waits for a person (sshd install,
-disk password) stay, with a hint for each. The disk password wait ends with a DHCP lease, as
-`lifecycle.WaitAddress` does: a vsock CID is in the live XML from the start, so it is no sign that
-the guest left its initramfs.
+disk password) stay, with a hint for each. The disk password wait ends with a DHCP lease newer than the
+start, as `lifecycle.WaitAddress` does: a vsock CID is in the live XML from the start, and libvirt
+keeps the lease of an earlier boot, so neither is a sign that the guest left its initramfs.
 
 The clone gets a copy of each writable disk and of the NVRAM, made with `StorageVolCreateXMLFrom`
 in the pool of the original (the NVRAM in the `nvram` pool). An NVRAM template does not work:
@@ -366,7 +367,8 @@ points, as `vm` did.
 The guest login is `$USER` with the werft key and `~/.ssh/id_ed25519`, through the werft
 `ssh_config`. It sets `IdentitiesOnly`, so no other agent key uses up sshd's `MaxAuthTries`.
 `prepare` tries one login with both keys. When the guest refuses both, `prepare` runs `ssh-copy-id`
-with the werft key, which asks for the password; so at most one failed login comes before it, as
+with the werft key, without the user's `ssh_config` and with no key offered, so it asks for the
+password; so at most one failed login comes before it, as
 in `vm`. Then `prepare` adds each public key that is not in `~/.ssh/authorized_keys` yet: the werft
 key and `~/.ssh/id_ed25519.pub`, when it exists. The user's key keeps `ssh <build VM>` working, and
 the clone inherits both. Last, `prepare` checks the werft key alone (`ssh -P werft-key-only`, which
@@ -399,7 +401,7 @@ Parameters: `reset` takes `label` (default `provision-base`); `snapshot` and `us
 take `label`; `upload` takes `files`; `run` takes `command` (run in the guest directory) and
 `secret` (on stdin); `checks` takes `dir` and `command` (default `run.sh`); `pinentry` takes
 `secret`; `undo` takes `step`. Load fails on an unknown key, a missing file, an unknown secret, a
-`family` before `detect-guest`, `generalize` before `clone`, and an `undo` without an earlier step
+`family` before `detect-guest`, `generalize` before `clone`, a second `clone`, and an `undo` without an earlier step
 that has a cleanup. The setup recipe holds:
 
 - the bootstrap repo URL and the script that clones it and runs `install.sh` (the rest of
@@ -443,7 +445,8 @@ Exit codes are part of the contract:
 
 - libvirt is the arbiter. A unique domain name reserves a lease. QEMU image locks prevent two
   writers on one disk. Stock files are opened read-only as backing files.
-- `locks/global.lock` (`flock`) serializes admission, seal, reap, and stock garbage collection.
+- `locks/global.lock` (`flock`) serializes admission, seal, reap, stock garbage collection, and
+  the creation of the werft key by `prepare`.
   Admission holds it from the capacity check until the lease domain is defined. It is held for
   seconds, never for a boot.
 - `locks/<domain>.lock` serializes `snapshot`, `reset`, `prepare`, `provision`, `seal` and

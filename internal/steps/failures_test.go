@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/steps"
 )
 
 // The failure scenarios of vm_test.sh: what a failed step leaves behind,
@@ -155,5 +157,22 @@ func TestFailedOmarchyUpdate(t *testing.T) {
 	w.assertSequence("sudo is closed again", "omarchy update", "rm -f .* sh '/etc/sudoers.d/90-werft-provision'$")
 	if i := w.index("^(host unmount stick|AttachDevice)"); i >= 0 {
 		t.Errorf("the stick was touched: %q", w.entries()[i])
+	}
+}
+
+// A domain that runs already can show its desktop: the disk password would
+// go to the window that has focus.
+func TestBootOfARunningDomainTypesNothing(t *testing.T) {
+	w := newWorld(t)
+	w.omarchy()
+	must(t, w.fake.StartDomain(vm))
+	if _, err := w.run([]pipeline.Entry{{Name: "boot", Step: steps.Boot{}}}, true); err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+	if w.index("^SendKey") >= 0 || w.index("^StartDomain") >= 0 {
+		t.Errorf("want no start and no keys:\n  %s", strings.Join(w.entries(), "\n  "))
+	}
+	if !strings.Contains(w.out.String(), "testvm runs already, so werft types no disk password") {
+		t.Errorf("no hint:\n%s", w.out.String())
 	}
 }

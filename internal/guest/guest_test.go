@@ -98,6 +98,12 @@ func TestWriteConfig(t *testing.T) {
 			t.Errorf("config lacks %q:\n%s", want, data)
 		}
 	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("the write left %d files, want the config alone", len(entries))
+	}
 	if cmd := (guest.OpenSSH{Config: path}).Command(guest.Addr{User: "u", Host: "vsock/3"}); cmd != "ssh -F "+path+" u@vsock/3" {
 		t.Errorf("Command = %q", cmd)
 	}

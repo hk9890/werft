@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -29,10 +30,21 @@ func (VerifyGuestPassword) Check(r *pipeline.Run) error {
 }
 
 func (VerifyGuestPassword) Run(r *pipeline.Run) error {
-	if err := r.Root("true"); err != nil {
+	err := r.Root("true")
+	switch {
+	case err == nil:
+		return nil
+	case exited(err):
 		return failure.New(failure.Failed, "sudo in %s did not accept the password", r.Domain)
 	}
-	return nil
+	return failure.Wrap(failure.Failed, err, "could not check the password with sudo in %s", r.Domain)
+}
+
+// exited says whether err is a guest command that ran and failed, not a
+// login or connection that failed.
+func exited(err error) bool {
+	var exit *guest.ExitError
+	return errors.As(err, &exit)
 }
 
 // DetectGuest tells Omarchy (Arch, Hyprland, SDDM) from Ubuntu with GNOME.
@@ -78,7 +90,11 @@ type LUKSMark struct{}
 func (LUKSMark) Check(*pipeline.Run) error { return nil }
 
 func (LUKSMark) Run(r *pipeline.Run) error {
-	luks := r.Probe(luksRootProbe)
+	err := r.Shell.Run(r.Ctx, r.Addr, luksRootProbe, nil, io.Discard, io.Discard)
+	if err != nil && !exited(err) {
+		return failure.Wrap(failure.Failed, err, "could not probe the root disk of %s for LUKS", r.Domain)
+	}
+	luks := err == nil
 	desc, err := r.H.DomainDescription(r.Domain)
 	if err != nil {
 		return err
@@ -386,6 +402,9 @@ func (c Checks) Run(r *pipeline.Run) error {
 	}
 	r.Printf("Running the checks of %s in %s", c.Dir, r.Domain)
 	if err := r.Exec("cd "+guest.Quote(dir)+" && bash "+guest.Quote(entry), nil); err != nil {
+		if !exited(err) {
+			return failure.Wrap(failure.Failed, err, "could not run the checks in %s", r.Domain)
+		}
 		r.Printf("checks: FAIL")
 		return failure.Wrap(failure.ChecksFailed, err, "the checks failed in %s", r.Domain)
 	}

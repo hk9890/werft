@@ -79,9 +79,12 @@ func (System) MountStick(st hostdev.Stick) error { return hostdev.Mount(st) }
 func (System) StickOnHost(st hostdev.Stick) bool { return hostdev.OnHost(st) }
 
 // CopySSHKey runs ssh-copy-id. -f skips its own trial login, one more failed
-// login for sshd to count. ssh asks for the password on the terminal.
+// login for sshd to count. The user's ssh_config does not apply, and no key
+// is offered: each refused key counts toward sshd's MaxAuthTries, which can
+// end the connection before ssh asks for the password on the terminal.
 func (s System) CopySSHKey(addr guest.Addr, pubkey string) error {
-	args := []string{"-f", "-i", pubkey, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"}
+	args := []string{"-f", "-i", pubkey, "-F", "/dev/null", "-o", "PubkeyAuthentication=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"}
 	if strings.HasPrefix(addr.Host, "vsock/") {
 		args = append(args, "-o", "ProxyCommand="+guest.SSHProxy+" %h %p", "-o", "ProxyUseFdpass=yes")
 	}

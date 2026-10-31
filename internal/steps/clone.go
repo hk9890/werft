@@ -223,8 +223,7 @@ func copyDisks(h virt.Hypervisor, disks []domxml.Disk, name string) (map[string]
 		if err != nil {
 			return nil, created, err
 		}
-		xml := fmt.Sprintf("<volume><name>%s</name><capacity unit='bytes'>%d</capacity><target><format type='%s'/></target></volume>", vol, info.Capacity, format)
-		v, err := h.CreateVolumeFrom(disk.Pool, xml, disk.Pool, disk.Volume)
+		v, err := h.CreateVolumeFrom(disk.Pool, domxml.Volume(vol, info.Capacity, format), disk.Pool, disk.Volume)
 		if err != nil {
 			return nil, created, err
 		}
@@ -249,8 +248,7 @@ func copyNVRAM(h virt.Hypervisor, src cloneSource, name string, created []poolVo
 	if format == "qcow2" {
 		copyName = name + "_VARS.qcow2"
 	}
-	xml := fmt.Sprintf("<volume><name>%s</name><capacity>0</capacity><target><format type='%s'/></target></volume>", copyName, format)
-	v, err := h.CreateVolumeFrom(src.nvram.pool, xml, src.nvram.pool, src.nvram.name)
+	v, err := h.CreateVolumeFrom(src.nvram.pool, domxml.Volume(copyName, 0, format), src.nvram.pool, src.nvram.name)
 	if err != nil {
 		return "", created, err
 	}
@@ -262,7 +260,8 @@ func copyNVRAM(h virt.Hypervisor, src cloneSource, name string, created []poolVo
 // its reset points. An NVRAM in a pool goes through the storage API: an
 // undefine that deletes it unlinks the file behind the back of the storage
 // driver, whose pool then still holds the name, and the copy of the new
-// clone's NVRAM under that name fails.
+// clone's NVRAM under that name fails. Only an NVRAM no pool can list goes
+// with the undefine; a pool error stops the removal.
 func removeClone(h virt.Hypervisor, name string) error {
 	text, err := h.DomainXML(name, true)
 	if err != nil {
@@ -282,15 +281,19 @@ func removeClone(h virt.Hypervisor, name string) error {
 	}
 	flags := virt.UndefineSnapshots
 	if nv, ok := domxml.NVRAMOf(d); ok {
-		if pool, vol, err := virt.NVRAMVolume(h, nv.Path); err == nil {
+		pool, vol, err := virt.NVRAMVolume(h, nv.Path)
+		switch {
+		case err == nil:
 			flags |= virt.UndefineKeepNVRAM
 			backups, err := nvramBackups(h, pool, vol)
 			if err != nil {
 				return err
 			}
 			volumes = append(append(volumes, poolVolume{pool, vol}), backups...)
-		} else {
+		case failure.Is(err, failure.NotFound):
 			flags |= virt.UndefineNVRAM
+		default:
+			return err
 		}
 	}
 	if err := h.UndefineDomain(name, flags); err != nil {
@@ -352,14 +355,15 @@ func (Generalize) Run(r *pipeline.Run) error {
 type Snapshot struct {
 	Label string
 	// OnClone is set when a clone step comes before, so the domain does not
-	// exist at check time and has no reset points.
+	// exist at check time and has no reset points. The clone inherits the
+	// disk and NVRAM formats of the build VM, so the guard runs on that.
 	OnClone bool
 	replace bool
 }
 
 func (s *Snapshot) Check(r *pipeline.Run) error {
 	if s.OnClone {
-		return nil
+		return resetpoint.Guard(r.H, r.BuildVM)
 	}
 	if err := resetpoint.Guard(r.H, r.Domain); err != nil {
 		return err

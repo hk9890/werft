@@ -117,7 +117,7 @@ func (c *cli) cmdPrepare(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := guestEnsureKey(dir.SSHKey()); err != nil {
+	if err := ensureKey(dir); err != nil {
 		return failure.Wrap(failure.Failed, err, "create the werft SSH key")
 	}
 	r, done, err := c.buildVMRun(name, yes, c.stderr)
@@ -134,6 +134,17 @@ func (c *cli) cmdPrepare(args []string) error {
 		_, _ = fmt.Fprintf(w, "%s is prepared\n", name)
 	})
 	return nil
+}
+
+// ensureKey creates the werft key under the global lock: two first prepares
+// on different build VMs would otherwise write one key pair at once.
+func ensureKey(dir state.Dir) error {
+	lock, err := dir.LockGlobal()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Release() }()
+	return guestEnsureKey(dir.SSHKey())
 }
 
 func buildVMArg(fs *flag.FlagSet, command string) (string, error) {

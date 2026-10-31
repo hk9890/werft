@@ -36,6 +36,22 @@ func TestAFailedAttachStillGivesTheStickBack(t *testing.T) {
 	}
 }
 
+// A stick the guest keeps is not on the host: the cleanup does not say it
+// is, and the end of the run tries the detach again.
+func TestAFailedDetachIsTriedAgain(t *testing.T) {
+	w := newWorld(t)
+	w.fake.FailOn("DetachDevice", failure.New(failure.Failed, "device busy"))
+	if _, err := provision(t, w, true); err == nil {
+		t.Fatal("provision succeeded")
+	}
+	if n := w.count("^DetachDevice testvm$"); n != 2 {
+		t.Errorf("detach ran %d times, want in undo and again at the end", n)
+	}
+	if w.index("^host mount stick$") >= 0 || strings.Contains(w.out.String(), "The stick is back on the host") {
+		t.Errorf("the stick counts as back on the host:\n%s", w.out.String())
+	}
+}
+
 func TestAStickTheGuestDoesNotMountIsGivenBack(t *testing.T) {
 	w := newWorld(t)
 	w.shell.fail["findmnt -rn -S UUID="] = true

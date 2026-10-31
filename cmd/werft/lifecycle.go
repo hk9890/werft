@@ -121,7 +121,7 @@ func (c *cli) cmdStart(args []string) error {
 		}
 	}
 	c.progress("Waiting up to %v for an address", lifecycle.AddressTimeout)
-	addr := lifecycle.WaitAddress(h, name, c.sleep)
+	addr := lifecycle.WaitAddress(h, name, started.Leases, c.sleep)
 	if addr == "" {
 		c.progress("No address yet; werft list shows it once the guest is up")
 	}

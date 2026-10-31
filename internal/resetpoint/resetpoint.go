@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 
+	"libvirt.org/go/libvirtxml"
+
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/virt"
@@ -53,7 +55,7 @@ func Guard(h virt.Hypervisor, domain string) error {
 		return failure.New(failure.Unsupported, "%s keeps its UEFI variables in raw format, which a reset point leaves out; run werft migrate %s", domain, domain)
 	}
 	if ok {
-		labels, err := Legacy(h, domain)
+		labels, err := LegacyOf(d)
 		if err != nil {
 			return err
 		}
@@ -84,6 +86,11 @@ func Legacy(h virt.Hypervisor, domain string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return LegacyOf(d)
+}
+
+// LegacyOf is Legacy of the parsed inactive domain XML d.
+func LegacyOf(d *libvirtxml.Domain) ([]string, error) {
 	nv, ok := domxml.NVRAMOf(d)
 	if !ok || nv.Path == "" {
 		return nil, nil

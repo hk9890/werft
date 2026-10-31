@@ -155,6 +155,17 @@ func TestConfirm(t *testing.T) {
 	}
 }
 
+// Answers typed ahead reach the questions in order.
+func TestConfirmReadsTypedAheadAnswers(t *testing.T) {
+	c := &cli{stdin: strings.NewReader("n\ny\n"), stderr: &bytes.Buffer{}, tty: true}
+	if err := c.confirm(false, "first"); !failure.Is(err, failure.NeedsConfirmation) {
+		t.Fatalf("first answer = %v, want the typed n", err)
+	}
+	if err := c.confirm(false, "second"); err != nil {
+		t.Fatalf("second answer = %v, want the typed y", err)
+	}
+}
+
 func TestProvisionUsage(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	tests := []struct {

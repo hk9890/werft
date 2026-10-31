@@ -121,6 +121,7 @@ func TestLoadRejects(t *testing.T) {
 		{"undo of nothing", steps("[[steps]]\ntype = \"undo\"\nstep = \"sudo-grant\"\n"), `undo names "sudo-grant"`},
 		{"undo of a step without cleanup", steps("[[steps]]\ntype = \"boot\"\n[[steps]]\ntype = \"undo\"\nstep = \"boot\"\n"), `undo names "boot"`},
 		{"generalize without clone", steps("[[steps]]\ntype = \"generalize\"\n"), "generalize needs a clone"},
+		{"two clones", steps("[[steps]]\ntype = \"clone\"\n[[steps]]\ntype = \"clone\"\n"), "step 2: a recipe has one clone step"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

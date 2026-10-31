@@ -111,7 +111,7 @@ func TestStart(t *testing.T) {
 	f := host(t)
 	s, err := lifecycle.Start(f, "ubuntu")
 	must(t, err)
-	if s != (lifecycle.Started{LUKS: true}) {
+	if s.AlreadyRunning || !s.LUKS || len(s.Leases) != 0 {
 		t.Errorf("Start = %+v", s)
 	}
 	if st, _ := f.DomainState("ubuntu"); st != virt.StateRunning {
@@ -138,18 +138,38 @@ func TestWaitAddress(t *testing.T) {
 			f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5"})
 		}
 	}
-	if got := lifecycle.WaitAddress(f, "ubuntu", sleep); got != "192.168.122.5" || waited != 9*time.Second {
+	if got := lifecycle.WaitAddress(f, "ubuntu", nil, sleep); got != "192.168.122.5" || waited != 9*time.Second {
 		t.Errorf("WaitAddress = %q after %v", got, waited)
 	}
 
 	must(t, f.StartDomain("werft-a"))
 	waited = 0
-	if got := lifecycle.WaitAddress(f, "werft-a", func(d time.Duration) { waited += d }); got != "" || waited < lifecycle.AddressTimeout {
+	if got := lifecycle.WaitAddress(f, "werft-a", nil, func(d time.Duration) { waited += d }); got != "" || waited < lifecycle.AddressTimeout {
 		t.Errorf("WaitAddress without a lease = %q after %v; want none after the full wait, though the domain has a CID", got, waited)
 	}
 	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:02", IP: "192.168.122.9"})
-	if got := lifecycle.WaitAddress(f, "werft-a", noSleep); got != "vsock/3" {
+	if got := lifecycle.WaitAddress(f, "werft-a", nil, noSleep); got != "vsock/3" {
 		t.Errorf("WaitAddress with a lease = %q, want the CID", got)
+	}
+}
+
+// libvirt keeps a lease until it expires, also after the domain stopped:
+// only a lease newer than the start shows that the guest is up.
+func TestWaitAddressIgnoresALeaseFromBeforeTheStart(t *testing.T) {
+	f := host(t)
+	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5", Expiry: 100})
+	s, err := lifecycle.Start(f, "ubuntu")
+	must(t, err)
+	if len(s.Leases) != 1 {
+		t.Fatalf("Start kept leases %v, want the one from before the start", s.Leases)
+	}
+	waited := time.Duration(0)
+	if got := lifecycle.WaitAddress(f, "ubuntu", s.Leases, func(d time.Duration) { waited += d }); got != "" || waited < lifecycle.AddressTimeout {
+		t.Errorf("WaitAddress with only the old lease = %q after %v; want none after the full wait", got, waited)
+	}
+	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5", Expiry: 200})
+	if got := lifecycle.WaitAddress(f, "ubuntu", s.Leases, noSleep); got != "192.168.122.5" {
+		t.Errorf("WaitAddress with a renewed lease = %q", got)
 	}
 }
 
