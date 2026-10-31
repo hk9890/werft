@@ -2,12 +2,18 @@
 
 Disposable test VMs from stock images, on one Linux workstation with libvirt. Built for agents first: get a VM, reach it over SSH, test something in it, give it back.
 
-**Status:** phase 1 (parity with `vm`) is in code: `list`, `start`, `stop`, `snapshot`, `snapshots`, `reset`, `migrate`, `prepare` and `provision`. The lease commands do not exist yet. What werft will do is in [docs/PRODUCT.md](docs/PRODUCT.md), how it works in [docs/DESIGN.md](docs/DESIGN.md).
+The status of each phase is in the [roadmap](docs/PRODUCT.md#roadmap).
 
 ## Requirements
 
 - Linux with libvirt 11.4 or later (`qemu:///system`), and the user in group `libvirt`
 - OpenSSH client; `virt-viewer` for `--view`
+
+## Install
+
+werft has no release yet; build it from source. The build steps are in
+[docs/CODING.md](docs/CODING.md#build-and-run-from-source). Release binaries that mise installs
+come with task `werft-git8j8`.
 
 ## Usage
 
@@ -44,7 +50,8 @@ VM whose UEFI variables are raw, because a reset point would leave them out.
 
 `werft provision` runs a recipe on a build VM and keeps the result as `<name>-full`. Point
 `~/.config/werft/config.toml` at a recipe with `recipe = "<path>"`, or pass `--recipe <path>`.
-[examples/setup/](examples/setup/README.md) holds the recipe of the setup repo and shows the config.
+[examples/setup/README.md](examples/setup/README.md) holds the recipe of the setup repo, its
+config, and what a run needs.
 
 ```sh
 werft prepare ubuntu-26-04                   # once: werft key and your own key, hostname, provision-base
@@ -52,14 +59,10 @@ werft provision ubuntu-26-04                 # reset, run the recipe, clone to u
 werft provision --key /media/$USER/BACKUP ubuntu-26-04  # the key stick at another mount point
 ```
 
-### Leases (target)
+## Further reading
 
-```sh
-werft images --json                          # stock images and tiers
-werft lease ubuntu-26-04 --tier plain --json # get a VM; returns when SSH answers
-ssh -F <lease ssh_config> <lease-id>         # work in it
-werft release <lease-id>                     # destroy it
-```
+- [docs/PRODUCT.md](docs/PRODUCT.md): users, core concepts, the agent contract, the roadmap
+- [docs/DESIGN.md](docs/DESIGN.md): how werft works, exit codes, where state lives
 
 ## License
 
