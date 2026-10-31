@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, so vuln finds advisories published while nothing merges. The time
+  # is the one task-manager and task-manager-ui use.
+  schedule:
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 # A new push to a PR branch cancels the run of its older commit. On main every
