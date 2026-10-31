@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 
+	"libvirt.org/go/libvirtxml"
+
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/virt"
@@ -33,6 +35,17 @@ var MinLibvirt = virt.Version{Major: 11, Minor: 4}
 // NVRAM out. It also refuses a migrated domain that vm took a reset point
 // of since: the disk holds a qemu-img snapshot libvirt does not know.
 func Guard(h virt.Hypervisor, domain string) error {
+	return guard(h, domain, true)
+}
+
+// GuardCopy is Guard for a copy of domain that is not made yet, such as its
+// clone: the copy has the disk and NVRAM formats of domain, and none of the
+// vm reset points of domain, because a copy holds no internal snapshots.
+func GuardCopy(h virt.Hypervisor, domain string) error {
+	return guard(h, domain, false)
+}
+
+func guard(h virt.Hypervisor, domain string, legacy bool) error {
 	v, err := h.LibVersion()
 	if err != nil {
 		return err
@@ -52,8 +65,8 @@ func Guard(h virt.Hypervisor, domain string) error {
 	if domxml.UEFI(d) && (!ok || nv.Format != "qcow2") {
 		return failure.New(failure.Unsupported, "%s keeps its UEFI variables in raw format, which a reset point leaves out; run werft migrate %s", domain, domain)
 	}
-	if ok {
-		labels, err := Legacy(h, domain)
+	if ok && legacy {
+		labels, err := LegacyOf(d)
 		if err != nil {
 			return err
 		}
@@ -84,6 +97,11 @@ func Legacy(h virt.Hypervisor, domain string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return LegacyOf(d)
+}
+
+// LegacyOf is Legacy of the parsed inactive domain XML d.
+func LegacyOf(d *libvirtxml.Domain) ([]string, error) {
 	nv, ok := domxml.NVRAMOf(d)
 	if !ok || nv.Path == "" {
 		return nil, nil

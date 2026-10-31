@@ -156,6 +156,20 @@ func TestPrepareWithoutAddress(t *testing.T) {
 	}
 }
 
+// libvirt keeps the lease of an earlier boot until it expires: it is no
+// sign that the guest left its initramfs.
+func TestPrepareWaitsForALeaseNewerThanTheStart(t *testing.T) {
+	w := freshWorld(t)
+	w.h.staleLeases = true
+	_, err := w.run(steps.Prepare(), false)
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "testvm took no address") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(w.out.String(), "If its disk asks for a password, type it in its window") || w.index("^ssh ") >= 0 {
+		t.Errorf("want the disk password advice and no login:\n%s", w.out.String())
+	}
+}
+
 func TestPrepareWithoutDisplayNamesTheViewerCommand(t *testing.T) {
 	w := freshWorld(t)
 	w.host.display = false
@@ -237,6 +251,34 @@ func TestPrepareRejectedPasswordTakesNoBase(t *testing.T) {
 	_, err := w.run(steps.Prepare(), false)
 	if err == nil || !strings.Contains(err.Error(), "did not accept the password") {
 		t.Fatalf("err = %v", err)
+	}
+	if w.index("^CreateSnapshot") >= 0 {
+		t.Error("a base was taken")
+	}
+}
+
+// A dropped connection says nothing about the password.
+func TestPrepareDroppedSudoCheckBlamesNoPassword(t *testing.T) {
+	w := freshWorld(t)
+	w.shell.drop["sh -c 'true' sh$"] = true
+	_, err := w.run(steps.Prepare(), false)
+	if err == nil || strings.Contains(err.Error(), "did not accept the password") || !strings.Contains(err.Error(), "closed by remote host") {
+		t.Fatalf("err = %v, want the SSH error and no blame on the password", err)
+	}
+}
+
+// A dropped LUKS probe says nothing about the disk: the marker stays, and
+// no base is taken.
+func TestPrepareDroppedLUKSProbeKeepsTheMarker(t *testing.T) {
+	w := freshWorld(t)
+	w.shell.omarchy, w.shell.luks = true, true
+	must(t, w.fake.SetDomainDescription(vm, "my notes\n"+domxml.LUKSMarker))
+	w.shell.drop["grep -qx crypt"] = true
+	if _, err := w.run(steps.Prepare(), false); err == nil || !strings.Contains(err.Error(), "could not probe the root disk of testvm for LUKS") {
+		t.Fatalf("err = %v", err)
+	}
+	if desc, _ := w.fake.DomainDescription(vm); desc != "my notes\n"+domxml.LUKSMarker {
+		t.Errorf("description = %q, want the marker kept", desc)
 	}
 	if w.index("^CreateSnapshot") >= 0 {
 		t.Error("a base was taken")

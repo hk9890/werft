@@ -283,6 +283,19 @@ func TestFailedChecksAreChecksFailed(t *testing.T) {
 	}
 }
 
+// A dropped connection is no failed check: an agent must not read it as one.
+func TestDroppedChecksAreNoChecksFailed(t *testing.T) {
+	w := newWorld(t)
+	w.shell.drop["bash 'run.sh'"] = true
+	_, err := provision(t, w, true)
+	if !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), "could not run the checks in testvm") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(w.out.String(), "checks: FAIL") {
+		t.Error("a dropped connection printed checks: FAIL")
+	}
+}
+
 func TestInterruptedProvisionCleansUp(t *testing.T) {
 	w := newWorld(t)
 	entries := steps.FromRecipe(setupRecipe(t))
@@ -346,6 +359,42 @@ func TestFailedCloneLeavesNoVolumes(t *testing.T) {
 	}
 	w.assertSequence("the copies go again", "^CreateVolumeFrom testvm-full.qcow2", "^CreateVolumeFrom testvm-full_VARS.qcow2",
 		"^DeleteVolume testvm-full.qcow2$", "^DeleteVolume testvm-full_VARS.qcow2$")
+}
+
+// The clone inherits raw NVRAM from its build VM, so the snapshot after the
+// clone is refused in preflight, not after the whole run.
+func TestSnapshotOnACloneOfRawNVRAMIsRefusedFirst(t *testing.T) {
+	w := newWorld(t)
+	text, err := w.fake.DomainXML(vm, true)
+	must(t, err)
+	_, err = w.fake.DefineDomain(strings.Replace(text, `format="qcow2">/var/lib/libvirt/qemu/nvram`, `format="raw">/var/lib/libvirt/qemu/nvram`, 1))
+	must(t, err)
+	_, err = w.run([]pipeline.Entry{
+		{Name: "clone", Step: steps.Clone{}},
+		{Name: "snapshot", Step: &steps.Snapshot{Label: "clean", OnClone: true}},
+	}, true)
+	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "werft migrate testvm") {
+		t.Fatalf("err = %v", err)
+	}
+	if i := w.index("^(CreateVolumeFrom|DefineDomain)"); i >= 0 {
+		t.Errorf("the run got as far as %q", w.entries()[i])
+	}
+}
+
+// An undefine with the NVRAM would unlink the file behind its pool, and the
+// new copy under that name would fail: a pool error stops the removal.
+func TestPoolErrorKeepsTheOldClone(t *testing.T) {
+	w := newWorld(t)
+	w.defineClone()
+	w.fake.FailOn("VolumeByPath /var/lib/libvirt/qemu/nvram/testvm-full_VARS.qcow2", failure.New(failure.NotFound, "no volume"))
+	w.fake.FailOn("Pools", failure.New(failure.Failed, "pool list failed"))
+	_, err := w.run([]pipeline.Entry{{Name: "clone", Step: steps.Clone{}}}, true)
+	if err == nil || !strings.Contains(err.Error(), "pool list failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if i := w.index("^UndefineDomain testvm-full$"); i >= 0 {
+		t.Error("the old clone was undefined")
+	}
 }
 
 // libvirt copies the disk of a running guest without a word; the copy would

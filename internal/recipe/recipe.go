@@ -230,11 +230,14 @@ func (r *Recipe) step(raw map[string]any) (Step, error) {
 
 // validateOrder checks what depends on an earlier step: a family needs
 // detect-guest before it, generalize a clone, and undo an earlier step with
-// a cleanup.
+// a cleanup. A second clone would copy the clone onto itself.
 func (r *Recipe) validateOrder() error {
 	detected, cloned := false, false
 	ids := map[string]bool{}
 	for i, s := range r.Steps {
+		if s.Type == "clone" && cloned {
+			return fmt.Errorf("step %d: a recipe has one clone step", i+1)
+		}
 		if s.Type == "generalize" && !cloned {
 			return fmt.Errorf("step %d: generalize needs a clone step before it", i+1)
 		}

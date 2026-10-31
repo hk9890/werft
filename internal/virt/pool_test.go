@@ -127,6 +127,20 @@ func TestNVRAMVolumeRefreshesThePoolThatCoversTheDirectory(t *testing.T) {
 	}
 }
 
+// NotFound says that no pool lists the file; a pool that went away is a
+// failure of its own.
+func TestNVRAMVolumePoolErrorIsNoNotFound(t *testing.T) {
+	h := nvramFile{virttest.New()}
+	if err := virt.EnsurePool(h, virt.NVRAMPool, virt.NVRAMDir); err != nil {
+		t.Fatal(err)
+	}
+	h.FailOn("RefreshPool", failure.New(failure.NotFound, "no storage pool"))
+	_, _, err := virt.NVRAMVolume(h, virt.NVRAMDir+"/x_VARS.fd")
+	if err == nil || failure.Is(err, failure.NotFound) {
+		t.Fatalf("err = %v, want a failure that is not NotFound", err)
+	}
+}
+
 func TestNVRAMVolumeElsewhereMakesNoPool(t *testing.T) {
 	f := virttest.New()
 	if _, _, err := virt.NVRAMVolume(f, "/other/x_VARS.fd"); !failure.Is(err, failure.NotFound) {

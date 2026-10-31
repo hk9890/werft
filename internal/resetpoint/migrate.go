@@ -1,7 +1,6 @@
 package resetpoint
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -325,14 +324,14 @@ func (m *Migration) export(h virt.Hypervisor) error {
 		if err != nil {
 			return err
 		}
-		if _, err := h.CreateVolumeFrom(m.ExportPool, qcow2Volume(disk, info.Capacity), m.disk.pool, m.disk.name); err != nil {
+		if _, err := h.CreateVolumeFrom(m.ExportPool, domxml.Volume(disk, info.Capacity, "qcow2"), m.disk.pool, m.disk.name); err != nil {
 			return err
 		}
 	}
 	if ok, err := hasVolume(h, m.ExportPool, vars); err != nil {
 		return err
 	} else if !ok {
-		if _, err := h.CreateVolumeFrom(m.ExportPool, qcow2Volume(vars, 0), m.nvramPool, m.backup(CleanInstall)); err != nil {
+		if _, err := h.CreateVolumeFrom(m.ExportPool, domxml.Volume(vars, 0, "qcow2"), m.nvramPool, m.backup(CleanInstall)); err != nil {
 			return err
 		}
 	}
@@ -345,10 +344,6 @@ func hasVolume(h virt.Hypervisor, pool, name string) (bool, error) {
 		return false, nil
 	}
 	return err == nil, err
-}
-
-func qcow2Volume(name string, capacity uint64) string {
-	return fmt.Sprintf("<volume><name>%s</name><capacity unit='bytes'>%d</capacity><target><format type='qcow2'/></target></volume>", name, capacity)
 }
 
 const legacyDescription = "reset point of vm, found by werft migrate"
@@ -427,7 +422,7 @@ func (m *Migration) convert(h virt.Hypervisor) error {
 	if err := deleteVolume(h, m.nvramPool, m.QCOW2NVRAM()); err != nil {
 		return err
 	}
-	v, err := h.CreateVolumeFrom(m.nvramPool, qcow2Volume(m.QCOW2NVRAM(), 0), m.nvramPool, from)
+	v, err := h.CreateVolumeFrom(m.nvramPool, domxml.Volume(m.QCOW2NVRAM(), 0, "qcow2"), m.nvramPool, from)
 	if err != nil {
 		return err
 	}

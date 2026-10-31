@@ -47,24 +47,30 @@ func (w *window) show(r *pipeline.Run) {
 	r.Printf("  Open the window on the desktop: %s", ViewerCommand(r.Domain))
 }
 
-// PrepareBoot starts the domain and waits for a DHCP lease. An encrypted
-// disk holds the guest in its initramfs, with no network, until a person
-// types its password; prepare never types it. A vsock CID is no sign of
-// that: the domain has it from the start.
+// PrepareBoot starts the domain and waits for a DHCP lease newer than the
+// start: libvirt keeps the lease of an earlier boot until it expires. An
+// encrypted disk holds the guest in its initramfs, with no network, until a
+// person types its password; prepare never types it. A vsock CID is no sign
+// of that: the domain has it from the start.
 type PrepareBoot struct{ window *window }
 
 func (PrepareBoot) Check(*pipeline.Run) error { return nil }
 
 func (p *PrepareBoot) Run(r *pipeline.Run) error {
+	var before []virt.DHCPLease
 	if !r.Running() {
+		var err error
+		if before, err = virt.DomainLeases(r.H, r.Domain); err != nil {
+			return err
+		}
 		if err := r.H.StartDomain(r.Domain); err != nil {
 			return err
 		}
 		r.Printf("%s started", r.Domain)
 	}
 	hasAddress := func() bool {
-		_, ips := virt.DomainAddresses(r.H, r.Domain)
-		return len(ips) > 0
+		now, err := virt.DomainLeases(r.H, r.Domain)
+		return err == nil && len(virt.NewLeases(before, now)) > 0
 	}
 	if err := r.Poll(addressTimeout, pollInterval, "", hasAddress); !failure.Is(err, failure.Timeout) {
 		return err

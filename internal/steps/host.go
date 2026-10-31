@@ -6,6 +6,7 @@ import (
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/hostdev"
 	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/virt"
 )
 
 // Viewer opens one viewer window to watch the run; it follows the VM across
@@ -91,15 +92,20 @@ func (u *UsbPassthrough) Run(r *pipeline.Run) error {
 }
 
 // Cleanup acts on each half only while it holds, so a failed attach still
-// gets the stick mounted back on the host.
+// gets the stick mounted back on the host. A failed detach keeps both
+// halves, so the end of the run tries again. The device is live only: a
+// domain that stopped, or booted again, has let go of the stick already.
 func (u *UsbPassthrough) Cleanup(r *pipeline.Run) error {
-	var err error
 	if u.domain != "" {
 		_ = onGuest(r, u.domain, func() error {
 			return r.Exec("udisksctl unmount -b /dev/disk/by-uuid/"+u.stick.UUID, nil)
 		})
-		if derr := r.H.DetachDevice(u.domain, u.stick.HostdevXML()); derr != nil {
-			err = fmt.Errorf("could not detach the stick from %s: %w", u.domain, derr)
+		err := r.H.DetachDevice(u.domain, u.stick.HostdevXML())
+		if state, serr := r.H.DomainState(u.domain); serr == nil && state != virt.StateRunning {
+			err = nil
+		}
+		if err != nil && !failure.Is(err, failure.NotFound) {
+			return fmt.Errorf("could not detach the stick from %s: %w", u.domain, err)
 		}
 		u.domain = ""
 	}
@@ -111,5 +117,5 @@ func (u *UsbPassthrough) Cleanup(r *pipeline.Run) error {
 		u.unmounted = false
 		r.Printf("The stick is back on the host")
 	}
-	return err
+	return nil
 }

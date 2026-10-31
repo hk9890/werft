@@ -79,7 +79,7 @@ func describe(h virt.Hypervisor, name string) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	legacy, err := resetpoint.Legacy(h, name)
+	legacy, err := resetpoint.LegacyOf(d)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -135,6 +135,9 @@ type Started struct {
 	// LUKS is set when the disk asks for its password at the console; start
 	// does not type it.
 	LUKS bool
+	// Leases are the DHCP leases libvirt held before the start; WaitAddress
+	// waits for a newer one.
+	Leases []virt.DHCPLease
 }
 
 // Start starts the domain unless it runs already. A paused domain is a
@@ -155,22 +158,32 @@ func Start(h virt.Hypervisor, name string) (Started, error) {
 	if s.AlreadyRunning {
 		return s, nil
 	}
+	if s.Leases, err = virt.DomainLeases(h, name); err != nil {
+		return Started{}, err
+	}
 	return s, h.StartDomain(name)
 }
 
-// WaitAddress waits up to AddressTimeout for the guest to take a DHCP lease,
-// the sign that it is up, and then returns Address. It returns an empty
-// string when no lease comes, also for a domain with a vsock CID: the guest
-// can still be booting, or hang before its network is up.
-func WaitAddress(h virt.Hypervisor, name string, sleep func(time.Duration)) string {
+// WaitAddress waits up to AddressTimeout for the guest to take a DHCP lease
+// that is not in before, the sign that it is up. A lease from before the
+// start can outlive the domain. It returns the vsock CID when the domain has
+// one, else the new lease; an empty string when no lease comes, also for a
+// domain with a vsock CID: the guest can still be booting, or hang before
+// its network is up.
+func WaitAddress(h virt.Hypervisor, name string, before []virt.DHCPLease, sleep func(time.Duration)) string {
+	var fresh []virt.DHCPLease
 	up := poll(AddressTimeout, sleep, func() bool {
-		_, ips := virt.DomainAddresses(h, name)
-		return len(ips) > 0
+		now, err := virt.DomainLeases(h, name)
+		fresh = virt.NewLeases(before, now)
+		return err == nil && len(fresh) > 0
 	})
 	if !up {
 		return ""
 	}
-	return Address(h, name)
+	if cid, _ := virt.DomainAddresses(h, name); cid != "" {
+		return cid
+	}
+	return fresh[0].IP
 }
 
 type Stopped int

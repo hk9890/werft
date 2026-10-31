@@ -106,7 +106,7 @@ func newWorld(t *testing.T) *world {
 	must(t, os.WriteFile(w.key+".pub", []byte(werftPubKey+"\n"), 0o644))
 	must(t, os.WriteFile(w.userKey+".pub", []byte(userPubKey+"\n"), 0o644))
 	w.h = &recorder{Fake: w.fake, w: w}
-	w.shell = &shell{w: w, fail: map[string]bool{}}
+	w.shell = &shell{w: w, fail: map[string]bool{}, drop: map[string]bool{}}
 	w.host = &host{w: w, display: true}
 	w.term = &terminal{w: w, tty: true, answer: true, secrets: map[string]string{
 		"GPG passphrase for the key on MASTER-KEY":          passphrase,
@@ -190,10 +190,16 @@ type recorder struct {
 	w *world
 	// noLeases gives no MAC an address, as a guest held in its initramfs.
 	noLeases bool
+	// starts renews every lease at each start, as a booting guest does.
+	starts int64
+	// staleLeases keeps the leases of an earlier boot and renews none, as a
+	// guest held in its initramfs after a reboot.
+	staleLeases bool
 }
 
 func (h *recorder) StartDomain(name string) error {
 	h.w.add("StartDomain " + name)
+	h.starts++
 	return h.Fake.StartDomain(name)
 }
 
@@ -272,7 +278,10 @@ func (h *recorder) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {
 		return nil, nil
 	}
 	last, _ := strconv.ParseUint(mac[len(mac)-2:], 16, 8)
-	return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last)}}, nil
+	if h.staleLeases {
+		return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last), Expiry: 1}}, nil
+	}
+	return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last), Expiry: h.starts + 1}}, nil
 }
 
 // shell is the guest. It answers while a domain runs, logs "ssh <command>",
@@ -288,6 +297,9 @@ type shell struct {
 	userKeyOnly bool
 	// fail makes a command that matches a pattern fail.
 	fail map[string]bool
+	// drop makes the connection of a command that matches a pattern drop
+	// before the command ends.
+	drop map[string]bool
 	// onRun is called with each command before it runs.
 	onRun func(cmd string)
 	stdin []string
@@ -321,6 +333,11 @@ func (s *shell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.R
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	for pattern := range s.drop {
+		if regexp.MustCompile(pattern).MatchString(cmd) {
+			return fmt.Errorf("ssh: connection to %s closed by remote host", addr.Host)
+		}
 	}
 	for pattern := range s.fail {
 		if regexp.MustCompile(pattern).MatchString(cmd) {

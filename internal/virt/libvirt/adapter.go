@@ -30,7 +30,8 @@ func kindOf(err error) failure.Kind {
 	}
 	switch golibvirt.ErrorNumber(lerr.Code) {
 	case golibvirt.ErrNoDomain, golibvirt.ErrNoNetwork, golibvirt.ErrNoStoragePool,
-		golibvirt.ErrNoStorageVol, golibvirt.ErrNoDomainSnapshot, golibvirt.ErrNoDomainMetadata:
+		golibvirt.ErrNoStorageVol, golibvirt.ErrNoDomainSnapshot, golibvirt.ErrNoDomainMetadata,
+		golibvirt.ErrDeviceMissing:
 		return failure.NotFound
 	case golibvirt.ErrOperationInvalid, golibvirt.ErrDomExist, golibvirt.ErrStorageVolExist,
 		golibvirt.ErrResourceBusy, golibvirt.ErrStoragePoolBuilt:

@@ -30,6 +30,8 @@ type lifecycleHost struct {
 	nvramDir string
 	viewed   []string
 	viewErr  error
+	// lease is the DHCP lease the guest takes during the first wait.
+	lease *virt.DHCPLease
 }
 
 func newLifecycleHost(t *testing.T) *lifecycleHost {
@@ -59,8 +61,13 @@ func (lh *lifecycleHost) run(args ...string) result {
 	var out, errOut bytes.Buffer
 	c := &cli{
 		stdin: strings.NewReader(""), stdout: &out, stderr: &errOut,
-		dial:  func() (virt.Hypervisor, error) { return lh.fake, nil },
-		sleep: func(time.Duration) {},
+		dial: func() (virt.Hypervisor, error) { return lh.fake, nil },
+		sleep: func(time.Duration) {
+			if lh.lease != nil {
+				lh.fake.AddDHCPLease("default", *lh.lease)
+				lh.lease = nil
+			}
+		},
 		openViewer: func(domain string) error {
 			lh.viewed = append(lh.viewed, domain)
 			return lh.viewErr
@@ -129,7 +136,7 @@ func TestListJSON(t *testing.T) {
 
 func TestStartWaitsAndPrintsTheAddress(t *testing.T) {
 	lh := newLifecycleHost(t)
-	lh.fake.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5"})
+	lh.lease = &virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5"}
 	r := lh.run("start", "vm1")
 	if r.code != 0 || r.stdout != "address: 192.168.122.5   ssh 192.168.122.5\n" || !strings.Contains(r.stderr, "vm1 started (headless, no window)") {
 		t.Errorf("start = %+v", r)

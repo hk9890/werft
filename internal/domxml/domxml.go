@@ -1,4 +1,5 @@
-// Package domxml reads the parts of a libvirt domain XML that werft acts on.
+// Package domxml reads the parts of a libvirt domain XML that werft acts on,
+// and builds the domain and volume XML werft defines.
 package domxml
 
 import (

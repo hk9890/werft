@@ -99,7 +99,25 @@ func WriteConfig(path, key string, userKeys ...string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	return writeAtomic(path, b.String())
+}
+
+// writeAtomic replaces path as a whole: an ssh of another werft run that
+// reads it meanwhile gets the old file or the new one, never a part.
+func writeAtomic(path, content string) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // EnsureKey creates the ed25519 key pair at path unless it exists.
