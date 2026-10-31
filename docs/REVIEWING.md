@@ -71,5 +71,5 @@ The test layers are in [TESTING.md](TESTING.md).
 
 ## Out of scope / non-blocking
 
-- Formatting and the checks of `.golangci.yml` belong to `mise run check`; do not flag what it
+- Formatting and the checks of `.golangci.yml` belong to `mise run quality`; do not flag what it
   reports.

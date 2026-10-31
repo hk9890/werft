@@ -2,17 +2,29 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
-    branches: ["**"]
+  workflow_dispatch:
+
+# A new push to a PR branch cancels the run of its older commit. On main every
+# merge commit keeps its own run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
 jobs:
-  check:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
-      - run: mise run check
+      - id: quality
+        run: mise run quality
+      # Reaches the network for the vulnerability database, so it runs here
+      # rather than in the pre-commit gate. It also runs when quality failed,
+      # but not when the setup failed.
+      - run: mise run vuln
+        if: ${{ !cancelled() && steps.quality.outcome != 'skipped' }}

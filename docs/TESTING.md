@@ -7,6 +7,8 @@
 | Unit | `*_test.go` next to source | `mise run test` | yes |
 | Live | `*_live_test.go`, build tag `live` | `mise run test:live` | no: GitHub runners have no KVM |
 
+Both layers run with the race detector, which needs a C compiler (`gcc`) on the host.
+
 A live test drives the real `qemu:///system`. It skips when the libvirt socket does not answer or
 the test image is missing.
 
@@ -71,6 +73,6 @@ Build on `internal/livetest`; `internal/virt/libvirt/uefi_reset_live_test.go` is
 
 ## Minimum checks before opening a PR
 
-1. `mise run check` passes. CI runs the same task.
-2. If a change touches `internal/virt/` or anything a live test covers: `mise run test:live`
+1. `mise run quality` passes. CI runs the same task, then `mise run vuln`.
+2. If a change touches `internal/virt/` or anything a live test covers: `mise run quality:full`
    passes.
