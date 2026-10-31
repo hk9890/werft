@@ -59,14 +59,18 @@ func (PrepareBoot) Check(*pipeline.Run) error { return nil }
 func (p *PrepareBoot) Run(r *pipeline.Run) error {
 	var before []virt.DHCPLease
 	if !r.Running() {
-		before = virt.DomainLeases(r.H, r.Domain)
+		var err error
+		if before, err = virt.DomainLeases(r.H, r.Domain); err != nil {
+			return err
+		}
 		if err := r.H.StartDomain(r.Domain); err != nil {
 			return err
 		}
 		r.Printf("%s started", r.Domain)
 	}
 	hasAddress := func() bool {
-		return virt.NewLease(before, virt.DomainLeases(r.H, r.Domain))
+		now, err := virt.DomainLeases(r.H, r.Domain)
+		return err == nil && len(virt.NewLeases(before, now)) > 0
 	}
 	if err := r.Poll(addressTimeout, pollInterval, "", hasAddress); !failure.Is(err, failure.Timeout) {
 		return err

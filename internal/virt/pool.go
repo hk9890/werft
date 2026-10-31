@@ -61,6 +61,7 @@ func FindNVRAM(h Hypervisor, path string) (pool, name string, err error) {
 // new file only after a refresh. So for a file there that no pool lists,
 // NVRAMVolume refreshes the pool on NVRAMDir, or makes NVRAMPool when no
 // pool covers it, and looks again. It starts an inactive pool on NVRAMDir.
+// It fails with failure.NotFound only when no pool lists the file.
 func NVRAMVolume(h Hypervisor, path string) (pool, name string, err error) {
 	pool, name, err = h.VolumeByPath(path)
 	if !failure.Is(err, failure.NotFound) || filepath.Dir(path) != NVRAMDir {
@@ -68,15 +69,25 @@ func NVRAMVolume(h Hypervisor, path string) (pool, name string, err error) {
 	}
 	pool, err = nvramPool(h)
 	if err != nil {
-		return "", "", err
+		return "", "", poolError(err, "list the storage pools")
 	}
 	if err := EnsurePool(h, pool, NVRAMDir); err != nil {
-		return "", "", failure.Wrap(failure.KindOf(err), err, "make the storage pool %s for %s", pool, NVRAMDir)
+		return "", "", poolError(err, "make the storage pool "+pool+" for "+NVRAMDir)
 	}
 	if err := h.RefreshPool(pool); err != nil {
-		return "", "", err
+		return "", "", poolError(err, "refresh the storage pool "+pool)
 	}
 	return h.VolumeByPath(path)
+}
+
+// poolError keeps the kind of a pool error, but never NotFound: that kind
+// of NVRAMVolume says that no pool lists the file.
+func poolError(err error, what string) error {
+	kind := failure.KindOf(err)
+	if kind == failure.NotFound {
+		kind = failure.Failed
+	}
+	return failure.Wrap(kind, err, "%s", what)
 }
 
 // nvramPool is the pool that covers NVRAMDir, or NVRAMPool when none does.

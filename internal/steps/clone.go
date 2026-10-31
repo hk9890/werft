@@ -356,14 +356,15 @@ type Snapshot struct {
 	Label string
 	// OnClone is set when a clone step comes before, so the domain does not
 	// exist at check time and has no reset points. The clone inherits the
-	// disk and NVRAM formats of the build VM, so the guard runs on that.
+	// disk and NVRAM formats of the build VM, so the guard of a copy runs on
+	// that; Take guards the clone itself.
 	OnClone bool
 	replace bool
 }
 
 func (s *Snapshot) Check(r *pipeline.Run) error {
 	if s.OnClone {
-		return resetpoint.Guard(r.H, r.BuildVM)
+		return resetpoint.GuardCopy(r.H, r.BuildVM)
 	}
 	if err := resetpoint.Guard(r.H, r.Domain); err != nil {
 		return err

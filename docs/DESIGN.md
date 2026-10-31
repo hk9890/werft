@@ -335,10 +335,10 @@ All generic.
 | `wait-session` | Wait for the desktop session |
 | `unlock-keyring` | Unlock the GNOME keyring |
 | `sudo-grant` | Grant passwordless sudo, and revoke it in cleanup |
-| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup. A failed detach leaves the stick in the guest, mounts nothing on the host, and is tried again at the end of the run |
+| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup. A failed detach leaves the stick in the guest, mounts nothing on the host, and is tried again at the end of the run. A VM that is off, or booted again, has let go of the stick, and the host mounts it |
 | `pinentry` | Install a pinentry stub with the passphrase in tmpfs and a gpg-agent line; remove them in cleanup |
 | `run` | Run a guest command or script, with an optional secret on stdin |
-| `checks` | Copy a host check directory into the guest and run its entry script; a script that fails is `checks_failed`, a lost SSH connection is `failed` |
+| `checks` | Copy a host check directory into the guest and run its entry script; a script that fails is `checks_failed`, a lost SSH connection is `failed`. ssh exits 255 for both, so a script that exits 255 is `failed` |
 | `reboot`, `poweroff` | Power off from inside the guest; `reboot` then boots and waits for SSH |
 | `clone` | Refuse a source that is not shut off (a `poweroff` step comes first), delete the old clone, define a new one from generated XML, copy the viewer settings; the steps after it act on the clone |
 | `generalize` | Boot the clone, give it a new machine-id, new SSH host keys and its hostname, power it off |

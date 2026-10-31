@@ -52,6 +52,23 @@ func TestAFailedDetachIsTriedAgain(t *testing.T) {
 	}
 }
 
+// The stick is attached live only: a guest that went off has let go of it,
+// and the host mounts it again.
+func TestAStickOfAStoppedGuestIsMountedOnTheHost(t *testing.T) {
+	w := newWorld(t)
+	w.shell.onRun = func(cmd string) {
+		if strings.Contains(cmd, "bootstrap.sh") {
+			must(t, w.fake.DestroyDomain(vm))
+		}
+	}
+	if _, err := provision(t, w, true); err == nil {
+		t.Fatal("provision succeeded")
+	}
+	if w.index("^host mount stick$") < 0 || !strings.Contains(w.out.String(), "The stick is back on the host") {
+		t.Errorf("the stick did not come back to the host:\n%s", w.out.String())
+	}
+}
+
 func TestAStickTheGuestDoesNotMountIsGivenBack(t *testing.T) {
 	w := newWorld(t)
 	w.shell.fail["findmnt -rn -S UUID="] = true

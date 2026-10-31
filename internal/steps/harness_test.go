@@ -279,9 +279,9 @@ func (h *recorder) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {
 	}
 	last, _ := strconv.ParseUint(mac[len(mac)-2:], 16, 8)
 	if h.staleLeases {
-		return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last)}}, nil
+		return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last), Expiry: 1}}, nil
 	}
-	return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last), Expiry: h.starts}}, nil
+	return []virt.DHCPLease{{MAC: mac, IP: fmt.Sprintf("192.168.122.%d", last), Expiry: h.starts + 1}}, nil
 }
 
 // shell is the guest. It answers while a domain runs, logs "ssh <command>",

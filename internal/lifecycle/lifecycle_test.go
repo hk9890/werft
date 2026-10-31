@@ -173,6 +173,31 @@ func TestWaitAddressIgnoresALeaseFromBeforeTheStart(t *testing.T) {
 	}
 }
 
+// The address is the new lease, not the old one libvirt lists first.
+func TestWaitAddressGivesTheNewLease(t *testing.T) {
+	f := host(t)
+	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5", Expiry: 100})
+	s, err := lifecycle.Start(f, "ubuntu")
+	must(t, err)
+	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.9", Expiry: 200})
+	if got := lifecycle.WaitAddress(f, "ubuntu", s.Leases, noSleep); got != "192.168.122.9" {
+		t.Errorf("WaitAddress = %q, want the new lease", got)
+	}
+}
+
+// Without the leases from before the start, an old lease would count as
+// the guest being up: Start fails before it starts anything.
+func TestStartFailsWhenTheLeasesCannotBeRead(t *testing.T) {
+	f := host(t)
+	f.FailOn("DHCPLeases", failure.New(failure.Failed, "network lookup failed"))
+	if _, err := lifecycle.Start(f, "ubuntu"); err == nil {
+		t.Fatal("Start succeeded")
+	}
+	if st, _ := f.DomainState("ubuntu"); st == virt.StateRunning {
+		t.Error("the domain started")
+	}
+}
+
 func TestStop(t *testing.T) {
 	f := host(t)
 	var progress bytes.Buffer

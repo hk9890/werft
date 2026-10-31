@@ -128,4 +128,7 @@ func TestGuardRefusesAResetPointOfVMAfterMigration(t *testing.T) {
 	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "vm took the reset points later of vm after its migration") {
 		t.Errorf("err = %v", err)
 	}
+	if err := resetpoint.GuardCopy(f, "vm"); err != nil {
+		t.Errorf("a copy holds no vm reset point, but GuardCopy = %v", err)
+	}
 }
