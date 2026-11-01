@@ -42,7 +42,7 @@ Re-open a decision here before you fill the gap in another file.
 
 ## Before you land a doc change
 
-No tool checks the docs, and CI (`mise run check`) does not read Markdown. Check by hand:
+No tool checks the docs, and CI (`mise run quality`) does not read Markdown. Check by hand:
 
 1. Every path you wrote exists in the tree: `ls <path>`.
 2. Every command you wrote runs, or is a task in `.mise.toml`: `mise tasks`.

@@ -8,6 +8,7 @@ Develop every change on a branch. `main` changes only by a merged PR.
   which `.gitignore` covers. Use `git switch -c <type>/<topic> main` only when no other agent can
   use this checkout.
 - Use the commit type as the branch prefix: `feat/resetpoints`, `fix/parity-gaps`.
+- Dependabot PRs keep their `dependabot/` branches; merge them as "Pull requests" says.
 
 ## Issues
 

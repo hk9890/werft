@@ -1,10 +1,14 @@
 [tools]
 go = "1.27.2"
+"go:gotest.tools/gotestsum" = "1.13.0"
 "go:golang.org/x/tools/cmd/goimports" = "0.52.0"
 "go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.14.0"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
 
 [env]
 CGO_ENABLED = "0"
+
+# ---- build -----------------------------------------------------------------
 
 [tasks.build]
 description = "Build the werft binary into ./bin"
@@ -16,13 +20,7 @@ PKG=github.com/hk9890/werft/internal/build
 go build -ldflags "-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT -X $PKG.Date=$DATE" -o bin/werft ./cmd/werft
 """
 
-[tasks.test]
-description = "Unit tests"
-run = "go test ./..."
-
-[tasks."test:live"]
-description = "Live tests against qemu:///system (docs/TESTING.md)"
-run = "go test -count=1 -tags=live -timeout 25m ./..."
+# ---- format / vet / lint / tidy / vuln -------------------------------------
 
 [tasks.fmt]
 description = "Format Go source (goimports)"
@@ -31,17 +29,58 @@ run = "goimports -local github.com/hk9890/werft -w cmd internal"
 [tasks."fmt:check"]
 description = "Fail if any file is not formatted"
 run = """
+# 2>&1 folds goimports' own diagnostics into $OUT so a broken run cannot pass.
 OUT=$(goimports -local github.com/hk9890/werft -l cmd internal 2>&1) || { echo "goimports failed:"; echo "$OUT"; exit 1; }
 if [ -n "$OUT" ]; then echo "unformatted:"; echo "$OUT"; exit 1; fi
 """
 
 [tasks.vet]
+description = "go vet, every build tag"
 run = "go vet ./... && go vet -tags=live ./..."
 
 [tasks.lint]
 description = "golangci-lint at the pinned version"
 run = "golangci-lint run --timeout=5m ./..."
 
-[tasks.check]
-description = "Everything CI runs"
-depends = ["fmt:check", "vet", "lint", "test"]
+[tasks.tidy]
+description = "go mod tidy"
+run = "go mod tidy"
+
+[tasks."tidy:check"]
+description = "Fail if go.mod or go.sum is not tidy"
+run = "go mod tidy -diff"
+
+[tasks.vuln]
+description = "govulncheck (reaches the network; CI-only gate)"
+run = "govulncheck ./..."
+
+# ---- tests -----------------------------------------------------------------
+# Layers: docs/TESTING.md. The race detector needs cgo, so each test task turns
+# it on; the werft binary itself stays cgo-free.
+
+[tasks.test]
+description = "Unit tests against the fake hypervisor"
+run = "gotestsum --format pkgname-and-test-fails -- -race ./..."
+[tasks.test.env]
+CGO_ENABLED = "1"
+
+[tasks."test:live"]
+description = "Live tests against qemu:///system (docs/TESTING.md)"
+# testname prints each test with PASS or SKIP: a run where every live test skips
+# is green, and only this list shows it.
+run = "gotestsum --format testname -- -race -count=1 -tags=live -timeout 25m ./..."
+[tasks."test:live".env]
+CGO_ENABLED = "1"
+
+# ---- gates -----------------------------------------------------------------
+
+[tasks.quality]
+description = "Pre-commit gate: fmt + vet + lint + tidy + build + unit tests. CI runs it."
+depends = ["fmt:check", "vet", "lint", "tidy:check", "build", "test"]
+
+[tasks."quality:full"]
+description = "Pre-handoff gate: quality, then the live tests against qemu:///system"
+# test:live runs after quality, not as a parallel dependency: mise stops the
+# other dependencies when one fails, and a stopped live test leaves its domains.
+depends = ["quality"]
+run = "mise run test:live"
