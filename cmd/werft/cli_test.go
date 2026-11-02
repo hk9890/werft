@@ -51,7 +51,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestUsageErrors(t *testing.T) {
-	for _, args := range [][]string{{}, {"bogus"}, {"version", "--bogus"}, {"version", "extra"}, {"help", "bogus"}} {
+	for _, args := range [][]string{{"bogus"}, {"version", "--bogus"}, {"version", "extra"}, {"help", "bogus"}} {
 		r := runCLI("", false, args...)
 		if r.code != 2 || !strings.HasPrefix(r.stderr, "werft: ") || r.stdout != "" {
 			t.Errorf("%q = %+v, want exit 2 and a message on stderr", args, r)
@@ -81,7 +81,7 @@ func TestJSONFlagStopsAtDoubleDash(t *testing.T) {
 }
 
 func TestHelp(t *testing.T) {
-	for _, args := range [][]string{{"help"}, {"--help"}, {"-h"}} {
+	for _, args := range [][]string{{}, {"help"}, {"--help"}, {"-h"}} {
 		r := runCLI("", false, args...)
 		if r.code != 0 || !strings.Contains(r.stdout, "  version ") || !strings.Contains(r.stdout, "5   needs_confirmation") {
 			t.Errorf("%q = %+v", args, r)
@@ -96,7 +96,7 @@ func TestHelp(t *testing.T) {
 }
 
 func TestHelpJSON(t *testing.T) {
-	for _, args := range [][]string{{"--json", "help"}, {"--json", "-h"}} {
+	for _, args := range [][]string{{"--json"}, {"--json", "help"}, {"--json", "-h"}} {
 		r := runCLI("", false, args...)
 		var doc struct {
 			Commands  []struct{ Name, Args, Summary string }

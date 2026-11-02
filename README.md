@@ -18,7 +18,7 @@ come with task `werft-git8j8`.
 ## Usage
 
 Every command takes `--json` and then prints one JSON document on stdout. `werft help <command>`
-shows the flags; `werft help` lists the exit codes.
+shows the flags; `werft help`, or `werft` with no command, lists the exit codes.
 
 ### Build VMs
 
