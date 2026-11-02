@@ -115,7 +115,7 @@ real adapters.
 | Stock files, lease overlays, `clean-install` exports of `migrate` | storage pool `werft`, `/var/lib/libvirt/images/werft/` | libvirt |
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
 | LUKS marker | domain description line, same format as `vm` writes | libvirt |
-| Image records (user, guest family, systemd version, vsock support, versions) | `~/.local/state/werft/images.toml`, written by `seal` | werft |
+| Image records (user, guest family, systemd version, versions) | `~/.local/state/werft/images.toml`, written by `seal` | werft |
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/` | werft, removed on release |
 | werft key for build VMs (installed by `prepare`), build VM `ssh_config` | `~/.local/state/werft/id_ed25519`, `~/.local/state/werft/ssh_config` | werft |
 | Provision logs | `~/.local/state/werft/logs/provision-<name>-<YYYYmmdd-HHMMSS>.log` | werft |
@@ -129,10 +129,10 @@ storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception
 (`/var/lib/libvirt/qemu/nvram` is `0755`) to find the `.bak` files of `vm`. werft creates the
 `werft` pool on first use with `StoragePoolDefineXML` and builds it through the libvirt API, with no
 sudo. libvirt keeps the NVRAM files in no pool by itself. When no pool lists an NVRAM file in
-`/var/lib/libvirt/qemu/nvram`, `clone` and `migrate` refresh the pool on that directory, or define
-the pool `nvram` on it the same way when no pool has that target, and look again
+`/var/lib/libvirt/qemu/nvram`, `clone`, `migrate` and `seal` refresh the pool on that directory,
+or define the pool `nvram` on it the same way when no pool has that target, and look again
 (`virt.NVRAMVolume`). libvirt allows one pool per directory. They do this only in their run, after
-the questions: a check and the plan of `migrate` change nothing (`virt.FindNVRAM`).
+the questions: a check and the plans of `migrate` and `seal` change nothing (`virt.FindNVRAM`).
 
 ## Lease lifecycle
 
@@ -273,17 +273,50 @@ side by side, one per domain.
 
 ## Stock images and seal
 
-`werft seal <build-vm> <label>` makes a new stock version:
+`werft seal [--yes] <build-vm> <label>` makes a new stock version (`image.Plan`, `Seal.Run` in
+`internal/image/seal.go`). Only the `plain` tier exists yet: label `provision-base` on a build VM
+that is not `-full`.
 
-1. Revert the build VM to the label. Copy disk and NVRAM with `StorageVolCreateXMLFrom`; the copy
-   is flat, with no internal snapshots.
-2. Boot a temporary domain on the copy. As root, run the embedded seal script: empty
-   `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the key `prepare`
-   installed; add the host-key regeneration drop-in (required: a guest without host keys accepts the
-   vsock connection and closes it at once), passwordless sudo, and the tmpfiles line for
-   `werft.ssh.authorized_keys`.
-3. Power off from inside the guest. Undefine the temporary domain, keep the volumes under
-   the stock name, write the image record.
+1. Check before any change: the label exists, and the build VM is shut off and passes the
+   raw-NVRAM guard. The revert brings back the definition the reset point holds, so check that one
+   (`SnapshotXML`): one writable disk in a storage pool, a UEFI NVRAM, and no LUKS marker. Then
+   confirm: the revert loses what the build VM wrote since the label.
+2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
+   from the checked definition fails the run before anything is copied.
+3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` that no
+   record, no volume of the pool and no domain has. Define a temporary domain under that name, so
+   the name is reserved: the build VM XML on the stock volumes `<name>.qcow2` and
+   `<name>_VARS.qcow2` in the `werft` pool (`pool` in `config.toml`), with a new UUID and MAC, a
+   vsock device, and SMBIOS credentials that replace those of the build VM. The credentials are a
+   new key pair of the run as `ssh.ephemeral-authorized_keys-all`, and a `sshd-vsock@` drop-in that
+   runs `ssh-keygen -A`, because a cloud image has no host keys.
+4. Without the global lock, copy disk and NVRAM to the stock volumes with
+   `StorageVolCreateXMLFrom`; the copy is flat, with no internal snapshots.
+5. Boot the temporary domain and log in as root over vsock with the key of the run. This needs no
+   guest password, and needs systemd 256 or later.
+6. Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
+   systemd version; empty `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
+   werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest
+   without host keys accepts the vsock connection and closes it at once) as a `sshd-vsock@`
+   drop-in and as a oneshot that `ssh` and `sshd` want; give `$USER` passwordless sudo; schedule
+   the poweroff 2 s later with `systemd-run`. It fails when the guest has no user `$USER`. The
+   tmpfiles line for `werft.ssh.authorized_keys` comes with the lease, which passes that
+   credential.
+7. Wait for the poweroff. No SSH login comes after the script: it would start a `sshd-vsock@`
+   instance whose drop-in makes new host keys, and every lease of the image would share them.
+   Undefine the temporary domain, keep the volumes under the stock name, and append the record to
+   `images.toml` under the global lock.
+
+A failed run removes the temporary domain and both volumes. When that removal fails, the error
+names what is left.
+
+`werft images --json` gives every field of each record: name, image, tier, version, date, source
+build VM and label, pool, volumes, user, guest family and systemd version. The text table shows
+name, image, tier, version, date and user.
+
+`TestSealLive` in `cmd/werft/image_live_test.go` proves the result. It reads the stock disk with
+`debugfs` and finds no host keys, no hostname and an empty machine-id. It boots two overlays of the
+stock disk and finds a different machine-id and different host keys in each.
 
 Build VMs and `-full` stay without passwordless sudo, as today. Only stock images get the seal
 changes. Seal removes no secrets: a `full` lease holds them by design
@@ -422,7 +455,7 @@ line 1, guest password on line 2) goes away.
 - On error with `--json`, stdout holds `{"error": {"kind": "...", "message": "..."}}`, with the
   kind from the table below.
 - Without a TTY no command prompts; a missing confirmation fails and names the flag (`--yes`).
-  `-y` is short for `--yes` on `reset`, `prepare`, `provision` and `migrate`, as in `vm`.
+  `-y` is short for `--yes` on `reset`, `prepare`, `provision`, `migrate` and `seal`, as in `vm`.
 - JSON holds no secret. It gives the path of the lease private key.
 
 Exit codes are part of the contract:
@@ -447,8 +480,9 @@ Exit codes are part of the contract:
   writers on one disk. Stock files are opened read-only as backing files.
 - `locks/global.lock` (`flock`) serializes admission, seal, reap, stock garbage collection, and
   the creation of the werft key by `prepare`.
-  Admission holds it from the capacity check until the lease domain is defined. It is held for
-  seconds, never for a boot.
+  Admission holds it from the capacity check until the lease domain is defined. Seal holds it while
+  it picks the stock name and defines the temporary domain that reserves it, and while it writes
+  the record. It is held for seconds: never for a disk copy, never for a boot.
 - `locks/<domain>.lock` serializes `snapshot`, `reset`, `prepare`, `provision`, `seal` and
   `migrate` on one build VM. A second run fails with `conflict` and does not wait.
 - Leases run in parallel. Limits: the memory budget, pool free space, and the 253 addresses of the
@@ -481,7 +515,8 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
   explicit loader. `TestSecureBootMigrateLive` proves `migrate`, `snapshot` and `reset` on the shape
   of a virt-manager build VM: Secure Boot with enrolled keys, `OVMF_CODE_4M.ms.fd`, SMM.
 - **systemd versions.** vsock SSH and `ssh.ephemeral-authorized_keys-all` need systemd 256.
-  Ubuntu 24.04 has 255 and uses the TCP fallback. A static `/etc/hostname` overrides the hostname
+  Ubuntu 24.04 has 255 and uses the TCP fallback. Seal has no TCP fallback yet, so it cannot seal
+  Ubuntu 24.04. A static `/etc/hostname` overrides the hostname
   credential, so seal must delete it.
 - **Duplicate DHCP DUID.** Clones with one machine-id get one IP. The machine-id credential
   prevents it only if seal empties `/etc/machine-id`.

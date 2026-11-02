@@ -21,6 +21,10 @@ var (
 	// identity.
 	//go:embed generalize.sh
 	Generalize string
+	// Seal is a root script that turns the copy of a build VM into a stock
+	// image for user $1, without the werft key $2.
+	//go:embed seal.sh
+	Seal string
 )
 
 // Helpers are the files the upload step puts into the guest directory.

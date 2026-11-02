@@ -14,7 +14,8 @@ the test image is missing.
 
 ## Live test setup
 
-1. Put your user in group `libvirt`.
+1. Put your user in group `libvirt`. Install `qemu-img` and `e2fsprogs`: `TestSealLive` reads the
+   stock disk with `debugfs`.
 2. Download the test image once, and check it against `SHA256SUMS` from the same directory:
 
    ```sh

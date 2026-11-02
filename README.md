@@ -59,6 +59,17 @@ werft provision ubuntu-26-04                 # reset, run the recipe, clone to u
 werft provision --key /media/$USER/BACKUP ubuntu-26-04  # the key stick at another mount point
 ```
 
+### Stock images
+
+A stock image is a sealed copy of a build VM reset point. Leases start from it.
+
+```sh
+werft seal ubuntu-26-04 provision-base       # reset to provision-base, seal a copy as the plain tier; asks first
+werft images                                 # every stock version: image, tier, version, date
+```
+
+`seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
+
 ## Further reading
 
 - [docs/PRODUCT.md](docs/PRODUCT.md): users, core concepts, the agent contract, the roadmap
