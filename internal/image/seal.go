@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -59,30 +60,43 @@ func Plan(h virt.Hypervisor, buildVM, label string) (*Seal, error) {
 	if err := resetpoint.CheckRevert(h, buildVM, label); err != nil {
 		return nil, err
 	}
-	text, err := h.DomainXML(buildVM, true)
-	if err != nil {
+	s := &Seal{BuildVM: buildVM, Label: label, Image: buildVM, Tier: Plain}
+	if err := s.inspect(h); err != nil {
 		return nil, err
+	}
+	return s, nil
+}
+
+// inspect reads the domain, its one writable disk and its NVRAM from the
+// inactive XML of the build VM, and changes nothing. A revert replaces that
+// XML with the one of the reset point, so Run reads it again after the
+// revert.
+func (s *Seal) inspect(h virt.Hypervisor) error {
+	text, err := h.DomainXML(s.BuildVM, true)
+	if err != nil {
+		return err
 	}
 	d, err := domxml.Parse(text)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if domxml.HasLUKSMarker(domxml.Description(d)) {
-		return nil, failure.New(failure.Unsupported, "the disk of %s asks for a password at boot; seal cannot type it yet", buildVM)
+		return failure.New(failure.Unsupported, "the disk of %s asks for a password at boot; seal cannot type it yet", s.BuildVM)
 	}
-	s := &Seal{BuildVM: buildVM, Label: label, Image: buildVM, Tier: Plain, domain: d}
-	if s.disk, err = onlyDisk(h, d); err != nil {
-		return nil, err
+	disk, err := onlyDisk(h, d)
+	if err != nil {
+		return err
 	}
 	nv, ok := domxml.NVRAMOf(d)
 	if !ok || nv.Path == "" {
-		return nil, failure.New(failure.Unsupported, "%s has no UEFI NVRAM; a stock image is a disk and its NVRAM", buildVM)
+		return failure.New(failure.Unsupported, "%s has no UEFI NVRAM; a stock image is a disk and its NVRAM", s.BuildVM)
 	}
-	s.nvramPath = nv.Path
-	if s.nvramPool, s.nvram, err = virt.FindNVRAM(h, nv.Path); err != nil {
-		return nil, failure.Wrap(failure.KindOf(err), err, "NVRAM %s of %s is in no storage pool", nv.Path, buildVM)
+	pool, vol, err := virt.FindNVRAM(h, nv.Path)
+	if err != nil {
+		return failure.Wrap(failure.KindOf(err), err, "NVRAM %s of %s is in no storage pool", nv.Path, s.BuildVM)
 	}
-	return s, nil
+	s.domain, s.disk, s.nvramPath, s.nvramPool, s.nvram = d, disk, nv.Path, pool, vol
+	return nil
 }
 
 // onlyDisk is the one writable disk of d, with its pool and volume. A stock
@@ -133,12 +147,17 @@ type Env struct {
 
 func (e Env) printf(format string, args ...any) { _, _ = fmt.Fprintf(e.Out, format+"\n", args...) }
 
-// Run resets the build VM to the label, copies its disk and NVRAM into new
-// stock volumes, seals them in a temporary domain, and writes the record.
-// A failed run removes the temporary domain and the volumes.
+// Run resets the build VM to the label, reserves the stock name with a
+// temporary domain on the stock volumes, copies disk and NVRAM into them,
+// seals them in the temporary domain, and writes the record. A failed run
+// removes the temporary domain and the volumes, and names what it could not
+// remove.
 func (s *Seal) Run(e Env) (rec Record, err error) {
 	e.printf("Resetting %s to '%s'", s.BuildVM, s.Label)
 	if err := resetpoint.Revert(e.H, s.BuildVM, s.Label); err != nil {
+		return Record{}, err
+	}
+	if err := s.inspect(e.H); err != nil {
 		return Record{}, err
 	}
 	if s.nvramPool == "" {
@@ -149,34 +168,24 @@ func (s *Seal) Run(e Env) (rec Record, err error) {
 	if err := virt.EnsurePool(e.H, e.Pool, e.PoolPath); err != nil {
 		return Record{}, err
 	}
-	rec, err = s.copyVolumes(e)
+	rec, err = s.reserve(e)
 	if err != nil {
 		return Record{}, err
 	}
-	defined := false
 	defer func() {
-		if err == nil {
-			return
+		if err != nil {
+			err = remove(e, rec, err)
 		}
-		if defined {
-			_ = e.H.DestroyDomain(rec.Name)
-			_ = e.H.UndefineDomain(rec.Name, virt.UndefineKeepNVRAM)
-		}
-		_ = e.H.DeleteVolume(rec.Pool, rec.Disk)
-		_ = e.H.DeleteVolume(rec.Pool, rec.NVRAM)
-		err = failure.Wrap(failure.KindOf(err), err, "%s is not sealed, and its volumes are removed", rec.Name)
 	}()
-	if err = s.defineTemporary(e, rec); err != nil {
+	if err = s.copyVolumes(e, rec); err != nil {
 		return rec, err
 	}
-	defined = true
 	if err = s.seal(e, &rec); err != nil {
 		return rec, err
 	}
 	if err = e.H.UndefineDomain(rec.Name, virt.UndefineKeepNVRAM); err != nil {
 		return rec, err
 	}
-	defined = false
 	release, err := e.Global()
 	if err != nil {
 		return rec, err
@@ -188,9 +197,31 @@ func (s *Seal) Run(e Env) (rec Record, err error) {
 	return rec, nil
 }
 
-// copyVolumes picks the stock name and copies disk and NVRAM under it. It
-// holds the global lock, so two seals of one day take two names.
-func (s *Seal) copyVolumes(e Env) (Record, error) {
+// remove undoes a failed run: the temporary domain and the stock volumes.
+// It keeps the kind of cause and names what is left.
+func remove(e Env, rec Record, cause error) error {
+	var left []string
+	if err := e.H.DestroyDomain(rec.Name); err != nil && !failure.Is(err, failure.Conflict) && !failure.Is(err, failure.NotFound) {
+		left = append(left, fmt.Sprintf("domain %s (destroy: %v)", rec.Name, err))
+	} else if err := e.H.UndefineDomain(rec.Name, virt.UndefineKeepNVRAM); err != nil && !failure.Is(err, failure.NotFound) {
+		left = append(left, fmt.Sprintf("domain %s (undefine: %v)", rec.Name, err))
+	}
+	for _, v := range []string{rec.Disk, rec.NVRAM} {
+		if err := e.H.DeleteVolume(rec.Pool, v); err != nil && !failure.Is(err, failure.NotFound) {
+			left = append(left, fmt.Sprintf("volume %s in pool %s (delete: %v)", v, rec.Pool, err))
+		}
+	}
+	if len(left) > 0 {
+		return failure.Wrap(failure.KindOf(cause), cause, "%s is not sealed; remove what is left by hand: %s", rec.Name, strings.Join(left, "; "))
+	}
+	return failure.Wrap(failure.KindOf(cause), cause, "%s is not sealed, and its domain and volumes are removed", rec.Name)
+}
+
+// reserve picks the stock name and defines the temporary domain under it,
+// on the stock volumes copyVolumes makes. It holds the global lock, so two
+// seals of one day take two names. The copy runs without the lock, because
+// the domain holds the name.
+func (s *Seal) reserve(e Env) (Record, error) {
 	release, err := e.Global()
 	if err != nil {
 		return Record{}, err
@@ -204,6 +235,10 @@ func (s *Seal) copyVolumes(e Env) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	dir, err := poolPath(e.H, e.Pool)
+	if err != nil {
+		return Record{}, err
+	}
 	now := e.Now()
 	name, version := nextName(s.Image, s.Tier, now, func(name string) bool {
 		_, err := e.H.Domain(name)
@@ -214,34 +249,43 @@ func (s *Seal) copyVolumes(e Env) (Record, error) {
 		Name: name, Image: s.Image, Tier: s.Tier, Version: version, Date: now.UTC().Truncate(time.Second),
 		Source: s.BuildVM, Label: s.Label, Pool: e.Pool, Disk: name + ".qcow2", NVRAM: name + "_VARS.qcow2", User: e.User,
 	}
-	e.printf("Copying the disk and NVRAM of %s to %s in pool %s", s.BuildVM, name, e.Pool)
-	info, err := e.H.VolumeInfo(s.disk.Pool, s.disk.Volume)
-	if err != nil {
-		return Record{}, err
-	}
-	if _, err := e.H.CreateVolumeFrom(e.Pool, domxml.Volume(rec.Disk, info.Capacity, "qcow2"), s.disk.Pool, s.disk.Volume); err != nil {
-		return Record{}, err
-	}
-	if _, err := e.H.CreateVolumeFrom(e.Pool, domxml.Volume(rec.NVRAM, 0, "qcow2"), s.nvramPool, s.nvram); err != nil {
-		_ = e.H.DeleteVolume(e.Pool, rec.Disk)
+	if err := s.defineTemporary(e, rec, dir); err != nil {
 		return Record{}, err
 	}
 	return rec, nil
 }
 
+func poolPath(h virt.Hypervisor, name string) (string, error) {
+	pools, err := h.Pools()
+	if err != nil {
+		return "", err
+	}
+	i := slices.IndexFunc(pools, func(p virt.Pool) bool { return p.Name == name })
+	if i < 0 {
+		return "", failure.New(failure.NotFound, "no storage pool %s", name)
+	}
+	return pools[i].Path, nil
+}
+
+// copyVolumes copies disk and NVRAM of the build VM to the stock volumes.
+func (s *Seal) copyVolumes(e Env, rec Record) error {
+	e.printf("Copying the disk and NVRAM of %s to %s in pool %s", s.BuildVM, rec.Name, e.Pool)
+	info, err := e.H.VolumeInfo(s.disk.Pool, s.disk.Volume)
+	if err != nil {
+		return err
+	}
+	if _, err := e.H.CreateVolumeFrom(e.Pool, domxml.Volume(rec.Disk, info.Capacity, "qcow2"), s.disk.Pool, s.disk.Volume); err != nil {
+		return err
+	}
+	_, err = e.H.CreateVolumeFrom(e.Pool, domxml.Volume(rec.NVRAM, 0, "qcow2"), s.nvramPool, s.nvram)
+	return err
+}
+
 // defineTemporary defines the domain the seal boots: the build VM on the
-// copies, with a vsock device, and with the key of Env as the only
-// credentials for root login.
-func (s *Seal) defineTemporary(e Env, rec Record) error {
-	disk, err := e.H.VolumePath(rec.Pool, rec.Disk)
-	if err != nil {
-		return err
-	}
-	nvram, err := e.H.VolumePath(rec.Pool, rec.NVRAM)
-	if err != nil {
-		return err
-	}
-	d, err := domxml.Clone(s.domain, rec.Name, map[string]string{s.disk.Target: disk}, nvram)
+// stock volumes in dir, with a vsock device, and with the key of Env as the
+// only credentials for root login.
+func (s *Seal) defineTemporary(e Env, rec Record, dir string) error {
+	d, err := domxml.Clone(s.domain, rec.Name, map[string]string{s.disk.Target: filepath.Join(dir, rec.Disk)}, filepath.Join(dir, rec.NVRAM))
 	if err != nil {
 		return err
 	}
@@ -258,8 +302,11 @@ func (s *Seal) defineTemporary(e Env, rec Record) error {
 	return err
 }
 
-// seal boots the temporary domain, runs the seal script as root, and powers
-// it off from inside. It fills in the guest facts of rec.
+// seal boots the temporary domain and runs the seal script as root. The
+// script deletes the SSH host keys and then powers the guest off by itself:
+// a new SSH login would start an sshd whose drop-in makes new host keys, and
+// every lease of the image would share them. It fills in the guest facts of
+// rec.
 func (s *Seal) seal(e Env, rec *Record) error {
 	r := (&pipeline.Run{Ctx: e.Ctx, Sleep: e.Sleep}).Init()
 	e.printf("Booting %s to seal it (headless, no window)", rec.Name)
@@ -271,25 +318,20 @@ func (s *Seal) seal(e Env, rec *Record) error {
 		return err
 	}
 	addr := guest.Addr{User: "root", Host: fmt.Sprintf("vsock/%d", cid)}
-	run := func(cmd string, stdout io.Writer) error {
-		return e.Shell.Run(r.Ctx, addr, cmd, nil, stdout, e.Out)
-	}
 	err = r.PollLogin(bootTimeout, "no SSH answer from "+rec.Name+" at "+addr.Host, func() bool {
 		return e.Shell.Run(r.Ctx, addr, "true", nil, io.Discard, io.Discard) == nil
 	})
 	if err != nil {
 		return err
 	}
-	e.printf("Removing the machine-id, hostname and SSH host keys of %s", rec.Name)
+	e.printf("Removing the machine-id, hostname and SSH host keys of %s; it powers off after", rec.Name)
 	var out bytes.Buffer
-	if err := run(guest.ScriptCommand(assets.Seal, e.User, e.WerftKey), &out); err != nil {
+	if err := e.Shell.Run(r.Ctx, addr, guest.ScriptCommand(assets.Seal, e.User, e.WerftKey), nil, &out, e.Out); err != nil {
 		return failure.Wrap(failure.Failed, err, "the seal script failed in %s", rec.Name)
 	}
 	if rec.Family, rec.Systemd, err = guestFacts(out.String()); err != nil {
 		return err
 	}
-	e.printf("Powering %s off from inside", rec.Name)
-	_ = run("systemctl poweroff", io.Discard)
 	return r.Poll(shutdownTimeout, 2*time.Second, rec.Name+" did not power off", func() bool {
 		state, err := e.H.DomainState(rec.Name)
 		return err == nil && state == virt.StateShutOff

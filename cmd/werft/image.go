@@ -8,14 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/hk9890/werft/internal/failure"
-	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/state"
 )
@@ -85,31 +83,6 @@ func (c *cli) cmdSeal(args []string) error {
 	return nil
 }
 
-// rootShell is a shell that logs in as root with a new key pair, and the
-// public half of the key. The seal gives it to the guest as a credential.
-// cleanup removes the key.
-func rootShell() (guest.Shell, string, func(), error) {
-	tmp, err := os.MkdirTemp("", "werft-seal-")
-	if err != nil {
-		return nil, "", nil, failure.Wrap(failure.Failed, err, "create a directory for the seal key")
-	}
-	cleanup := func() { _ = os.RemoveAll(tmp) }
-	key, config := filepath.Join(tmp, "id_ed25519"), filepath.Join(tmp, "ssh_config")
-	if err := guestEnsureKey(key); err != nil {
-		cleanup()
-		return nil, "", nil, failure.Wrap(failure.Failed, err, "create the seal key")
-	}
-	pub, err := os.ReadFile(key + ".pub")
-	if err == nil {
-		err = guest.WriteConfig(config, key)
-	}
-	if err != nil {
-		cleanup()
-		return nil, "", nil, failure.Wrap(failure.Failed, err, "set up the seal key")
-	}
-	return guest.OpenSSH{Config: config}, strings.TrimSpace(string(pub)), cleanup, nil
-}
-
 // publicKey is the type and base64 of the public key at path, without the
 // comment; empty when there is no key.
 func publicKey(path string) string {
@@ -149,9 +122,9 @@ func (c *cli) cmdImages(args []string) error {
 			return
 		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(tw, "IMAGE\tTIER\tVERSION\tDATE\tUSER")
+		_, _ = fmt.Fprintln(tw, "NAME\tIMAGE\tTIER\tVERSION\tDATE\tUSER")
 		for _, r := range records {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Image, r.Tier, r.Version, r.Date.Local().Format("2006-01-02 15:04"), r.User)
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.Image, r.Tier, r.Version, r.Date.Local().Format("2006-01-02 15:04"), r.User)
 		}
 		_ = tw.Flush()
 	})

@@ -16,7 +16,7 @@ import (
 	"github.com/hk9890/werft/internal/virttest"
 )
 
-const buildVM = `<domain type='kvm'><name>vm</name><os>
+const buildVM = `<domain type='kvm'><name>vm</name><memory unit='MiB'>1024</memory><os>
 <type arch='x86_64' machine='q35'>hvm</type>
 <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
 <nvram format='qcow2'>/nvram/vm_VARS.qcow2</nvram></os><devices>
@@ -28,6 +28,11 @@ const buildVM = `<domain type='kvm'><name>vm</name><os>
 // world is a shut-off build VM vm with the reset point provision-base, its
 // disk in pool default and its NVRAM in pool nvram.
 func world(t *testing.T) *virttest.Fake {
+	return worldOf(t, buildVM)
+}
+
+// worldOf is world with the domain XML xml.
+func worldOf(t *testing.T, xml string) *virttest.Fake {
 	t.Helper()
 	f := virttest.New()
 	must(t, virt.EnsurePool(f, "default", "/img"))
@@ -36,7 +41,7 @@ func world(t *testing.T) *virttest.Fake {
 	must(t, err)
 	_, err = f.CreateVolume("nvram", "<volume><name>vm_VARS.qcow2</name><capacity>0</capacity></volume>")
 	must(t, err)
-	_, err = f.DefineDomain(buildVM)
+	_, err = f.DefineDomain(xml)
 	must(t, err)
 	must(t, f.CreateSnapshot("vm", "provision-base", ""))
 	return f
@@ -50,7 +55,7 @@ func must(t *testing.T, err error) {
 }
 
 // shell is the guest of the temporary domain: it answers the login probe,
-// prints the guest facts for the seal script, and powers the domain off.
+// and for the seal script prints the guest facts and powers the domain off.
 type shell struct {
 	f        *virttest.Fake
 	sealErr  error
@@ -67,17 +72,15 @@ func (s *shell) Run(_ context.Context, addr guest.Addr, cmd string, _ io.Reader,
 			name = after
 		}
 	}
-	switch {
-	case cmd == "systemctl poweroff":
-		return s.f.DestroyDomain(name)
-	case strings.HasPrefix(cmd, "sh -c"):
-		s.xml, _ = s.f.DomainXML(name, true)
-		if s.sealErr != nil {
-			return s.sealErr
-		}
-		_, _ = io.WriteString(stdout, "ubuntu\n259\n")
+	if !strings.HasPrefix(cmd, "sh -c") {
+		return nil
 	}
-	return nil
+	s.xml, _ = s.f.DomainXML(name, true)
+	if s.sealErr != nil {
+		return s.sealErr
+	}
+	_, _ = io.WriteString(stdout, "ubuntu\n259\n")
+	return s.f.DestroyDomain(name)
 }
 
 func env(t *testing.T, f *virttest.Fake, sh guest.Shell) image.Env {
@@ -93,33 +96,57 @@ func env(t *testing.T, f *virttest.Fake, sh guest.Shell) image.Env {
 }
 
 func TestPlanRefuses(t *testing.T) {
+	secondDisk := strings.Replace(buildVM, "<disk type='file' device='cdrom'>",
+		"<disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/img/vm.qcow2'/><target dev='vdb'/></disk><disk type='file' device='cdrom'>", 1)
+	bios := strings.Replace(strings.Replace(buildVM, "<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>", "", 1),
+		"<nvram format='qcow2'>/nvram/vm_VARS.qcow2</nvram>", "", 1)
 	tests := []struct {
 		name   string
 		vm     string
 		label  string
+		xml    string
 		before func(f *virttest.Fake)
 		want   failure.Kind
 	}{
-		{"other label", "vm", "clean-install", nil, failure.Usage},
-		{"full tier", "vm-full", "provision-base", nil, failure.Usage},
-		{"unknown VM", "none", "provision-base", nil, failure.NotFound},
-		{"running", "vm", "provision-base", func(f *virttest.Fake) { f.SetState("vm", virt.StateRunning) }, failure.Conflict},
-		{"no reset point", "vm", "provision-base", func(f *virttest.Fake) { must(t, f.DeleteSnapshot("vm", "provision-base")) }, failure.NotFound},
-		{"LUKS", "vm", "provision-base", func(f *virttest.Fake) {
+		{"other label", "vm", "clean-install", buildVM, nil, failure.Usage},
+		{"full tier", "vm-full", "provision-base", buildVM, nil, failure.Usage},
+		{"unknown VM", "none", "provision-base", buildVM, nil, failure.NotFound},
+		{"running", "vm", "provision-base", buildVM, func(f *virttest.Fake) { f.SetState("vm", virt.StateRunning) }, failure.Conflict},
+		{"no reset point", "vm", "provision-base", buildVM, func(f *virttest.Fake) { must(t, f.DeleteSnapshot("vm", "provision-base")) }, failure.NotFound},
+		{"LUKS", "vm", "provision-base", buildVM, func(f *virttest.Fake) {
 			must(t, f.SetDomainDescription("vm", "vm: the disk asks for the guest password at boot"))
 		}, failure.Unsupported},
+		{"two writable disks", "vm", "provision-base", secondDisk, nil, failure.Unsupported},
+		{"no UEFI NVRAM", "vm", "provision-base", bios, nil, failure.Unsupported},
+		{"disk in no pool", "vm", "provision-base", strings.Replace(buildVM, "/img/vm.qcow2", "/elsewhere/vm.qcow2", 1), nil, failure.NotFound},
+		{"NVRAM in no pool", "vm", "provision-base", strings.Replace(buildVM, "/nvram/vm_VARS.qcow2", "/elsewhere/vm_VARS.qcow2", 1), nil, failure.NotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := world(t)
+			f := worldOf(t, tt.xml)
 			if tt.before != nil {
 				tt.before(f)
 			}
+			before := len(f.Calls())
 			if _, err := image.Plan(f, tt.vm, tt.label); failure.KindOf(err) != tt.want {
 				t.Errorf("Plan = %v, want kind %q", err, tt.want)
 			}
+			for _, c := range f.Calls()[before:] {
+				if !readOnly(c) {
+					t.Errorf("Plan changed something: %s", c)
+				}
+			}
 		})
 	}
+}
+
+func readOnly(call string) bool {
+	for _, prefix := range []string{"LibVersion", "DomainState", "DomainXML", "Snapshots", "DomainDescription", "VolumeByPath"} {
+		if strings.HasPrefix(call, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSealWritesVolumesAndRecord(t *testing.T) {
@@ -156,7 +183,9 @@ func TestSealWritesVolumesAndRecord(t *testing.T) {
 	if strings.Contains(sh.xml, "52:54:00:00:00:01") {
 		t.Errorf("the temporary domain has the MAC of the build VM")
 	}
-	if got := strings.Join(sh.commands, ", "); got != "root@vsock/3 true, root@vsock/3 sh, root@vsock/3 systemctl" {
+	// No login after the seal script: it would start an sshd that makes new
+	// host keys.
+	if got := strings.Join(sh.commands, ", "); got != "root@vsock/3 true, root@vsock/3 sh" {
 		t.Errorf("guest commands = %s", got)
 	}
 	records, err := image.Load(e.Catalog)
@@ -175,6 +204,26 @@ func TestSealWritesVolumesAndRecord(t *testing.T) {
 	}
 }
 
+// TestSealUsesTheDomainOfTheResetPoint changes the definition after the
+// reset point: the revert brings back the one of the reset point, and the
+// temporary domain must have that.
+func TestSealUsesTheDomainOfTheResetPoint(t *testing.T) {
+	f := world(t)
+	d, err := f.Domain("vm")
+	must(t, err)
+	changed := strings.Replace(buildVM, "<name>vm</name><memory unit='MiB'>1024</memory>", "<name>vm</name><uuid>"+d.UUID+"</uuid><memory unit='MiB'>4096</memory>", 1)
+	_, err = f.DefineDomain(changed)
+	must(t, err)
+	sh := &shell{f: f}
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	_, err = s.Run(env(t, f, sh))
+	must(t, err)
+	if !strings.Contains(sh.xml, `<memory unit="MiB">1024</memory>`) {
+		t.Errorf("the temporary domain does not have the definition of the reset point:\n%s", sh.xml)
+	}
+}
+
 func TestSealFailureRemovesTheCopy(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{f: f, sealErr: &guest.ExitError{Code: 1}})
@@ -182,7 +231,7 @@ func TestSealFailureRemovesTheCopy(t *testing.T) {
 	must(t, err)
 	_, err = s.Run(e)
 	var exit *guest.ExitError
-	if !errors.As(err, &exit) {
+	if !errors.As(err, &exit) || !strings.Contains(err.Error(), "domain and volumes are removed") {
 		t.Fatalf("Run = %v, want the failed seal script", err)
 	}
 	if _, err := f.Domain("vm-plain-20261102"); !failure.Is(err, failure.NotFound) {
@@ -194,4 +243,39 @@ func TestSealFailureRemovesTheCopy(t *testing.T) {
 	if records, _ := image.Load(e.Catalog); len(records) != 0 {
 		t.Errorf("a failed seal wrote %+v", records)
 	}
+}
+
+func TestFailedNVRAMCopyRemovesTheDiskCopy(t *testing.T) {
+	f := world(t)
+	f.FailOn("CreateVolumeFrom werft vm-plain-20261102_VARS.qcow2", failure.New(failure.Failed, "copy failed"))
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	if _, err := s.Run(env(t, f, &shell{f: f})); !strings.Contains(fmtRun(err), "copy failed") {
+		t.Fatalf("Run = %v, want the failed NVRAM copy", err)
+	}
+	if names, _ := f.Volumes("werft"); len(names) != 0 {
+		t.Errorf("volumes left after a failed NVRAM copy: %q", names)
+	}
+	if _, err := f.Domain("vm-plain-20261102"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("the temporary domain is left: %v", err)
+	}
+}
+
+func TestFailedCleanupNamesWhatIsLeft(t *testing.T) {
+	f := world(t)
+	f.FailOn("CreateVolumeFrom werft vm-plain-20261102_VARS.qcow2", failure.New(failure.Failed, "copy failed"))
+	f.FailOn("DeleteVolume werft vm-plain-20261102.qcow2", failure.New(failure.Failed, "pool busy"))
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	_, err = s.Run(env(t, f, &shell{f: f}))
+	if msg := fmtRun(err); !strings.Contains(msg, "remove what is left by hand: volume vm-plain-20261102.qcow2 in pool werft (delete: pool busy)") {
+		t.Errorf("Run = %s", msg)
+	}
+}
+
+func fmtRun(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	return err.Error()
 }

@@ -6,7 +6,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -88,27 +91,87 @@ sync`, u.Username, werftKey, ownKey.Public, src.Name))
 	src.Run("test ! -e /root/after-provision-base")
 	src.Poweroff()
 
-	lease := leaseOf(t, h, "werft-test-sl-lease", disk, nvram)
-	lease.Boot()
-	after := strings.Split(lease.Run(identity), "\n")
+	inspectStockDisk(t, h, disk)
+
+	var seen [][]string
+	for _, lease := range []string{"werft-test-sl-lease1", "werft-test-sl-lease2"} {
+		g := leaseOf(t, h, lease, disk, nvram)
+		g.Boot()
+		got := strings.Split(g.Run(identity), "\n")
+		if got[1] != "no-hostname" {
+			t.Errorf("%s has /etc/hostname %q", lease, got[1])
+		}
+		keys := g.Run(fmt.Sprintf("cat ~%s/.ssh/authorized_keys", u.Username))
+		if strings.Contains(keys, werftKey) || !strings.Contains(keys, ownKey.Public) {
+			t.Errorf("authorized_keys of %s = %q, want the own key without the werft key", lease, keys)
+		}
+		g.Run(fmt.Sprintf("runuser -u %s -- sudo -n true", u.Username))
+		g.Run("test ! -e /root/after-provision-base")
+		g.Run("systemctl start ssh.service && systemctl is-active ssh.service")
+		g.Poweroff()
+		seen = append(seen, got)
+	}
+	// Every boot of the image must make its own machine-id and host keys:
+	// keys baked into the stock disk would be shared by every lease.
 	was := strings.Split(before, "\n")
-	if after[0] == "" || after[0] == was[0] {
-		t.Errorf("machine-id of the sealed copy = %q, the build VM had %q", after[0], was[0])
+	for _, i := range []int{0, 2} {
+		a, b := seen[0][i], seen[1][i]
+		if a == "" || b == "" || a == b || a == was[i] || b == was[i] {
+			t.Errorf("line %d of the identity: build VM %q, first lease %q, second lease %q; want three different ones", i, was[i], a, b)
+		}
 	}
-	if after[1] != "no-hostname" {
-		t.Errorf("the sealed copy has /etc/hostname %q", after[1])
+}
+
+// inspectStockDisk reads the root file system of the stock disk without
+// root: it downloads the volume, converts it to raw, and lists /etc with
+// debugfs. The disk must hold no SSH host keys, no hostname and an empty
+// machine-id.
+func inspectStockDisk(t *testing.T, h virt.Hypervisor, disk string) {
+	t.Helper()
+	dir := t.TempDir()
+	qcow2, raw := filepath.Join(dir, "disk.qcow2"), filepath.Join(dir, "disk.raw")
+	f, err := os.Create(qcow2)
+	livetest.Must(t, err, "create "+qcow2)
+	livetest.Must(t, h.DownloadVolume(livetest.Pool, disk, f), "download "+disk)
+	livetest.Must(t, f.Close(), "close "+qcow2)
+	if out, err := exec.Command("qemu-img", "convert", "-O", "raw", qcow2, raw).CombinedOutput(); err != nil {
+		t.Fatalf("qemu-img convert: %v\n%s", err, out)
 	}
-	if after[2] == "" || after[2] == was[2] {
-		t.Errorf("host key of the sealed copy = %q, the build VM had %q", after[2], was[2])
+	livetest.Must(t, os.Remove(qcow2), "remove "+qcow2)
+	out, err := exec.Command("/usr/sbin/sfdisk", "-J", raw).Output()
+	livetest.Must(t, err, "sfdisk")
+	var table struct {
+		PartitionTable struct {
+			SectorSize uint64 `json:"sectorsize"`
+			Partitions []struct {
+				Start uint64 `json:"start"`
+				Size  uint64 `json:"size"`
+			} `json:"partitions"`
+		} `json:"partitiontable"`
 	}
-	keys := lease.Run(fmt.Sprintf("cat ~%s/.ssh/authorized_keys", u.Username))
-	if strings.Contains(keys, werftKey) || !strings.Contains(keys, ownKey.Public) {
-		t.Errorf("authorized_keys of the sealed copy = %q, want the own key without the werft key", keys)
+	livetest.Must(t, json.Unmarshal(out, &table), "parse the partition table")
+	var start, size uint64
+	for _, p := range table.PartitionTable.Partitions {
+		if p.Size > size {
+			start, size = p.Start, p.Size
+		}
 	}
-	lease.Run(fmt.Sprintf("runuser -u %s -- sudo -n true", u.Username))
-	lease.Run("test ! -e /root/after-provision-base")
-	lease.Run("systemctl start ssh.service && systemctl is-active ssh.service")
-	lease.Poweroff()
+	fs := fmt.Sprintf("%s?offset=%d", raw, start*table.PartitionTable.SectorSize)
+	debugfs := func(cmd string) string {
+		t.Helper()
+		out, err := exec.Command("/usr/sbin/debugfs", "-R", cmd, fs).CombinedOutput()
+		livetest.Must(t, err, "debugfs "+cmd)
+		return string(out)
+	}
+	if ssh := debugfs("ls /etc/ssh"); !strings.Contains(ssh, "sshd_config") || strings.Contains(ssh, "ssh_host_") {
+		t.Errorf("/etc/ssh of the stock disk, want sshd_config and no host keys:\n%s", ssh)
+	}
+	if etc := debugfs("ls /etc"); !strings.Contains(etc, "machine-id") || strings.Contains(etc, " hostname ") {
+		t.Errorf("/etc of the stock disk, want machine-id and no hostname:\n%s", etc)
+	}
+	if id := debugfs("stat /etc/machine-id"); !strings.Contains(id, "Size: 0") {
+		t.Errorf("/etc/machine-id of the stock disk is not empty:\n%s", id)
+	}
 }
 
 // leaseOf is a scratch guest on a qcow2 overlay of the stock disk and a copy

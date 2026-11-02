@@ -9,7 +9,9 @@
 # so sshd makes them before it starts: in the vsock instances of
 # systemd-ssh-generator, and through a oneshot for the TCP units.
 # It prints the guest family and the systemd version first, before it
-# changes anything.
+# changes anything. Last, it powers the guest off by itself, after the SSH
+# session ends: a new SSH login would start an sshd that makes new host keys,
+# and every lease of the image would share them.
 set -e
 home=$(getent passwd "$1" | cut -d: -f6)
 [ -n "$home" ] || { echo "the guest has no user $1" >&2; exit 1; }
@@ -39,3 +41,4 @@ printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$1" >/etc/sudoers.d/werft
 chmod 0440 /etc/sudoers.d/werft
 visudo -cqf /etc/sudoers.d/werft >/dev/null
 sync
+systemd-run --quiet --on-active=2 systemctl poweroff --check-inhibitors=no
