@@ -277,11 +277,12 @@ side by side, one per domain.
 `internal/image/seal.go`). Only the `plain` tier exists yet: label `provision-base` on a build VM
 that is not `-full`.
 
-1. Check before any change: the label exists, the build VM is shut off and passes the raw-NVRAM
-   guard, it has one writable disk in a storage pool and a UEFI NVRAM, and no LUKS marker. Then
+1. Check before any change: the label exists, and the build VM is shut off and passes the
+   raw-NVRAM guard. The revert brings back the definition the reset point holds, so check that one
+   (`SnapshotXML`): one writable disk in a storage pool, a UEFI NVRAM, and no LUKS marker. Then
    confirm: the revert loses what the build VM wrote since the label.
-2. Revert the build VM to the label, and read its definition again: the revert brings back the
-   definition of the reset point.
+2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
+   from the checked definition fails the run before anything is copied.
 3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` that no
    record, no volume of the pool and no domain has. Define a temporary domain under that name, so
    the name is reserved: the build VM XML on the stock volumes `<name>.qcow2` and

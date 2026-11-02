@@ -60,18 +60,26 @@ func Plan(h virt.Hypervisor, buildVM, label string) (*Seal, error) {
 	if err := resetpoint.CheckRevert(h, buildVM, label); err != nil {
 		return nil, err
 	}
+	// The revert replaces the definition of the build VM with the one the
+	// reset point holds, so the checks read that one.
+	text, err := h.SnapshotXML(buildVM, label)
+	if err != nil {
+		return nil, err
+	}
+	var snap libvirtxml.DomainSnapshot
+	if err := snap.Unmarshal(text); err != nil || snap.Domain == nil {
+		return nil, failure.New(failure.Failed, "the reset point '%s' of %s holds no domain definition: %v", label, buildVM, err)
+	}
 	s := &Seal{BuildVM: buildVM, Label: label, Image: buildVM, Tier: Plain}
-	if err := s.inspect(h); err != nil {
+	if err := s.inspect(h, snap.Domain); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// inspect reads the domain, its one writable disk and its NVRAM from the
-// inactive XML of the build VM, and changes nothing. A revert replaces that
-// XML with the one of the reset point, so Run reads it again after the
-// revert.
-func (s *Seal) inspect(h virt.Hypervisor) error {
+// reread reads the definition of the build VM after the revert, for the
+// values Run uses. It must agree with the reset point Plan checked.
+func (s *Seal) reread(h virt.Hypervisor) error {
 	text, err := h.DomainXML(s.BuildVM, true)
 	if err != nil {
 		return err
@@ -80,6 +88,20 @@ func (s *Seal) inspect(h virt.Hypervisor) error {
 	if err != nil {
 		return err
 	}
+	planned := *s
+	if err := s.inspect(h, d); err != nil {
+		return failure.Wrap(failure.Failed, err, "%s after the revert to '%s' differs from the reset point", s.BuildVM, s.Label)
+	}
+	if s.disk != planned.disk || s.nvramPath != planned.nvramPath || s.nvram != planned.nvram ||
+		(planned.nvramPool != "" && s.nvramPool != planned.nvramPool) {
+		return failure.New(failure.Failed, "%s after the revert to '%s' has another disk or NVRAM than the reset point; nothing is copied", s.BuildVM, s.Label)
+	}
+	return nil
+}
+
+// inspect reads the one writable disk and the NVRAM of the definition d of
+// the build VM, and changes nothing.
+func (s *Seal) inspect(h virt.Hypervisor, d *libvirtxml.Domain) error {
 	if domxml.HasLUKSMarker(domxml.Description(d)) {
 		return failure.New(failure.Unsupported, "the disk of %s asks for a password at boot; seal cannot type it yet", s.BuildVM)
 	}
@@ -157,7 +179,7 @@ func (s *Seal) Run(e Env) (rec Record, err error) {
 	if err := resetpoint.Revert(e.H, s.BuildVM, s.Label); err != nil {
 		return Record{}, err
 	}
-	if err := s.inspect(e.H); err != nil {
+	if err := s.reread(e.H); err != nil {
 		return Record{}, err
 	}
 	if s.nvramPool == "" {

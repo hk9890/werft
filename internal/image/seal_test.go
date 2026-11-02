@@ -98,6 +98,7 @@ func env(t *testing.T, f *virttest.Fake, sh guest.Shell) image.Env {
 func TestPlanRefuses(t *testing.T) {
 	secondDisk := strings.Replace(buildVM, "<disk type='file' device='cdrom'>",
 		"<disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/img/vm.qcow2'/><target dev='vdb'/></disk><disk type='file' device='cdrom'>", 1)
+	luks := strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>vm: the disk asks for the guest password at boot</description>", 1)
 	bios := strings.Replace(strings.Replace(buildVM, "<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>", "", 1),
 		"<nvram format='qcow2'>/nvram/vm_VARS.qcow2</nvram>", "", 1)
 	tests := []struct {
@@ -113,9 +114,7 @@ func TestPlanRefuses(t *testing.T) {
 		{"unknown VM", "none", "provision-base", buildVM, nil, failure.NotFound},
 		{"running", "vm", "provision-base", buildVM, func(f *virttest.Fake) { f.SetState("vm", virt.StateRunning) }, failure.Conflict},
 		{"no reset point", "vm", "provision-base", buildVM, func(f *virttest.Fake) { must(t, f.DeleteSnapshot("vm", "provision-base")) }, failure.NotFound},
-		{"LUKS", "vm", "provision-base", buildVM, func(f *virttest.Fake) {
-			must(t, f.SetDomainDescription("vm", "vm: the disk asks for the guest password at boot"))
-		}, failure.Unsupported},
+		{"LUKS", "vm", "provision-base", luks, nil, failure.Unsupported},
 		{"two writable disks", "vm", "provision-base", secondDisk, nil, failure.Unsupported},
 		{"no UEFI NVRAM", "vm", "provision-base", bios, nil, failure.Unsupported},
 		{"disk in no pool", "vm", "provision-base", strings.Replace(buildVM, "/img/vm.qcow2", "/elsewhere/vm.qcow2", 1), nil, failure.NotFound},
@@ -140,8 +139,37 @@ func TestPlanRefuses(t *testing.T) {
 	}
 }
 
+// TestPlanChecksTheResetPoint gives the reset point a definition that seal
+// refuses, and the build VM a current one that passes. The revert brings
+// back the refused one, so Plan must refuse before any change.
+func TestPlanChecksTheResetPoint(t *testing.T) {
+	tests := map[string]string{
+		"two writable disks": strings.Replace(buildVM, "<disk type='file' device='cdrom'>",
+			"<disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/img/vm.qcow2'/><target dev='vdb'/></disk><disk type='file' device='cdrom'>", 1),
+		"LUKS": strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>vm: the disk asks for the guest password at boot</description>", 1),
+	}
+	for name, atResetPoint := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := worldOf(t, atResetPoint)
+			d, err := f.Domain("vm")
+			must(t, err)
+			_, err = f.DefineDomain(strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><uuid>"+d.UUID+"</uuid>", 1))
+			must(t, err)
+			before := len(f.Calls())
+			if _, err := image.Plan(f, "vm", "provision-base"); !failure.Is(err, failure.Unsupported) {
+				t.Errorf("Plan = %v, want unsupported", err)
+			}
+			for _, c := range f.Calls()[before:] {
+				if !readOnly(c) {
+					t.Errorf("Plan changed something: %s", c)
+				}
+			}
+		})
+	}
+}
+
 func readOnly(call string) bool {
-	for _, prefix := range []string{"LibVersion", "DomainState", "DomainXML", "Snapshots", "DomainDescription", "VolumeByPath"} {
+	for _, prefix := range []string{"LibVersion", "DomainState", "DomainXML", "Snapshots", "SnapshotXML", "DomainDescription", "VolumeByPath"} {
 		if strings.HasPrefix(call, prefix) {
 			return true
 		}
