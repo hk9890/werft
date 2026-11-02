@@ -28,7 +28,8 @@ writes no log: its output is stderr only.
 - `locks/global.lock`, `locks/<domain>.lock` are `flock` files (`state.Dir.LockGlobal`,
   `state.Dir.LockDomain`). The file stays after a run; it says nothing. A held lock gives
   `another werft run works on <name>`. Find the holder with `lsof ~/.local/state/werft/locks/<name>.lock`.
-- `images.toml` and `leases/<id>/` exist only after `seal` and `lease`, which are not in code yet.
+- `images.toml` exists after the first `seal`; `werft images --json` reads it. `leases/<id>/`
+  exists only after `lease`, which is not in code yet.
 
 ## Domain state, reset points, addresses
 
