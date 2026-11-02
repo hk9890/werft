@@ -17,6 +17,8 @@ says, then check the build:
 ```
 
 - Run `./bin/werft` from the repo root. A `werft` on `PATH` is an older build.
+- `mise run werft -- <command>` builds from the current source, then runs it in your shell's
+  directory. Its stdout is the same as that of `./bin/werft`; mise writes its own line to stderr.
 - Add `--json` to parse a result: one JSON document on stdout, progress and logs on stderr.
 - Read the exit code; the codes and the error document are in [DESIGN.md](DESIGN.md), "Agent interface".
 - Pass `--yes` to every command that asks; without a terminal it fails with `needs_confirmation`.

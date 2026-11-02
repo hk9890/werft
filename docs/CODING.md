@@ -7,7 +7,7 @@ What a change to werft needs in order to work. The package map is in
 
 ```sh
 mise run build                  # bin/werft, with the version stamp of internal/build
-go run ./cmd/werft <command>    # quick run; version prints "dev"
+mise run werft -- <command>     # build, then run in your shell's directory; version prints "dev"
 ```
 
 - Keep a source run away from your locks, werft key and `config.toml` as
