@@ -286,7 +286,7 @@ func TestLeaseOverTheBudget(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("XDG_CONFIG_HOME", config)
 	lh := newLifecycleHost(t)
-	lh.fake.FreeMemory = 8 << 30
+	lh.fake.TotalMemory = 8 << 30
 	if err := virt.EnsurePool(lh.fake, "werft", "/werft"); err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestLeaseOverTheBudget(t *testing.T) {
 		Error struct{ Kind, Message string } `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil || r.code != 6 || doc.Error.Kind != string(failure.NoCapacity) ||
-		!strings.Contains(doc.Error.Message, "2048 MiB of memory, 8192 MiB are free") || !strings.Contains(doc.Error.Message, "keeps 7168 MiB free") {
+		!strings.Contains(doc.Error.Message, "the lease needs 2048 MiB") || !strings.Contains(doc.Error.Message, "keeps 7168 MiB") {
 		t.Fatalf("lease over the budget = %+v, %v; want exit 6 with kind no_capacity", r, err)
 	}
 	if calls := lh.fake.Calls()[before:]; slices.ContainsFunc(calls, func(c string) bool {

@@ -66,9 +66,9 @@ func (a *Adapter) LibVersion() (virt.Version, error) {
 	return virt.ParseVersion(n), nil
 }
 
-func (a *Adapter) HostFreeMemory() (uint64, error) {
-	n, err := a.l.NodeGetFreeMemory()
-	return n, wrap(err, "free host memory")
+func (a *Adapter) HostTotalMemory() (uint64, error) {
+	_, kib, _, _, _, _, _, _, err := a.l.NodeGetInfo()
+	return kib << 10, wrap(err, "host memory")
 }
 
 func toDomain(d golibvirt.Domain) virt.Domain {

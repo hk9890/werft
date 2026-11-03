@@ -104,8 +104,8 @@ Requirements:
 - A lease lives 4 hours by default. `werft extend <lease-id>` adds time. werft destroys an expired
   lease, so an agent that crashes does not leak a VM.
 - `werft leases --json` lists active leases with owner, image, tier, address, and expiry.
-- More than one lease can run at the same time. werft refuses a new lease ("no capacity") when free
-  host memory would drop below a configured budget.
+- More than one lease can run at the same time. werft refuses a new lease ("no capacity") when the
+  host memory that no VM and no lease holds would drop below a configured budget.
 - A lease runs headless: the guest desktop runs, but no viewer window opens on the host. `--view`
   opens one.
 - A lease of an encrypted image (Omarchy) boots like any other: werft types the disk password. The

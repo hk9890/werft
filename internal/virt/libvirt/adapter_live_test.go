@@ -5,6 +5,7 @@ package libvirt_test
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +16,22 @@ import (
 	"github.com/hk9890/werft/internal/livetest"
 	"github.com/hk9890/werft/internal/virt"
 )
+
+// memTotal is MemTotal of /proc/meminfo in bytes, the memory libvirt
+// reports for the host.
+func memTotal(t *testing.T) uint64 {
+	t.Helper()
+	data, err := os.ReadFile("/proc/meminfo")
+	livetest.Must(t, err, "read /proc/meminfo")
+	var kib uint64
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if _, err := fmt.Sscanf(line, "MemTotal: %d kB", &kib); err == nil {
+			return kib << 10
+		}
+	}
+	t.Fatal("/proc/meminfo has no MemTotal")
+	return 0
+}
 
 func mustKind(t *testing.T, err error, want failure.Kind, what string) {
 	t.Helper()
@@ -43,10 +60,10 @@ func TestAdapterBasics(t *testing.T) {
 	if !v.AtLeast(virt.Version{Major: 11, Minor: 4}) {
 		t.Fatalf("libvirt %v is below 11.4", v)
 	}
-	free, err := h.HostFreeMemory()
-	livetest.Must(t, err, "free memory")
-	if free == 0 {
-		t.Error("free host memory is 0")
+	total, err := h.HostTotalMemory()
+	livetest.Must(t, err, "host memory")
+	if want := memTotal(t); total != want {
+		t.Errorf("host memory = %d bytes, want MemTotal of /proc/meminfo, %d bytes", total, want)
 	}
 
 	g := livetest.NewGuest(t, h, "werft-test-fnd-adapter")

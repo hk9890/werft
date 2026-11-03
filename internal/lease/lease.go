@@ -218,21 +218,27 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 	return l, nil
 }
 
-// admit refuses a lease of tmpl with no_capacity when its memory would take
-// free host memory below the budget, or when pool has less than
-// MinPoolFree free. The caller holds the global lock.
+// admit refuses a lease of tmpl with no_capacity when the host memory, less
+// the memory committed to domains and the memory of the lease, is below the
+// budget, or when pool has less than MinPoolFree free. The caller holds the
+// global lock until the lease domain is defined, so the next admission
+// counts it.
 func admit(e Env, tmpl *libvirtxml.Domain, pool string) error {
 	need, err := domxml.Memory(tmpl)
 	if err != nil {
 		return failure.Wrap(failure.Failed, err, "the domain definition of the stock image")
 	}
-	free, err := e.H.HostFreeMemory()
+	total, err := e.H.HostTotalMemory()
 	if err != nil {
 		return err
 	}
-	if free < need || free-need < e.MemoryBudget {
-		return failure.New(failure.NoCapacity, "no capacity: the lease needs %d MiB of memory, %d MiB are free, and memory_budget_mib in config.toml keeps %d MiB free; release a lease with werft release",
-			need>>20, free>>20, e.MemoryBudget>>20)
+	held, err := committed(e.H)
+	if err != nil {
+		return err
+	}
+	if total < held+need || total-held-need < e.MemoryBudget {
+		return failure.New(failure.NoCapacity, "no capacity: the host has %d MiB of memory, domains hold %d MiB, the lease needs %d MiB, and memory_budget_mib in config.toml keeps %d MiB; release a lease, stop a VM, or lower memory_budget_mib",
+			total>>20, held>>20, need>>20, e.MemoryBudget>>20)
 	}
 	info, err := e.H.PoolInfo(pool)
 	if err != nil {
@@ -242,6 +248,53 @@ func admit(e Env, tmpl *libvirtxml.Domain, pool string) error {
 		return failure.New(failure.NoCapacity, "no capacity: pool %s has %d MiB free, and a lease needs %d MiB", pool, info.Available>>20, MinPoolFree>>20)
 	}
 	return nil
+}
+
+// committed is the configured memory of every domain that is not shut off,
+// and of every lease domain in any state: a lease that is defined but not
+// started yet takes its memory when it starts. A domain that goes during the
+// count holds nothing.
+func committed(h virt.Hypervisor) (uint64, error) {
+	domains, err := h.Domains()
+	if err != nil {
+		return 0, err
+	}
+	var sum uint64
+	for _, d := range domains {
+		s, err := h.DomainState(d.Name)
+		if failure.Is(err, failure.NotFound) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		if s == virt.StateShutOff {
+			_, err := h.DomainMetadata(d.Name, Namespace)
+			if failure.Is(err, failure.NotFound) {
+				continue
+			}
+			if err != nil {
+				return 0, err
+			}
+		}
+		text, err := h.DomainXML(d.Name, true)
+		if failure.Is(err, failure.NotFound) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		dom, err := domxml.Parse(text)
+		if err != nil {
+			return 0, failure.Wrap(failure.Failed, err, "the definition of %s", d.Name)
+		}
+		n, err := domxml.Memory(dom)
+		if err != nil {
+			return 0, failure.Wrap(failure.Failed, err, "the memory of %s", d.Name)
+		}
+		sum += n
+	}
+	return sum, nil
 }
 
 // address is vsock/<cid> when the guest has SSH over AF_VSOCK, else the IPv4
