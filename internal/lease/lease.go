@@ -172,7 +172,11 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 		return Lease{}, failure.Wrap(failure.Failed, err, "create %s", e.Dir.Leases())
 	}
 	if err := os.Mkdir(dir, 0o700); err != nil {
-		return Lease{}, failure.Wrap(failure.Conflict, err, "create the lease directory")
+		kind := failure.Failed
+		if errors.Is(err, os.ErrExist) {
+			kind = failure.Conflict
+		}
+		return Lease{}, failure.Wrap(kind, err, "create the lease directory")
 	}
 	fail := func(err error) (Lease, error) { return Lease{}, abandon(e, l, err) }
 	if err := e.NewKey(l.Key); err != nil {
@@ -224,8 +228,17 @@ func address(e Env, r *pipeline.Run, domain string, systemd int) (string, error)
 }
 
 // abandon releases a lease whose start failed, and keeps the kind of cause.
+// werft release finds a lease only through its domain, so an overlay left
+// without a domain gets the command that deletes it.
 func abandon(e Env, l Lease, cause error) error {
-	if err := remove(e.H, l.Domain, l.pool, l.overlay, e.Dir.Lease(l.ID)); err != nil {
+	err := remove(e.H, l.Domain, l.pool, l.overlay, e.Dir.Lease(l.ID))
+	var left *overlayError
+	if errors.As(err, &left) {
+		if _, derr := e.H.Domain(l.Domain); failure.Is(derr, failure.NotFound) {
+			return failure.Wrap(failure.KindOf(cause), cause, "%s did not start; delete its overlay with virsh -c qemu:///system vol-delete --pool %s %s: %v", l.Domain, left.pool, left.volume, err)
+		}
+	}
+	if err != nil {
 		return failure.Wrap(failure.KindOf(cause), cause, "%s did not start; remove what is left with werft release %s: %v", l.Domain, l.ID, err)
 	}
 	return failure.Wrap(failure.KindOf(cause), cause, "%s did not start and is released", l.Domain)
@@ -270,8 +283,8 @@ const idAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 var idPattern = regexp.MustCompile(`^[a-z0-9]{6}$`)
 
-// newID is 6 random characters of idAlphabet.
-func newID() string {
+// newID is 6 random characters of idAlphabet. Tests replace it.
+var newID = func() string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	for i := range b {
@@ -357,9 +370,10 @@ func overlayOf(h virt.Hypervisor, name string) (pool, volume string, err error) 
 }
 
 // remove destroys the domain, deletes the overlay, undefines the domain
-// with its NVRAM, and removes the lease directory. The overlay goes before
-// the domain, so a release that stops half-way finds it again through the
-// domain. It tries every step and names those that failed.
+// with its NVRAM, and removes the lease directory. The domain is the only
+// way to find the overlay again, so when the overlay delete fails, remove
+// keeps the domain and the directory, and a second release tries again.
+// Else it tries every step and names those that failed.
 func remove(h virt.Hypervisor, name, pool, overlay, dir string) error {
 	var errs []error
 	gone := func(err error) bool { return err == nil || failure.Is(err, failure.NotFound) }
@@ -370,7 +384,7 @@ func remove(h virt.Hypervisor, name, pool, overlay, dir string) error {
 	}
 	if overlay != "" {
 		if err := h.DeleteVolume(pool, overlay); !gone(err) {
-			errs = append(errs, fmt.Errorf("delete volume %s in pool %s: %w", overlay, pool, err))
+			return errors.Join(append(errs, &overlayError{pool: pool, volume: overlay, err: err})...)
 		}
 	}
 	if name != "" {
@@ -383,3 +397,15 @@ func remove(h virt.Hypervisor, name, pool, overlay, dir string) error {
 	}
 	return errors.Join(errs...)
 }
+
+// overlayError is an overlay that remove could not delete.
+type overlayError struct {
+	pool, volume string
+	err          error
+}
+
+func (o *overlayError) Error() string {
+	return fmt.Sprintf("delete volume %s in pool %s: %v", o.volume, o.pool, o.err)
+}
+
+func (o *overlayError) Unwrap() error { return o.err }

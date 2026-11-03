@@ -164,9 +164,10 @@ step 2 and the disk password of step 6 are not built yet.
      `werft.ssh.authorized_keys` for the TCP path. A `tmpfiles.extra` credential appends that key
      to `/home/<user>/.ssh/authorized_keys` at each boot, and a
      `systemd.unit-dropin.systemd-tmpfiles-setup.service` credential adds
-     `ImportCredential=werft.*`, because `systemd-tmpfiles-setup` imports no other credential. Unit
-     drop-ins from credentials need systemd 256, so the TCP path does not reach the key in older
-     guests;
+     `ImportCredential=werft.*`, because `systemd-tmpfiles-setup` imports no other credential.
+     Known limits: unit drop-ins from credentials need systemd 256, so the TCP path does not reach
+     the key in an older guest (seal needs systemd 256 too, so no such image exists today); the key
+     line is appended again at each boot; the home directory is assumed to be `/home/<user>`;
    - werft metadata in namespace `https://github.com/hk9890/werft/lease`: owner, created, expiry
      (created plus 4 hours), stock version.
 
@@ -184,7 +185,8 @@ step 2 and the disk password of step 6 are not built yet.
    creation time and the expiry.
 
 A lease that fails after step 3, SIGINT included, is released before werft exits; the error keeps
-the kind of the failure.
+the kind of the failure. When an overlay delete fails and no domain was defined, `werft release`
+cannot find the overlay, so the error names the `virsh vol-delete` command that removes it.
 
 The owner is the `--owner` flag, else `$WERFT_OWNER`, else `$USER`. It is a label for `werft
 leases` and the reap output. Release does not check it: the lease ID is the handle, and the host
@@ -193,9 +195,10 @@ has one user.
 `werft release <lease-id>` (`lease.Release`) finds the lease domain by its name
 `werft-*-<id>` and its werft metadata; a domain without the metadata is no lease and stays. It
 destroys the domain, deletes the overlay, undefines the domain with its NVRAM, and removes the lease
-directory. The overlay goes before the undefine, so a release that stops half-way finds it again
-through the domain. Each step accepts "already gone", so release can run twice, exits 0 for a lease
-that is gone, and finishes a half-done release.
+directory. The domain is the only way to find the overlay, so a failed overlay delete keeps the
+domain and the lease directory, and fails; the next release tries again. Each step accepts
+"already gone", so release can run twice, exits 0 for a lease that is gone, and finishes a
+half-done release.
 
 Every command that reads leases first releases the expired ones and the orphans (a lease domain
 without a lease directory, or the reverse). `werft reap` does only that.

@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hk9890/werft/internal/lease"
 )
 
 func TestLeaseArguments(t *testing.T) {
@@ -28,6 +33,30 @@ func TestLeaseArguments(t *testing.T) {
 	}
 	if calls := lh.fake.Calls()[before:]; len(calls) > 0 {
 		t.Errorf("a refused lease called libvirt: %v", calls)
+	}
+}
+
+// TestLeaseText: the text output names what PRODUCT.md promises, and ends
+// with the ssh command alone.
+func TestLeaseText(t *testing.T) {
+	created := time.Date(2026, 11, 3, 10, 0, 0, 0, time.Local)
+	l := lease.Lease{
+		ID: "abc123", Domain: "werft-vm-plain-abc123", Image: "vm", Tier: "plain", Stock: "vm-plain-20261102",
+		Owner: "agent", User: "hans", Address: "vsock/3", Key: "/s/leases/abc123/id_ed25519",
+		SSHConfig: "/s/leases/abc123/ssh_config", SSH: "ssh -F /s/leases/abc123/ssh_config abc123",
+		Created: created, Expiry: created.Add(lease.Lifetime),
+	}
+	var out bytes.Buffer
+	writeLease(&out, l)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	for _, want := range []string{"lease: abc123", "owner: agent", "user: hans", "address: vsock/3", "key: /s/leases/abc123/id_ed25519",
+		"ssh_config: /s/leases/abc123/ssh_config", "created: 2026-11-03 10:00", "expiry: 2026-11-03 14:00"} {
+		if !slices.ContainsFunc(lines, func(line string) bool { return strings.Join(strings.Fields(line), " ") == want }) {
+			t.Errorf("text output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if lines[len(lines)-1] != l.SSH {
+		t.Errorf("last line = %q, want the ssh command", lines[len(lines)-1])
 	}
 }
 

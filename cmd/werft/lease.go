@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/hk9890/werft/internal/failure"
@@ -83,11 +84,24 @@ func (c *cli) cmdLease(args []string) error {
 	if err != nil {
 		return err
 	}
-	c.output(l, func(w io.Writer) {
-		_, _ = fmt.Fprintf(w, "lease %s: %s from %s, user %s at %s, until %s\n%s\n",
-			l.ID, l.Domain, l.Stock, l.User, l.Address, l.Expiry.Local().Format("2006-01-02 15:04"), l.SSH)
-	})
+	c.output(l, func(w io.Writer) { writeLease(w, l) })
 	return nil
+}
+
+// writeLease is the text output of werft lease: every field of the JSON
+// document, then the ssh command alone on the last line.
+func writeLease(w io.Writer, l lease.Lease) {
+	const when = "2006-01-02 15:04"
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, row := range [][2]string{
+		{"lease", l.ID}, {"domain", l.Domain}, {"image", l.Image}, {"tier", l.Tier}, {"stock", l.Stock}, {"owner", l.Owner},
+		{"user", l.User}, {"address", l.Address}, {"key", l.Key}, {"ssh_config", l.SSHConfig},
+		{"created", l.Created.Local().Format(when)}, {"expiry", l.Expiry.Local().Format(when)},
+	} {
+		_, _ = fmt.Fprintf(tw, "%s:\t%s\n", row[0], row[1])
+	}
+	_ = tw.Flush()
+	_, _ = fmt.Fprintln(w, l.SSH)
 }
 
 // leaseOwner is flag, else $WERFT_OWNER, else $USER. The owner is a label:
