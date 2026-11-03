@@ -102,6 +102,29 @@ func WriteConfig(path, key string, userKeys ...string) error {
 	return writeAtomic(path, b.String())
 }
 
+// WriteHostConfig writes an ssh_config to path that reaches addr under the
+// name alias, with key alone. Host keys are not checked: each lease makes
+// new ones at its first boot.
+func WriteHostConfig(path, alias string, addr Addr, key string) error {
+	var b strings.Builder
+	b.WriteString("# Written by werft for one lease.\n")
+	fmt.Fprintf(&b, "Host %s\n", alias)
+	fmt.Fprintf(&b, "  HostName %s\n", addr.Host)
+	fmt.Fprintf(&b, "  User %s\n", addr.User)
+	if strings.HasPrefix(addr.Host, "vsock/") {
+		fmt.Fprintf(&b, "  ProxyCommand %s %%h %%p\n", SSHProxy)
+		b.WriteString("  ProxyUseFdpass yes\n")
+	}
+	fmt.Fprintf(&b, "  IdentityFile %s\n", key)
+	b.WriteString("  IdentitiesOnly yes\n")
+	b.WriteString("  BatchMode yes\n")
+	b.WriteString("  ConnectTimeout 5\n")
+	b.WriteString("  StrictHostKeyChecking no\n")
+	b.WriteString("  UserKnownHostsFile /dev/null\n")
+	b.WriteString("  LogLevel ERROR\n")
+	return writeAtomic(path, b.String())
+}
+
 // writeAtomic replaces path as a whole: an ssh of another werft run that
 // reads it meanwhile gets the old file or the new one, never a part.
 func writeAtomic(path, content string) error {

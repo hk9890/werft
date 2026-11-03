@@ -42,13 +42,7 @@ func TestSealLive(t *testing.T) {
 	ownKey := livetest.NewKey(t)
 
 	src.Boot()
-	src.Run(fmt.Sprintf(`set -e
-useradd -m -s /bin/sh %[1]s
-install -d -m 700 -o %[1]s -g %[1]s ~%[1]s/.ssh
-printf '%%s werft\n%%s\n' '%[2]s' '%[3]s' > ~%[1]s/.ssh/authorized_keys
-chown %[1]s: ~%[1]s/.ssh/authorized_keys
-echo %[4]s > /etc/hostname
-sync`, u.Username, werftKey, ownKey.Public, src.Name))
+	addImageUser(src, u.Username, werftKey, ownKey.Public)
 	before := src.Run(identity)
 	src.Poweroff()
 	werftJSON(t, 0, "snapshot", src.Name, "provision-base")
@@ -120,6 +114,19 @@ sync`, u.Username, werftKey, ownKey.Public, src.Name))
 			t.Errorf("line %d of the identity: build VM %q, first lease %q, second lease %q; want three different ones", i, was[i], a, b)
 		}
 	}
+}
+
+// addImageUser gives the running src what prepare leaves in a build VM: the
+// user with the werft key and the own key, and a static hostname.
+func addImageUser(src *livetest.Guest, user, werftKey, ownKey string) {
+	src.T.Helper()
+	src.Run(fmt.Sprintf(`set -e
+useradd -m -s /bin/sh %[1]s
+install -d -m 700 -o %[1]s -g %[1]s ~%[1]s/.ssh
+printf '%%s werft\n%%s\n' '%[2]s' '%[3]s' > ~%[1]s/.ssh/authorized_keys
+chown %[1]s: ~%[1]s/.ssh/authorized_keys
+echo %[4]s > /etc/hostname
+sync`, user, werftKey, ownKey, src.Name))
 }
 
 // inspectStockDisk reads the root file system of the stock disk without

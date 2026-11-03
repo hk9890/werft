@@ -70,6 +70,19 @@ werft images                                 # every stock version: image, tier,
 
 `seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
 
+### Leases
+
+A lease is a disposable VM on a thin overlay of the newest stock version.
+
+```sh
+werft lease ubuntu-26-04                     # boot a plain lease; prints its id and ssh command when SSH answers
+werft lease ubuntu-26-04 --owner agent-7     # label the lease (default $WERFT_OWNER, else $USER)
+ssh -F ~/.local/state/werft/leases/<id>/ssh_config <id>
+werft release <id>                           # destroy the VM, its disk and its key; a second release exits 0
+```
+
+A stock image sealed before `werft lease` existed has no domain definition for leases; seal it again.
+
 ## Further reading
 
 - [docs/PRODUCT.md](docs/PRODUCT.md): users, core concepts, the agent contract, the roadmap

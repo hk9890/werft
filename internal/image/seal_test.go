@@ -191,6 +191,12 @@ func TestSealWritesVolumesAndRecord(t *testing.T) {
 		Source: "vm", Label: "provision-base", Pool: "werft", Disk: "vm-plain-20261102.qcow2", NVRAM: "vm-plain-20261102_VARS.qcow2",
 		User: "hans", Family: "ubuntu", Systemd: 259,
 	}
+	// The stock definition is the temporary domain without its credentials.
+	if !strings.Contains(rec.Domain, "/werft/vm-plain-20261102.qcow2") || !strings.Contains(rec.Domain, "<vsock") ||
+		strings.Contains(rec.Domain, "io.systemd.credential") {
+		t.Errorf("stock definition = %s", rec.Domain)
+	}
+	want.Domain = rec.Domain
 	if rec != want {
 		t.Errorf("record = %+v, want %+v", rec, want)
 	}
