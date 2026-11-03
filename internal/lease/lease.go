@@ -56,6 +56,9 @@ type Lease struct {
 	Expiry    time.Time `json:"expiry"`
 
 	pool, overlay string
+	// state is the state directory of the lease: only a werft run with that
+	// state directory lists, extends and reaps it.
+	state string
 }
 
 // Env is what a lease runs with.
@@ -165,7 +168,7 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 		ID: id, Domain: e.Prefix + rec.Image + "-" + rec.Tier + "-" + id,
 		Image: rec.Image, Tier: rec.Tier, Stock: rec.Name, Owner: owner, User: rec.User,
 		Key: filepath.Join(dir, "id_ed25519"), SSHConfig: filepath.Join(dir, "ssh_config"),
-		Created: now, Expiry: now.Add(Lifetime), pool: rec.Pool,
+		Created: now, Expiry: now.Add(Lifetime), pool: rec.Pool, state: string(e.Dir),
 	}
 	l.SSH = "ssh -F " + l.SSHConfig + " " + id
 	if err := os.MkdirAll(e.Dir.Leases(), 0o700); err != nil {
@@ -192,7 +195,7 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 		return fail(err)
 	}
 	l.overlay = overlay.Name
-	d, err := domxml.Lease(tmpl, l.Domain, stockDisk, overlay.Path, vars, metadata(l), credentials(l.Domain, rec.User, strings.TrimSpace(string(pub))))
+	d, err := domxml.Lease(tmpl, l.Domain, stockDisk, overlay.Path, vars, metadata(l, "werft:"), credentials(l.Domain, rec.User, strings.TrimSpace(string(pub))))
 	if err != nil {
 		return fail(failure.Wrap(failure.Failed, err, "build the lease domain"))
 	}
@@ -244,20 +247,27 @@ func abandon(e Env, l Lease, cause error) error {
 	return failure.Wrap(failure.KindOf(cause), cause, "%s did not start and is released", l.Domain)
 }
 
-// metadata is the werft element of a lease domain: owner, created, expiry
-// and stock version.
-func metadata(l Lease) string {
+// metadata is the werft element of a lease domain: owner, created, expiry,
+// stock version and state directory. With prefix "werft:" it declares the namespace, for a
+// domain definition. With prefix "" it has none, as SetDomainMetadata
+// wants: libvirt adds the namespace and refuses an element that declares
+// its prefix already.
+func metadata(l Lease, prefix string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<werft:lease xmlns:werft=%q>", Namespace)
+	if prefix == "" {
+		b.WriteString("<lease>")
+	} else {
+		fmt.Fprintf(&b, "<%slease xmlns:%s=%q>", prefix, strings.TrimSuffix(prefix, ":"), Namespace)
+	}
 	for _, f := range [][2]string{
 		{"owner", l.Owner}, {"created", l.Created.Format(time.RFC3339)},
-		{"expiry", l.Expiry.Format(time.RFC3339)}, {"stock", l.Stock},
+		{"expiry", l.Expiry.Format(time.RFC3339)}, {"stock", l.Stock}, {"state", l.state},
 	} {
-		b.WriteString("<werft:" + f[0] + ">")
+		b.WriteString("<" + prefix + f[0] + ">")
 		_ = xml.EscapeText(&b, []byte(f[1]))
-		b.WriteString("</werft:" + f[0] + ">")
+		b.WriteString("</" + prefix + f[0] + ">")
 	}
-	b.WriteString("</werft:lease>")
+	b.WriteString("</" + prefix + "lease>")
 	return b.String()
 }
 

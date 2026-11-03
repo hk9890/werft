@@ -84,7 +84,13 @@ werft lease ubuntu-26-04                     # boot a plain lease; prints its id
 werft lease ubuntu-26-04 --owner agent-7     # label the lease (default $WERFT_OWNER, else $USER)
 ssh -F ~/.local/state/werft/leases/<id>/ssh_config <id>
 werft release <id>                           # destroy the VM, its disk and its key; a second release exits 0
+werft leases                                 # id, owner, image, tier, address, expiry of each lease
+werft extend <id> --for 1h                   # move the expiry by 1h (default 4h)
+werft reap                                   # release expired leases and orphans now
 ```
+
+A lease expires 4 hours after it starts. `lease`, `leases`, `extend` and `release` first release
+the expired leases; `reap` does only that.
 
 A stock image sealed before `werft lease` existed has no domain definition for leases; seal it again.
 

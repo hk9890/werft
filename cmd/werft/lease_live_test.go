@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"os/user"
@@ -10,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
@@ -22,6 +25,7 @@ import (
 
 // TestLeaseLive seals a scratch domain, leases a VM from the stock image,
 // logs in with the ssh command werft lease prints, and releases the lease.
+// Then it checks the lifetime of a second lease (leaseLifetime).
 // Control: a key other than the lease key gets no login, and the lease key
 // does with the same command line.
 func TestLeaseLive(t *testing.T) {
@@ -116,6 +120,80 @@ func TestLeaseLive(t *testing.T) {
 	if doc := werftJSON(t, 0, "release", id); doc["domain"] != "" {
 		t.Errorf("second release = %v", doc)
 	}
+
+	leaseLifetime(t, h, prefix, src.Name)
+}
+
+// leaseLifetime leases a VM from the stock image of src, extends it by an
+// hour, and moves the clock. Control: one minute after the first expiry the
+// extended lease stays, and werft leases removes only an orphan lease
+// directory. One minute after the new expiry werft leases releases it.
+func leaseLifetime(t *testing.T, h virt.Hypervisor, prefix, src string) {
+	dir, err := state.Root()
+	livetest.Must(t, err, "state directory")
+	doc := werftJSON(t, 0, "lease", src)
+	id, _ := doc["id"].(string)
+	name, _ := doc["domain"].(string)
+	t.Cleanup(func() { removeLease(t, h, prefix, id, name) })
+	expiry, err := time.Parse(time.RFC3339, doc["expiry"].(string))
+	livetest.Must(t, err, "parse the expiry of "+id)
+	if ids := leaseIDs(t); !slices.Equal(ids, []string{id}) {
+		t.Errorf("werft leases = %v, want %s", ids, id)
+	}
+
+	extended := expiry.Add(time.Hour)
+	if doc := werftJSON(t, 0, "extend", id, "--for", "1h"); doc["expiry"] != extended.Format(time.RFC3339) {
+		t.Errorf("extend --for 1h = %v, want the expiry %v", doc["expiry"], extended)
+	}
+	meta, err := h.DomainMetadata(name, lease.Namespace)
+	if err != nil || !strings.Contains(meta, extended.Format(time.RFC3339)) {
+		t.Errorf("lease metadata after extend = %q, %v", meta, err)
+	}
+
+	livetest.Must(t, os.Mkdir(dir.Lease("zzz999"), 0o700), "create an orphan lease directory")
+	setClock(t, expiry.Add(time.Minute))
+	if ids := leaseIDs(t); !slices.Equal(ids, []string{id}) {
+		t.Errorf("werft leases after the first expiry = %v, want the extended %s", ids, id)
+	}
+	if s, err := h.DomainState(name); err != nil || s != virt.StateRunning {
+		t.Errorf("the extended %s is %v, %v, want running", name, s, err)
+	}
+	if _, err := os.Stat(dir.Lease("zzz999")); !os.IsNotExist(err) {
+		t.Errorf("the orphan lease directory is left after the reap: %v", err)
+	}
+
+	setClock(t, extended.Add(time.Minute))
+	if ids := leaseIDs(t); len(ids) != 0 {
+		t.Errorf("werft leases after the new expiry = %v, want none", ids)
+	}
+	if _, err := h.Domain(name); !failure.Is(err, failure.NotFound) {
+		t.Errorf("the expired %s is left: %v", name, err)
+	}
+	volumes, err := h.Volumes(livetest.Pool)
+	livetest.Must(t, err, "list the volumes")
+	if slices.Contains(volumes, name+".qcow2") {
+		t.Errorf("the overlay of the expired %s is left", name)
+	}
+	if _, err := os.Stat(dir.Lease(id)); !os.IsNotExist(err) {
+		t.Errorf("the lease directory of the expired lease is left: %v", err)
+	}
+}
+
+// leaseIDs is the IDs werft --json leases lists.
+func leaseIDs(t *testing.T) []string {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	c := &cli{stdout: &out, stderr: &errOut, dial: dialLibvirt, sleep: time.Sleep}
+	if code := c.run([]string{"--json", "leases"}); code != 0 {
+		t.Fatalf("werft leases exited %d: %s", code, errOut.String())
+	}
+	var leases []lease.Lease
+	livetest.Must(t, json.Unmarshal(out.Bytes(), &leases), "parse the output of werft leases")
+	ids := []string{}
+	for _, l := range leases {
+		ids = append(ids, l.ID)
+	}
+	return ids
 }
 
 // leaseSSH runs the ssh command werft lease printed, with cmd.

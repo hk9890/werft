@@ -122,7 +122,7 @@ func TestStart(t *testing.T) {
 	}
 	if meta, err := f.DomainMetadata(l.Domain, lease.Namespace); err != nil ||
 		!strings.Contains(meta, "<werft:owner>agent</werft:owner>") || !strings.Contains(meta, "<werft:expiry>2026-11-03T14:00:00Z</werft:expiry>") ||
-		!strings.Contains(meta, "<werft:stock>vm-plain-20261102</werft:stock>") {
+		!strings.Contains(meta, "<werft:stock>vm-plain-20261102</werft:stock>") || !strings.Contains(meta, "<werft:state>"+string(e.Dir)+"</werft:state>") {
 		t.Errorf("metadata = %q, %v", meta, err)
 	}
 
