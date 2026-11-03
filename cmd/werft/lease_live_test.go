@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,11 +24,12 @@ import (
 	"github.com/hk9890/werft/internal/virt"
 )
 
-// TestLeaseLive seals a scratch domain, leases a VM from the stock image,
-// logs in with the ssh command werft lease prints, and releases the lease.
-// Then it checks the lifetime of a second lease (leaseLifetime).
-// Control: a key other than the lease key gets no login, and the lease key
-// does with the same command line.
+// TestLeaseLive seals a scratch domain, starts two leases of the stock image
+// at the same time, logs in to both with the ssh command werft lease
+// prints, and releases the first. Then it checks the lifetime of the second
+// (leaseLifetime). Control: the stock definition writes the serial console
+// to one file, which the two leases would share; a key other than the lease
+// key gets no login, and the lease key does with the same command line.
 func TestLeaseLive(t *testing.T) {
 	isolate(t)
 	h := livetest.Connect(t)
@@ -53,11 +55,23 @@ func TestLeaseLive(t *testing.T) {
 		livetest.DeleteVolumes(h, stock+".qcow2", stock+"_VARS.qcow2")
 	})
 
+	rec, err := lease.Resolve(dir.Images(), src.Name, "plain")
+	livetest.Must(t, err, "resolve the stock image")
+	if !strings.Contains(rec.Domain, src.ConsoleVolume()) {
+		t.Fatalf("the stock definition writes the console to no file:\n%s", rec.Domain)
+	}
+
 	werftJSON(t, 3, "lease", "no-such-image")
-	doc := werftJSON(t, 0, "lease", src.Name, "--tier", "plain", "--owner", "agent-ls")
+	docs := parallelLeases(t, h, prefix, []string{"lease", src.Name, "--tier", "plain", "--owner", "agent-ls"}, []string{"lease", src.Name})
+	doc, second := docs[0], docs[1]
 	id, _ := doc["id"].(string)
 	name, _ := doc["domain"].(string)
-	t.Cleanup(func() { removeLease(t, h, prefix, id, name) })
+	if second["id"] == id || second["domain"] == name || second["address"] == doc["address"] {
+		t.Errorf("the parallel leases share an id, a domain or an address:\n%v\n%v", doc, second)
+	}
+	if out := leaseSSH(t, second["ssh"].(string), "hostname"); out != second["domain"] {
+		t.Errorf("hostname of the second lease = %q, want %v", out, second["domain"])
+	}
 	sshConfig, _ := doc["ssh_config"].(string)
 	key, _ := doc["key"].(string)
 	address, _ := doc["address"].(string)
@@ -121,20 +135,53 @@ func TestLeaseLive(t *testing.T) {
 		t.Errorf("second release = %v", doc)
 	}
 
-	leaseLifetime(t, h, prefix, src.Name)
+	leaseLifetime(t, h, second)
 }
 
-// leaseLifetime leases a VM from the stock image of src, extends it by an
-// hour, and moves the clock. Control: one minute after the first expiry the
-// extended lease stays, and werft leases removes only an orphan lease
-// directory. One minute after the new expiry werft leases releases it.
-func leaseLifetime(t *testing.T, h virt.Hypervisor, prefix, src string) {
+// parallelLeases runs werft lease with each of args at the same time, and
+// returns the JSON documents in the order of args. Every lease is released
+// when the test ends.
+func parallelLeases(t *testing.T, h virt.Hypervisor, prefix string, args ...[]string) []map[string]any {
+	t.Helper()
+	type result struct {
+		code        int
+		out, errOut bytes.Buffer
+	}
+	results := make([]result, len(args))
+	var wg sync.WaitGroup
+	for i, a := range args {
+		wg.Go(func() {
+			r := &results[i]
+			c := &cli{stdout: &r.out, stderr: &r.errOut, dial: dialLibvirt, sleep: time.Sleep, openViewer: func(string) error { return nil }}
+			r.code = c.run(append([]string{"--json"}, a...))
+		})
+	}
+	wg.Wait()
+	docs := make([]map[string]any, len(args))
+	for i := range results {
+		r := &results[i]
+		_ = json.Unmarshal(r.out.Bytes(), &docs[i]) // a failed run is reported below, with its output
+		id, _ := docs[i]["id"].(string)
+		name, _ := docs[i]["domain"].(string)
+		t.Cleanup(func() { removeLease(t, h, prefix, id, name) })
+	}
+	for i := range results {
+		if r := &results[i]; r.code != 0 {
+			t.Fatalf("werft %q exited %d\nstdout: %s\nstderr: %s", args[i], r.code, r.out.String(), r.errOut.String())
+		}
+	}
+	return docs
+}
+
+// leaseLifetime extends the lease of doc by an hour, and moves the clock.
+// Control: one minute after the first expiry the extended lease stays, and
+// werft leases removes only an orphan lease directory. One minute after the
+// new expiry werft leases releases it.
+func leaseLifetime(t *testing.T, h virt.Hypervisor, doc map[string]any) {
 	dir, err := state.Root()
 	livetest.Must(t, err, "state directory")
-	doc := werftJSON(t, 0, "lease", src)
 	id, _ := doc["id"].(string)
 	name, _ := doc["domain"].(string)
-	t.Cleanup(func() { removeLease(t, h, prefix, id, name) })
 	expiry, err := time.Parse(time.RFC3339, doc["expiry"].(string))
 	livetest.Must(t, err, "parse the expiry of "+id)
 	if ids := leaseIDs(t); !slices.Equal(ids, []string{id}) {
