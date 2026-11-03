@@ -4,6 +4,7 @@ go = "1.27.2"
 "go:golang.org/x/tools/cmd/goimports" = "0.52.0"
 "go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.14.0"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+goreleaser = "2.19.0"
 
 [env]
 CGO_ENABLED = "0"
@@ -19,6 +20,14 @@ DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG=github.com/hk9890/werft/internal/build
 go build -ldflags "-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT -X $PKG.Date=$DATE" -o bin/werft ./cmd/werft
 """
+
+[tasks."release:check"]
+description = "Validate .goreleaser.yaml"
+run = "goreleaser check"
+
+[tasks."release:snapshot"]
+description = "Build the release archives into ./dist without publishing (docs/RELEASING.md)"
+run = "goreleaser release --snapshot --clean"
 
 # ---- format / vet / lint / tidy / vuln -------------------------------------
 
@@ -75,8 +84,8 @@ CGO_ENABLED = "1"
 # ---- gates -----------------------------------------------------------------
 
 [tasks.quality]
-description = "Pre-commit gate: fmt + vet + lint + tidy + build + unit tests. CI runs it."
-depends = ["fmt:check", "vet", "lint", "tidy:check", "build", "test"]
+description = "Pre-commit gate: fmt + vet + lint + tidy + build + release:check + unit tests. CI runs it."
+depends = ["fmt:check", "vet", "lint", "tidy:check", "build", "release:check", "test"]
 
 [tasks."quality:full"]
 description = "Pre-handoff gate: quality, then the live tests against qemu:///system"

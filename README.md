@@ -11,9 +11,14 @@ The status of each phase is in the [roadmap](docs/PRODUCT.md#roadmap).
 
 ## Install
 
-werft has no release yet; build it from source. The build steps are in
-[docs/CODING.md](docs/CODING.md#build-and-run-from-source). Release binaries that mise installs
-come with task `werft-git8j8`.
+Install a release with mise. The repository is private, so mise needs a GitHub token with access
+to it ([docs/RELEASING.md](docs/RELEASING.md#install-through-mise)).
+
+```sh
+mise use -g github:hk9890/werft@X.Y.Z    # a version from the releases page
+```
+
+To build from source, follow [docs/CODING.md](docs/CODING.md#build-and-run-from-source).
 
 ## Usage
 
