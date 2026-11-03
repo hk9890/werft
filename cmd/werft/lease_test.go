@@ -14,6 +14,7 @@ import (
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/state"
+	"github.com/hk9890/werft/internal/virt"
 )
 
 func TestLeaseArguments(t *testing.T) {
@@ -274,5 +275,49 @@ func TestLeaseCommandArguments(t *testing.T) {
 		if r := lh.run(append([]string{"--json"}, tt.args...)...); r.code != tt.code || !strings.Contains(r.stdout, tt.want) {
 			t.Errorf("werft %q = %+v, want exit %d with %q", tt.args, r, tt.code, tt.want)
 		}
+	}
+}
+
+// TestLeaseOverTheBudget: memory_budget_mib in config.toml reaches the
+// admission of werft lease, and a lease over it exits 6 with kind
+// no_capacity, before it makes a volume or a domain.
+func TestLeaseOverTheBudget(t *testing.T) {
+	state, config := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("XDG_CONFIG_HOME", config)
+	lh := newLifecycleHost(t)
+	lh.fake.FreeMemory = 8 << 30
+	if err := virt.EnsurePool(lh.fake, "werft", "/werft"); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"ubuntu-26-04-plain-20261102.qcow2", "ubuntu-26-04-plain-20261102_VARS.qcow2"} {
+		if _, err := lh.fake.CreateVolume("werft", "<volume><name>"+v+"</name><capacity unit='G'>20</capacity></volume>"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, content := range map[string]string{
+		filepath.Join(state, "werft", "images.toml"):  imagesTOML + "domain = \"<domain type='kvm'><name>ubuntu-26-04</name><memory unit='GiB'>2</memory></domain>\"\n",
+		filepath.Join(config, "werft", "config.toml"): "memory_budget_mib = 7168\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := len(lh.fake.Calls())
+	r := lh.run("--json", "lease", "ubuntu-26-04")
+	var doc struct {
+		Error struct{ Kind, Message string } `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil || r.code != 6 || doc.Error.Kind != string(failure.NoCapacity) ||
+		!strings.Contains(doc.Error.Message, "2048 MiB of memory, 8192 MiB are free") || !strings.Contains(doc.Error.Message, "keeps 7168 MiB free") {
+		t.Fatalf("lease over the budget = %+v, %v; want exit 6 with kind no_capacity", r, err)
+	}
+	if calls := lh.fake.Calls()[before:]; slices.ContainsFunc(calls, func(c string) bool {
+		return strings.HasPrefix(c, "CreateVolume") || strings.HasPrefix(c, "DefineDomain")
+	}) {
+		t.Errorf("a refused lease made a volume or a domain: %v", calls)
 	}
 }

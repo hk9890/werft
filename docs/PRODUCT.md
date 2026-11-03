@@ -138,7 +138,8 @@ repo owns. werft only runs it.
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
    `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: `seal`,
-   `images`, `lease`, `release`, `leases`, `extend` and `reap` of the `plain` tier in code.
+   `images`, `lease`, `release`, `leases`, `extend`, `reap` and parallel leases with a memory
+   budget, of the `plain` tier, in code.
 4. **Agent integration.** Stable JSON output and exit codes, a skill or guide that tells an agent how
    to use werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it.
 

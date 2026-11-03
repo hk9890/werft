@@ -28,7 +28,8 @@ func TestLoad(t *testing.T) {
 	}{
 		{"missing file", filepath.Join(t.TempDir(), "none.toml"), config.Default(), ""},
 		{"empty file", write(t, ""), config.Default(), ""},
-		{"pool set", write(t, `pool = "lab"`), config.Config{Pool: "lab"}, ""},
+		{"pool set", write(t, `pool = "lab"`), config.Config{Pool: "lab", MemoryBudgetMiB: 4096}, ""},
+		{"memory budget set", write(t, "memory_budget_mib = 0\n"), config.Config{Pool: "werft"}, ""},
 		{"unknown key", write(t, "pool = \"lab\"\nlimit = 3\n"), config.Config{}, "unknown keys: limit"},
 		{"empty pool", write(t, `pool = ""`), config.Config{}, "pool is empty"},
 		{"syntax error", write(t, `pool = `), config.Config{}, "read "},

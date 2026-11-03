@@ -170,3 +170,33 @@ func QCOW2NVRAM(d *libvirtxml.Domain, path string) error {
 	d.OS.NVRam = &libvirtxml.DomainNVRam{NVRam: path, Format: "qcow2"}
 	return nil
 }
+
+// Memory is the memory of d in bytes. libvirt reads a size without a unit
+// as KiB.
+func Memory(d *libvirtxml.Domain) (uint64, error) {
+	if d.Memory == nil {
+		return 0, fmt.Errorf("domain %s names no memory size", d.Name)
+	}
+	n := uint64(d.Memory.Value)
+	switch d.Memory.Unit {
+	case "b", "bytes":
+		return n, nil
+	case "", "k", "KiB":
+		return n << 10, nil
+	case "KB":
+		return n * 1e3, nil
+	case "M", "MiB":
+		return n << 20, nil
+	case "MB":
+		return n * 1e6, nil
+	case "G", "GiB":
+		return n << 30, nil
+	case "GB":
+		return n * 1e9, nil
+	case "T", "TiB":
+		return n << 40, nil
+	case "TB":
+		return n * 1e12, nil
+	}
+	return 0, fmt.Errorf("domain %s gives its memory in the unknown unit %q", d.Name, d.Memory.Unit)
+}

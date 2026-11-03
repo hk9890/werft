@@ -85,6 +85,10 @@ func (c *cli) cmdLease(args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
 	h, err := c.hypervisor()
 	if err != nil {
 		return err
@@ -94,6 +98,7 @@ func (c *cli) cmdLease(args []string) error {
 	defer stop()
 	env := c.leaseEnv(h, dir)
 	env.Ctx = ctx
+	env.MemoryBudget = cfg.MemoryBudgetMiB << 20
 	c.reapFirst(env)
 	if *view {
 		env.View = func(domain string) {

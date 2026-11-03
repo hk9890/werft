@@ -15,6 +15,9 @@ import (
 type Config struct {
 	// Pool is the libvirt storage pool for stock images and lease overlays.
 	Pool string `toml:"pool"`
+	// MemoryBudgetMiB is the free host memory, in MiB, that werft lease
+	// leaves: a lease that would take free memory below it fails.
+	MemoryBudgetMiB uint64 `toml:"memory_budget_mib"`
 	// Recipe is the provision recipe of every build VM that Recipes does not
 	// name.
 	Recipe string `toml:"recipe"`
@@ -33,7 +36,7 @@ func (c Config) RecipeFor(vm string) string {
 // PoolPath is the directory werft gives the pool when it creates it.
 func (c Config) PoolPath() string { return filepath.Join("/var/lib/libvirt/images", c.Pool) }
 
-func Default() Config { return Config{Pool: "werft"} }
+func Default() Config { return Config{Pool: "werft", MemoryBudgetMiB: 4096} }
 
 // Path is $XDG_CONFIG_HOME/werft/config.toml, else ~/.config/werft/config.toml.
 func Path() (string, error) {

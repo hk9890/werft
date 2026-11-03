@@ -37,6 +37,9 @@ const (
 	Namespace = "https://github.com/hk9890/werft/lease"
 	// vsockSystemd is the first systemd version with SSH over AF_VSOCK.
 	vsockSystemd = 256
+	// MinPoolFree is the free space a pool must have for the overlay of a
+	// new lease, which grows as the guest writes.
+	MinPoolFree = 1 << 30
 )
 
 // Lease is what an agent gets: how to reach the VM, and until when.
@@ -68,6 +71,9 @@ type Env struct {
 	Dir state.Dir
 	// Prefix starts the name of every lease domain.
 	Prefix string
+	// MemoryBudget is the free host memory, in bytes, that a new lease
+	// leaves.
+	MemoryBudget uint64
 	// Shell logs in with the ssh_config at config.
 	Shell func(config string) guest.Shell
 	// NewKey makes an ed25519 key pair at path.
@@ -161,6 +167,9 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 		return Lease{}, err
 	}
 	defer release()
+	if err := admit(e, tmpl, rec.Pool); err != nil {
+		return Lease{}, err
+	}
 	id := newID()
 	dir := e.Dir.Lease(id)
 	now := e.Now().UTC().Truncate(time.Second)
@@ -207,6 +216,32 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 		return fail(err)
 	}
 	return l, nil
+}
+
+// admit refuses a lease of tmpl with no_capacity when its memory would take
+// free host memory below the budget, or when pool has less than
+// MinPoolFree free. The caller holds the global lock.
+func admit(e Env, tmpl *libvirtxml.Domain, pool string) error {
+	need, err := domxml.Memory(tmpl)
+	if err != nil {
+		return failure.Wrap(failure.Failed, err, "the domain definition of the stock image")
+	}
+	free, err := e.H.HostFreeMemory()
+	if err != nil {
+		return err
+	}
+	if free < need || free-need < e.MemoryBudget {
+		return failure.New(failure.NoCapacity, "no capacity: the lease needs %d MiB of memory, %d MiB are free, and memory_budget_mib in config.toml keeps %d MiB free; release a lease with werft release",
+			need>>20, free>>20, e.MemoryBudget>>20)
+	}
+	info, err := e.H.PoolInfo(pool)
+	if err != nil {
+		return err
+	}
+	if info.Available < MinPoolFree {
+		return failure.New(failure.NoCapacity, "no capacity: pool %s has %d MiB free, and a lease needs %d MiB", pool, info.Available>>20, MinPoolFree>>20)
+	}
+	return nil
 }
 
 // address is vsock/<cid> when the guest has SSH over AF_VSOCK, else the IPv4

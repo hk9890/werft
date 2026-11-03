@@ -217,6 +217,63 @@ func TestStartFailsAndReleases(t *testing.T) {
 	}
 }
 
+// TestStartAdmits: a lease that would take free host memory below the
+// budget, or that finds its pool full, fails with no_capacity and changes
+// nothing. Control: a lease that leaves exactly the budget, on a pool with
+// MinPoolFree free, starts. The checks and the define run under the global
+// lock.
+func TestStartAdmits(t *testing.T) {
+	const budget = 4 << 30
+	const need = 1 << 30 // the memory of stockDomain
+	tests := []struct {
+		name      string
+		free      uint64
+		pool      uint64
+		wantError bool
+	}{
+		{"memory below the budget", budget + need - 1, 100 << 30, true},
+		{"less memory than the lease", need - 1, 100 << 30, true},
+		{"pool full", budget + need, lease.MinPoolFree - 1, true},
+		{"control: exactly the budget left", budget + need, 100 << 30, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := world(t)
+			f.FreeMemory = tt.free
+			f.SetPoolCapacity("werft", tt.pool)
+			e := env(t, f, &shell{up: true})
+			e.MemoryBudget = budget
+			var locked []string
+			e.Global = func() (func(), error) {
+				start := len(f.Calls())
+				return func() { locked = f.Calls()[start:] }, nil
+			}
+			before := len(f.Calls())
+			_, err := lease.Start(e, record(), "agent")
+			if !tt.wantError {
+				must(t, err)
+				for _, call := range []string{"HostFreeMemory", "PoolInfo werft", "DefineDomain"} {
+					if !slices.ContainsFunc(locked, func(c string) bool { return strings.HasPrefix(c, call) }) {
+						t.Errorf("%s ran outside the global lock; under it: %v", call, locked)
+					}
+				}
+				return
+			}
+			if !failure.Is(err, failure.NoCapacity) || !strings.Contains(err.Error(), "no capacity") {
+				t.Fatalf("Start = %v, want kind no_capacity", err)
+			}
+			if calls := f.Calls()[before:]; slices.ContainsFunc(calls, func(c string) bool {
+				return strings.HasPrefix(c, "CreateVolume") || strings.HasPrefix(c, "DefineDomain")
+			}) {
+				t.Errorf("a refused lease made a volume or a domain: %v", calls)
+			}
+			if _, err := os.Stat(e.Dir.Leases()); !os.IsNotExist(err) {
+				t.Errorf("a refused lease made a lease directory: %v", err)
+			}
+		})
+	}
+}
+
 func TestStartRefusesARecordWithoutDomain(t *testing.T) {
 	f := world(t)
 	rec := record()

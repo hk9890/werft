@@ -137,16 +137,17 @@ the questions: a check and the plans of `migrate` and `seal` change nothing (`vi
 ## Lease lifecycle
 
 `werft lease <image> [--tier plain|full] [--owner o] [--view]` runs these steps (`lease.Start` in
-`internal/lease/lease.go`). The flags can stand before or after the image. The capacity check of
-step 2 and the disk password of step 6 are not built yet.
+`internal/lease/lease.go`). The flags can stand before or after the image. The disk password of
+step 6 is not built yet.
 
 1. **Resolve.** Image and tier give the newest stock version in `images.toml`. A record without a
    domain definition (sealed before leases existed) fails with `unsupported` and names the seal.
-2. **Admit.** Take the global lock. Read `StoragePoolGetInfo` and free host memory. Fail with "no
-   capacity" when the lease memory would take free memory below the budget in `config.toml`, or the
-   pool is full. The lock stays held until step 5 ends, so a
-   second admission cannot pass the capacity check first, and reap never sees a lease directory
-   whose domain is not yet defined.
+2. **Admit.** Take the global lock (`lease.admit`). Read free host memory (`NodeGetFreeMemory`) and
+   `StoragePoolGetInfo` of the stock pool. Fail with `no_capacity` when the `<memory>` of the stock
+   definition would take free memory below `memory_budget_mib` in `config.toml` (default 4096), or
+   when the pool has less than 1 GiB free (`lease.MinPoolFree`). The lock stays held until step 5
+   ends, so a second admission cannot pass the capacity check first, and reap never sees a lease
+   directory whose domain is not yet defined.
 3. **Prepare.** Create a lease ID (6 lowercase letters and digits), the lease directory, and an
    ed25519 key pair in it.
 4. **Disk.** `StorageVolCreateXML` of `<domain>.qcow2` in the pool of the stock version, with a
