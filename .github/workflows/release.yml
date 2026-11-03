@@ -1,0 +1,30 @@
+name: Release
+
+# Releases are published by dispatching this workflow by hand against a release
+# tag (docs/RELEASING.md). workflow_dispatch rather than `push: tags: v*` so
+# that re-tagging or history maintenance cannot publish a release by accident.
+on:
+  workflow_dispatch:
+
+# Least-privilege default; the release job widens itself.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and publish release assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # release notes and asset upload
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Installs Go and GoReleaser at the versions .mise.toml pins.
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      # The same gate as CI, on the tagged commit. Its build output lands in
+      # the ignored bin/, so GoReleaser still sees a clean tree.
+      - run: mise run quality
+      - run: goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

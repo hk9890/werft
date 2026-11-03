@@ -34,11 +34,10 @@ conflict, this file wins.
 
 Re-open a decision here before you fill the gap in another file.
 
-- **No RELEASING.md.** werft has no release yet. Write it when task `werft-git8j8` (GitHub release
-  binaries, install through mise) lands.
 - **No CONTRIBUTING.md.** werft has one user, and agents do the work. The human entry point is
   [README.md](../README.md); the agent entry point is `AGENTS.md`.
-- **No CHANGELOG.** There is no release to log. Decide on one together with `werft-git8j8`.
+- **No CHANGELOG.** werft has one user, who reads the commits. The release notes are GoReleaser's
+  commit list ([RELEASING.md](RELEASING.md)).
 
 ## Before you land a doc change
 

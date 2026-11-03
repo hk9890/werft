@@ -28,6 +28,10 @@ Every route below is **mandatory, not advisory**. Load the document BEFORE the f
 
 **MUST read [docs/TESTING.md](docs/TESTING.md) before writing a test** or judging whether a change is verified. It owns the live layer against `qemu:///system`, what a run creates, and the checks a PR needs.
 
+### Release
+
+**MUST read [docs/RELEASING.md](docs/RELEASING.md) before cutting a release or changing `.goreleaser.yaml` or `.github/workflows/release.yml`.** It owns the tag, the dispatch, the verification, and the install through mise.
+
 ### Run werft by hand
 
 **MUST read [docs/RUNNING.md](docs/RUNNING.md) before running `./bin/werft` or any werft command against `qemu:///system`.** It owns which commands are safe on this host and how to get a scratch domain.
