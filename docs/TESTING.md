@@ -66,6 +66,8 @@ Build on `internal/livetest`; `internal/virt/libvirt/uefi_reset_live_test.go` is
 - Give each domain and volume the prefix of your track, so parallel runs do not collide.
 - Before a test runs `werft lease`, set `leasePrefix` (`cmd/werft/lease.go`) to the prefix of
   its track, as `TestLeaseLive` does; the default `werft-` names no test domain.
+- To make a lease expire, move `clock` (`cmd/werft/lease.go`) forward with `setClock`, as
+  `leaseLifetime` in `cmd/werft/lease_live_test.go` does.
 - Reach the guest with `Guest.Boot`, `Guest.Run` and `Guest.SSH`: root over vsock, with the test key
   as the `ssh.ephemeral-authorized_keys-all` credential. The cloud image has no SSH host keys and
   no network configuration, so the guest gets two more credentials: a `sshd-vsock@` drop-in that
