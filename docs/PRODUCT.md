@@ -137,7 +137,8 @@ repo owns. werft only runs it.
 2. **Setup-repo switch.** The setup repo adds its recipe. When `werft provision` makes a `-full`
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
-   `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases.
+   `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: `seal`,
+   `images`, `lease` and `release` of the `plain` tier in code.
 4. **Agent integration.** Stable JSON output and exit codes, a skill or guide that tells an agent how
    to use werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it.
 

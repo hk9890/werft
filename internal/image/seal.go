@@ -271,7 +271,7 @@ func (s *Seal) reserve(e Env) (Record, error) {
 		Name: name, Image: s.Image, Tier: s.Tier, Version: version, Date: now.UTC().Truncate(time.Second),
 		Source: s.BuildVM, Label: s.Label, Pool: e.Pool, Disk: name + ".qcow2", NVRAM: name + "_VARS.qcow2", User: e.User,
 	}
-	if err := s.defineTemporary(e, rec, dir); err != nil {
+	if rec.Domain, err = s.defineTemporary(e, rec, dir); err != nil {
 		return Record{}, err
 	}
 	return rec, nil
@@ -305,23 +305,28 @@ func (s *Seal) copyVolumes(e Env, rec Record) error {
 
 // defineTemporary defines the domain the seal boots: the build VM on the
 // stock volumes in dir, with a vsock device, and with the key of Env as the
-// only credentials for root login.
-func (s *Seal) defineTemporary(e Env, rec Record, dir string) error {
+// only credentials for root login. It returns the definition before the
+// credentials, which leases of the image start from.
+func (s *Seal) defineTemporary(e Env, rec Record, dir string) (template string, err error) {
 	d, err := domxml.Clone(s.domain, rec.Name, map[string]string{s.disk.Target: filepath.Join(dir, rec.Disk)}, filepath.Join(dir, rec.NVRAM))
 	if err != nil {
-		return err
+		return "", err
 	}
 	domxml.EnsureVsock(d)
+	domxml.SetCredentials(d, nil)
+	if template, err = d.Marshal(); err != nil {
+		return "", err
+	}
 	domxml.SetCredentials(d, []domxml.Credential{
 		{Name: "ssh.ephemeral-authorized_keys-all", Value: []byte(e.Key + "\n")},
 		{Name: "systemd.unit-dropin.sshd-vsock@.service", Value: hostKeyDropin},
 	})
 	text, err := d.Marshal()
 	if err != nil {
-		return err
+		return "", err
 	}
 	_, err = e.H.DefineDomain(text)
-	return err
+	return template, err
 }
 
 // seal boots the temporary domain and runs the seal script as root. The

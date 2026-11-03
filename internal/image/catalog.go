@@ -34,6 +34,9 @@ type Record struct {
 	User    string `toml:"user" json:"user"`
 	Family  string `toml:"family" json:"family"`
 	Systemd int    `toml:"systemd" json:"systemd"`
+	// Domain is the domain XML a lease of the image starts from: the build
+	// VM on the stock volumes, without credentials. JSON leaves it out.
+	Domain string `toml:"domain" json:"-"`
 }
 
 type catalog struct {

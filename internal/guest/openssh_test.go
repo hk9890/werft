@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,6 +89,25 @@ func TestLoginPause(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("pauses = %v, want %v", got, want)
 			break
+		}
+	}
+}
+
+// TestWriteHostConfig asks ssh how it resolves the lease name with the
+// config.
+func TestWriteHostConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ssh_config")
+	if err := guest.WriteHostConfig(path, "abc123", guest.Addr{User: "hans", Host: "vsock/7"}, "/leases/abc123/id_ed25519"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("ssh", "-G", "-F", path, "abc123").Output()
+	if err != nil {
+		t.Skipf("no ssh -G: %v", err)
+	}
+	for _, line := range []string{"hostname vsock/7", "user hans", "identityfile /leases/abc123/id_ed25519", "identitiesonly yes",
+		"proxycommand " + guest.SSHProxy + " %h %p", "proxyusefdpass yes"} {
+		if !strings.Contains(string(out), line+"\n") {
+			t.Errorf("ssh -G lacks %q:\n%s", line, out)
 		}
 	}
 }
