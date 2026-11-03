@@ -6,25 +6,40 @@ name: Release
 on:
   workflow_dispatch:
 
-# Least-privilege default; the release job widens itself.
 permissions:
   contents: read
 
 jobs:
+  # Runs third-party code (modules, tests, linters), so it gets no write token.
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse a ref that is not a tag
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "dispatch this workflow on a release tag, not on $GITHUB_REF" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - run: mise run quality
+
   release:
-    name: Build and publish release assets
+    needs: quality
     runs-on: ubuntu-latest
     permissions:
-      contents: write # release notes and asset upload
+      contents: write # create the release and upload its assets
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # Installs Go and GoReleaser at the versions .mise.toml pins.
+          persist-credentials: false
+      # Go and GoReleaser at the versions .mise.toml pins; nothing else.
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
-      # The same gate as CI, on the tagged commit. Its build output lands in
-      # the ignored bin/, so GoReleaser still sees a clean tree.
-      - run: mise run quality
+        with:
+          install_args: go goreleaser
       - run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

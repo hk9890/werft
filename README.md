@@ -15,7 +15,7 @@ Install a release with mise. The repository is private, so mise needs a GitHub t
 to it ([docs/RELEASING.md](docs/RELEASING.md#install-through-mise)).
 
 ```sh
-mise use -g github:hk9890/werft@0.1.0
+mise use -g github:hk9890/werft@X.Y.Z    # a version from the releases page
 ```
 
 To build from source, follow [docs/CODING.md](docs/CODING.md#build-and-run-from-source).

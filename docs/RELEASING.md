@@ -1,8 +1,9 @@
 # Releasing
 
 `.github/workflows/release.yml` publishes a release with GoReleaser (`.goreleaser.yaml`). You
-dispatch it by hand against a release tag; a tag push alone publishes nothing. The run passes
-`mise run quality` on the tagged commit before it publishes.
+dispatch it by hand against a release tag; a tag push alone publishes nothing, and a dispatch on a
+branch fails. A read-only job passes `mise run quality` on the tagged commit; only then does a
+second job, the one with write access, run GoReleaser.
 
 A release holds one archive per architecture, `werft_X.Y.Z_linux_x64.tar.gz` and
 `werft_X.Y.Z_linux_arm64.tar.gz`, and `werft_X.Y.Z_checksums.txt`. mise's `github` backend picks
