@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/state"
 )
 
 // namePattern matches the domain name of a lease with prefix:
@@ -29,19 +30,34 @@ type record struct {
 	State   string `xml:"state"`
 }
 
-// List is every lease of e.Prefix and e.Dir: a domain with the lease name
-// pattern and werft lease metadata that names e.Dir, or no state directory
-// (a lease from before the state element). A lease of another state
-// directory, such as one of a live test, is not listed, so a reap never
-// takes it for an orphan. The address and user come from the lease
-// ssh_config, which a lease that still boots does not have yet.
-func List(e Env) ([]Lease, error) {
+// Ownership of a lease domain against the state directory of a run.
+const (
+	// own: the metadata names this state directory.
+	own = iota
+	// stateless: the metadata names no state directory; the lease is from
+	// before the state element. Its state directory is unknown.
+	stateless
+	// foreign: the metadata names another state directory.
+	foreign
+)
+
+// found is a lease domain and its ownership.
+type found struct {
+	Lease
+	owner int
+}
+
+// scan is every domain with the lease name pattern of e.Prefix and werft
+// lease metadata, whatever state directory it names. The address and user
+// come from the lease ssh_config, which a lease that still boots does not
+// have yet.
+func scan(e Env) ([]found, error) {
 	domains, err := e.H.Domains()
 	if err != nil {
 		return nil, err
 	}
 	pattern := namePattern(e.Prefix)
-	leases := []Lease{}
+	var all []found
 	for _, d := range domains {
 		m := pattern.FindStringSubmatch(d.Name)
 		if m == nil {
@@ -58,17 +74,47 @@ func List(e Env) ([]Lease, error) {
 		if err := xml.Unmarshal([]byte(text), &r); err != nil {
 			return nil, failure.Wrap(failure.Failed, err, "the lease metadata of %s", d.Name)
 		}
-		if r.State != "" && r.State != string(e.Dir) {
-			continue
+		f := found{Lease: Lease{ID: m[3], Domain: d.Name, Image: m[1], Tier: m[2], Stock: r.Stock, Owner: r.Owner, state: r.State}, owner: ownership(r.State, e.Dir)}
+		f.Created, _ = time.Parse(time.RFC3339, r.Created)
+		f.Expiry, _ = time.Parse(time.RFC3339, r.Expiry)
+		dir := e.Dir.Lease(f.ID)
+		f.Key, f.SSHConfig = filepath.Join(dir, "id_ed25519"), filepath.Join(dir, "ssh_config")
+		f.SSH = "ssh -F " + f.SSHConfig + " " + f.ID
+		f.Address, f.User = readHostConfig(f.SSHConfig)
+		all = append(all, f)
+	}
+	return all, nil
+}
+
+// ownership compares the state directory a lease names with dir, also
+// after symlinks, so /home and /var/home name one directory.
+func ownership(named string, dir state.Dir) int {
+	switch {
+	case named == "":
+		return stateless
+	case named == string(dir):
+		return own
+	}
+	a, errA := filepath.EvalSymlinks(named)
+	b, errB := filepath.EvalSymlinks(string(dir))
+	if errA == nil && errB == nil && a == b {
+		return own
+	}
+	return foreign
+}
+
+// List is every lease of e.Prefix that this state directory may list and
+// extend: those that name it, and those that name no state directory.
+func List(e Env) ([]Lease, error) {
+	all, err := scan(e)
+	if err != nil {
+		return nil, err
+	}
+	leases := []Lease{}
+	for _, f := range all {
+		if f.owner != foreign {
+			leases = append(leases, f.Lease)
 		}
-		l := Lease{ID: m[3], Domain: d.Name, Image: m[1], Tier: m[2], Stock: r.Stock, Owner: r.Owner, state: string(e.Dir)}
-		l.Created, _ = time.Parse(time.RFC3339, r.Created)
-		l.Expiry, _ = time.Parse(time.RFC3339, r.Expiry)
-		dir := e.Dir.Lease(l.ID)
-		l.Key, l.SSHConfig = filepath.Join(dir, "id_ed25519"), filepath.Join(dir, "ssh_config")
-		l.SSH = "ssh -F " + l.SSHConfig + " " + l.ID
-		l.Address, l.User = readHostConfig(l.SSHConfig)
-		leases = append(leases, l)
 	}
 	return leases, nil
 }
@@ -111,19 +157,23 @@ type Reaped struct {
 	OrphanDirectories []string `json:"orphan_directories"`
 }
 
-// Reap releases, under the global lock, the expired leases, the lease
-// domains without a lease directory, and the lease directories without a
-// lease domain. It touches only the domains List finds and the directories
-// under e.Dir.Leases() named like a lease ID. A release that fails keeps
-// the overlay rule of Release; Reap goes on with the next and names every
-// failure.
+// Reap releases, under the global lock:
+//   - an expired lease of this state directory or of none;
+//   - a lease domain that names this state directory and has no lease
+//     directory. A lease without a state directory is never an orphan: its
+//     lease directory can be in another state directory;
+//   - a directory under e.Dir.Leases() named like a lease ID that no lease
+//     domain has, whatever state directory the domain names.
+//
+// A release that fails keeps the overlay rule of Release; Reap goes on with
+// the next and names every failure.
 func Reap(e Env) (Reaped, error) {
 	release, err := e.Global()
 	if err != nil {
 		return Reaped{}, err
 	}
 	defer release()
-	leases, err := List(e)
+	all, err := scan(e)
 	if err != nil {
 		return Reaped{}, err
 	}
@@ -131,24 +181,29 @@ func Reap(e Env) (Reaped, error) {
 	r := Reaped{Expired: []Lease{}, OrphanDomains: []string{}, OrphanDirectories: []string{}}
 	var errs []error
 	ids := map[string]bool{}
-	for _, l := range leases {
-		ids[l.ID] = true
-		dir := e.Dir.Lease(l.ID)
-		_, statErr := os.Stat(dir)
-		orphan := errors.Is(statErr, os.ErrNotExist)
-		if !l.expired(now) && !orphan {
+	for _, f := range all {
+		ids[f.ID] = true
+		if f.owner == foreign {
 			continue
 		}
-		if err := releaseDomain(e, l.Domain, dir); err != nil {
+		dir := e.Dir.Lease(f.ID)
+		expired := f.expired(now)
+		if !expired {
+			_, statErr := os.Stat(dir)
+			if f.owner != own || !errors.Is(statErr, os.ErrNotExist) {
+				continue
+			}
+		}
+		if err := releaseDomain(e, f.Domain, dir); err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if l.expired(now) {
-			e.printf("Released %s: it expired at %s", l.Domain, l.Expiry.Format(time.RFC3339))
-			r.Expired = append(r.Expired, l)
+		if expired {
+			e.printf("Released %s: it expired at %s", f.Domain, f.Expiry.Format(time.RFC3339))
+			r.Expired = append(r.Expired, f.Lease)
 		} else {
-			e.printf("Released %s: it has no lease directory", l.Domain)
-			r.OrphanDomains = append(r.OrphanDomains, l.Domain)
+			e.printf("Released %s: it has no lease directory", f.Domain)
+			r.OrphanDomains = append(r.OrphanDomains, f.Domain)
 		}
 	}
 	entries, err := os.ReadDir(e.Dir.Leases())
@@ -175,9 +230,11 @@ func Reap(e Env) (Reaped, error) {
 
 // releaseDomain releases the lease domain name and its lease directory as
 // Release does.
+// A werft release can remove the domain meanwhile; then remove finds every
+// part gone or removes what is left.
 func releaseDomain(e Env, name, dir string) error {
 	pool, overlay, err := overlayOf(e.H, name)
-	if err != nil {
+	if err != nil && !failure.Is(err, failure.NotFound) {
 		return fmt.Errorf("release %s: %w", name, err)
 	}
 	if err := remove(e.H, name, pool, overlay, dir); err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/lease"
+	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/virttest"
 )
 
@@ -220,5 +221,112 @@ func TestExtendRefuses(t *testing.T) {
 	f.FailOn("SetDomainMetadata", failure.New(failure.Failed, "injected"))
 	if _, err := lease.Extend(e, l.ID, time.Hour); !failure.Is(err, failure.Failed) {
 		t.Errorf("Extend with a failing metadata write = %v, want failed", err)
+	}
+}
+
+// defineLease defines the domain name with the werft lease elements body
+// as its metadata.
+func defineLease(t *testing.T, f *virttest.Fake, name, body string) {
+	t.Helper()
+	_, err := f.DefineDomain("<domain type='kvm'><name>" + name + "</name><metadata><werft:lease xmlns:werft='" + lease.Namespace + "'>" +
+		body + "</werft:lease></metadata></domain>")
+	must(t, err)
+}
+
+// TestReapKeepsAStatelessLease: a lease without a state directory has its
+// lease directory in a state directory reap does not know, so it is no
+// orphan. Control: an expired one goes (TestReapReleasesOrphans).
+func TestReapKeepsAStatelessLease(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	defineLease(t, f, "werft-vm-plain-abc123", "<werft:expiry>2026-11-03T14:00:00Z</werft:expiry>")
+	r, err := lease.Reap(e)
+	must(t, err)
+	if len(r.Expired)+len(r.OrphanDomains) != 0 {
+		t.Errorf("Reap = %+v, want nothing", r)
+	}
+	if _, err := f.Domain("werft-vm-plain-abc123"); err != nil {
+		t.Errorf("Reap released a stateless lease before its expiry: %v", err)
+	}
+	if leases, _ := lease.List(e); len(leases) != 1 {
+		t.Errorf("List = %+v, want the stateless lease", leases)
+	}
+}
+
+// TestReapKeepsTheDirectoryOfAForeignLease: a lease of another state
+// directory is neither listed nor released, even when expired, and a lease
+// directory with its ID stays: the two state directories can share leases/.
+func TestReapKeepsTheDirectoryOfAForeignLease(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	defineLease(t, f, "werft-vm-plain-abc123", "<werft:expiry>2000-01-01T00:00:00Z</werft:expiry><werft:state>/other/werft</werft:state>")
+	must(t, os.MkdirAll(e.Dir.Lease("abc123"), 0o700))
+	r, err := lease.Reap(e)
+	must(t, err)
+	if len(r.Expired)+len(r.OrphanDomains)+len(r.OrphanDirectories) != 0 {
+		t.Errorf("Reap = %+v, want nothing", r)
+	}
+	if _, err := os.Stat(e.Dir.Lease("abc123")); err != nil {
+		t.Errorf("Reap removed the lease directory of a foreign lease: %v", err)
+	}
+	if _, err := f.Domain("werft-vm-plain-abc123"); err != nil {
+		t.Errorf("Reap released a foreign lease: %v", err)
+	}
+	if leases, _ := lease.List(e); len(leases) != 0 {
+		t.Errorf("List = %+v, want no foreign lease", leases)
+	}
+}
+
+// TestReapFollowsSymlinks: a lease made through a symlink of the state
+// directory belongs to the state directory itself.
+func TestReapFollowsSymlinks(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	link := t.TempDir() + "/link"
+	must(t, os.Symlink(string(e.Dir), link))
+	made := e
+	made.Dir = state.Dir(link)
+	l := startAt(t, made, e.Now())
+	if leases, _ := lease.List(e); len(leases) != 1 {
+		t.Fatalf("List = %+v, want the lease made through the symlink", leases)
+	}
+	must(t, os.RemoveAll(e.Dir.Lease(l.ID)))
+	if r, err := lease.Reap(e); err != nil || !slices.Equal(r.OrphanDomains, []string{l.Domain}) {
+		t.Errorf("Reap = %+v, %v, want the orphan %s", r, err, l.Domain)
+	}
+}
+
+// TestReapAfterARelease: werft release takes no global lock, so the domain
+// can go between the scan and the release of reap; that is no failure.
+func TestReapAfterARelease(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l := startAt(t, e, e.Now())
+	e.Now = func() time.Time { return l.Expiry }
+	f.FailOn("DomainXML", failure.New(failure.NotFound, "injected"))
+	if _, err := lease.Reap(e); err != nil {
+		t.Errorf("Reap of a domain that went meanwhile = %v", err)
+	}
+	if _, err := os.Stat(e.Dir.Lease(l.ID)); !os.IsNotExist(err) {
+		t.Errorf("the lease directory is left: %v", err)
+	}
+}
+
+func TestExtendRefusesALeaseWithoutExpiry(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	defineLease(t, f, "werft-vm-plain-abc123", "<werft:owner>agent</werft:owner><werft:state>"+string(e.Dir)+"</werft:state>")
+	if _, err := lease.Extend(e, "abc123", time.Hour); !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), "no readable expiry") {
+		t.Errorf("Extend = %v, want failed for the missing expiry", err)
+	}
+}
+
+func TestListFailsOnBrokenMetadata(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	defineLease(t, f, "werft-vm-plain-abc123", "")
+	must(t, f.SetDomainMetadata("werft-vm-plain-abc123", lease.Namespace, "werft", "<lease><owner>"))
+	if _, err := lease.List(e); !failure.Is(err, failure.Failed) {
+		t.Errorf("List = %v, want failed", err)
 	}
 }

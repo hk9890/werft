@@ -208,16 +208,22 @@ without a lease directory, or the reverse). `werft reap` does only that (`lease.
 - It takes the global lock, so it never sees a lease directory whose domain is not yet defined.
 - A lease domain is a domain named `<prefix><image>-<plain|full>-<id>` with werft lease metadata
   (`lease.List`). A domain without the metadata, or with another name, is no lease and stays.
-- A lease belongs to the state directory its metadata names; a lease without one (made before
-  the element existed) belongs to every state directory. `leases`, `extend` and reap see only the
-  leases of their own state directory. A live test runs with an isolated state directory, so a
-  werft run with the real one never takes a live-test lease for an orphan, and the reverse.
-- A lease expires at its expiry time. A lease without a readable expiry never expires.
-- It removes only directories under `leases/` named like a lease ID.
+- A lease belongs to the state directory its metadata names, compared also after symlinks.
+  `leases`, `extend` and reap act on the leases of their own state directory, and on the leases
+  without one (made before the element existed). A live test runs with an isolated state
+  directory, so a werft run with the real one never acts on a live-test lease, and the reverse.
+- A lease expires at its expiry time. A lease without a readable expiry never expires. Reap
+  releases an expired lease of its own state directory or of none.
+- A lease domain is an orphan only when its metadata names this state directory and its lease
+  directory is missing. A lease without a state directory is never an orphan: its lease directory
+  can be in any state directory.
+- A lease directory is an orphan when it is under `leases/`, is named like a lease ID, and no lease
+  domain has that ID, whatever state directory the domain names.
 - It releases a lease as `werft release` does, so a failed overlay delete keeps the domain and the
   lease directory, and the next reap tries again. It goes on with the next lease and names every
   failure. `werft reap` then fails with `failed`; the reap pass of the other commands only warns
-  on stderr.
+  on stderr. `werft release` takes no global lock, so a domain that goes during the reap counts
+  as released.
 
 `werft leases` lists each lease: ID, domain, image and tier (from the domain name), stock version,
 owner, created, expiry (from the metadata), and the user, address, key, `ssh_config` and `ssh`

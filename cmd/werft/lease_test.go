@@ -106,15 +106,15 @@ func addLease(t *testing.T, lh *lifecycleHost, id string, created time.Time) str
 	if _, err := lh.fake.CreateVolume("default", "<volume><name>"+name+".qcow2</name><capacity>1</capacity></volume>"); err != nil {
 		t.Fatal(err)
 	}
+	dir, err := state.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := lh.fake.DefineDomain(`<domain type='kvm'><name>` + name + `</name><metadata><werft:lease xmlns:werft='` + lease.Namespace + `'>` +
 		`<werft:owner>agent</werft:owner><werft:created>` + created.UTC().Format(time.RFC3339) + `</werft:created>` +
 		`<werft:expiry>` + created.Add(lease.Lifetime).UTC().Format(time.RFC3339) + `</werft:expiry><werft:stock>vm-plain-20261102</werft:stock>` +
-		`</werft:lease></metadata><devices><disk type='file' device='disk'><driver name='qemu' type='qcow2'/>` +
+		`<werft:state>` + string(dir) + `</werft:state></werft:lease></metadata><devices><disk type='file' device='disk'><driver name='qemu' type='qcow2'/>` +
 		`<source file='/img/` + name + `.qcow2'/><target dev='vda'/></disk></devices></domain>`); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := state.Root()
-	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(dir.Lease(id), 0o700); err != nil {
