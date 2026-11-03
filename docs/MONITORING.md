@@ -68,8 +68,8 @@ virsh -c qemu:///system vol-download --pool werft-test <domain>-console.log /tmp
 
 Use these only on pool `werft-test` and domains named `werft-test-*`.
 
-A lease writes its console to no file, also when its stock image does: `domxml.Lease` puts each
-serial and console device on a pty. Watch the console of a running lease with
+A lease writes its console to no file, also when its stock image does: in `domxml.Lease`, a serial
+or console device with a file source gets a pty, and every `<log>` goes. Watch the console of a running lease with
 `virsh -c qemu:///system console <lease domain>`; type nothing into it.
 
 ## libvirt domain logs

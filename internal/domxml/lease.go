@@ -11,9 +11,9 @@ import (
 // every other disk goes. libvirt fills the NVRAM of the lease from the qcow2
 // stock vars at the first start, and deletes it with the domain. The lease
 // gets a new UUID and MAC, an auto vsock CID, creds as its only credentials,
-// and metadata as its only metadata. A serial or console device that writes
-// to a file, or logs to one, gets a pty without a log: the file of tmpl is
-// one path for every lease, and the second lease would fail to open it.
+// and metadata as its only metadata. A serial or console device with a file
+// source gets a pty, and every <log> goes: a file of tmpl is one path for
+// every lease, and the second lease would fail to open it.
 // Firmware autoselection refuses a qcow2 template, so the lease keeps the
 // explicit loader of tmpl, which it must have.
 func Lease(tmpl *libvirtxml.Domain, name, stockDisk, overlay, vars, metadata string, creds []Credential) (*libvirtxml.Domain, error) {
