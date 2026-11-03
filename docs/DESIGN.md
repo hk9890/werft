@@ -159,6 +159,8 @@ step 2 and the disk password of step 6 are not built yet.
      so the lease keeps the installer's boot entries. libvirt makes the NVRAM file at the first
      start;
    - `<vsock><cid auto='yes'/>`;
+   - serial and console devices on a pty, without a `<log>`: a file of the stock definition is one
+     path for every lease, and the second lease that starts fails to open it;
    - SMBIOS credentials: `system.hostname` (the domain name), `system.machine_id` (new),
      `ssh.ephemeral-authorized_keys-all` (the lease public key, for every user over vsock), and
      `werft.ssh.authorized_keys` for the TCP path. A `tmpfiles.extra` credential appends that key
