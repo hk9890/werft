@@ -21,11 +21,11 @@ import (
 	"github.com/hk9890/werft/internal/virt"
 )
 
-// Fake is safe for concurrent use. Set Version and FreeMemory before the code
+// Fake is safe for concurrent use. Set Version and TotalMemory before the code
 // under test runs.
 type Fake struct {
-	Version    virt.Version
-	FreeMemory uint64
+	Version     virt.Version
+	TotalMemory uint64
 
 	mu       sync.Mutex
 	calls    []string
@@ -84,13 +84,13 @@ var _ virt.Hypervisor = (*Fake)(nil)
 
 func New() *Fake {
 	return &Fake{
-		Version:    virt.Version{Major: 12},
-		FreeMemory: 32 << 30,
-		failures:   map[string]error{},
-		domains:    map[string]*domain{},
-		pools:      map[string]*pool{},
-		leases:     map[string][]virt.DHCPLease{},
-		nextCID:    3,
+		Version:     virt.Version{Major: 12},
+		TotalMemory: 32 << 30,
+		failures:    map[string]error{},
+		domains:     map[string]*domain{},
+		pools:       map[string]*pool{},
+		leases:      map[string][]virt.DHCPLease{},
+		nextCID:     3,
 	}
 }
 
@@ -219,10 +219,10 @@ func (f *Fake) LibVersion() (virt.Version, error) {
 	return f.Version, f.record("LibVersion")
 }
 
-func (f *Fake) HostFreeMemory() (uint64, error) {
+func (f *Fake) HostTotalMemory() (uint64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.FreeMemory, f.record("HostFreeMemory")
+	return f.TotalMemory, f.record("HostTotalMemory")
 }
 
 func (f *Fake) Domains() ([]virt.Domain, error) {

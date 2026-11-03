@@ -104,8 +104,8 @@ Requirements:
 - A lease lives 4 hours by default. `werft extend <lease-id>` adds time. werft destroys an expired
   lease, so an agent that crashes does not leak a VM.
 - `werft leases --json` lists active leases with owner, image, tier, address, and expiry.
-- More than one lease can run at the same time. werft refuses a new lease ("no capacity") when free
-  host memory would drop below a configured budget.
+- More than one lease can run at the same time. werft refuses a new lease ("no capacity") when the
+  host memory that no VM and no lease holds would drop below a configured budget.
 - A lease runs headless: the guest desktop runs, but no viewer window opens on the host. `--view`
   opens one.
 - A lease of an encrypted image (Omarchy) boots like any other: werft types the disk password. The
@@ -138,7 +138,8 @@ repo owns. werft only runs it.
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
    `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: `seal`,
-   `images`, `lease`, `release`, `leases`, `extend` and `reap` of the `plain` tier in code.
+   `images`, `lease`, `release`, `leases`, `extend`, `reap` and parallel leases with a memory
+   budget, of the `plain` tier, in code.
 4. **Agent integration.** Stable JSON output and exit codes, a skill or guide that tells an agent how
    to use werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it.
 

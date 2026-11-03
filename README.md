@@ -92,6 +92,10 @@ werft reap                                   # release expired leases and orphan
 A lease expires 4 hours after it starts. `lease`, `leases`, `extend` and `release` first release
 the expired leases; `reap` does only that.
 
+Leases run in parallel. `werft lease` exits 6 (`no_capacity`) when the host memory, less the memory
+of the running VMs and of every lease, less the new lease, is below `memory_budget_mib` in
+`~/.config/werft/config.toml` (default 4096).
+
 A stock image sealed before `werft lease` existed has no domain definition for leases; seal it again.
 
 ## Further reading

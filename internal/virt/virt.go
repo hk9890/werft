@@ -14,7 +14,8 @@ import (
 
 type Hypervisor interface {
 	LibVersion() (Version, error)
-	HostFreeMemory() (uint64, error)
+	// HostTotalMemory is the memory of the host in bytes.
+	HostTotalMemory() (uint64, error)
 
 	Domains() ([]Domain, error)
 	Domain(name string) (Domain, error)

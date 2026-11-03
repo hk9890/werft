@@ -217,6 +217,112 @@ func TestStartFailsAndReleases(t *testing.T) {
 	}
 }
 
+// domainOf is a domain definition with mem of memory, with werft lease
+// metadata when lease is set.
+func domainOf(name, mem string, lease bool) string {
+	meta := ""
+	if lease {
+		meta = "<metadata><werft:lease xmlns:werft='https://github.com/hk9890/werft/lease'><werft:owner>other</werft:owner></werft:lease></metadata>"
+	}
+	return "<domain type='kvm'><name>" + name + "</name><memory unit='MiB'>" + mem + "</memory>" + meta + "</domain>"
+}
+
+// TestStartAdmits: a lease that would take the host memory, less the memory
+// of every running domain and every lease domain, below the budget fails
+// with no_capacity and changes nothing; so does a lease on a full pool.
+// Controls: a shut-off domain that is no lease holds no memory, and a lease
+// that leaves exactly the budget starts. The checks and the define run
+// under the global lock.
+func TestStartAdmits(t *testing.T) {
+	const budget = 4 << 30
+	const need = 1 << 30 // the memory of stockDomain
+	define := func(name, mem string, lease, start bool) func(*testing.T, *virttest.Fake) {
+		return func(t *testing.T, f *virttest.Fake) {
+			_, err := f.DefineDomain(domainOf(name, mem, lease))
+			must(t, err)
+			if start {
+				must(t, f.StartDomain(name))
+			}
+		}
+	}
+	tests := []struct {
+		name      string
+		total     uint64
+		pool      uint64
+		setup     func(*testing.T, *virttest.Fake)
+		wantError bool
+	}{
+		{"memory below the budget", budget + need - 1, 100 << 30, nil, true},
+		{"less memory than the lease", need - 1, 100 << 30, nil, true},
+		{"a running domain counts", budget + need + 2<<30 - 1, 100 << 30, define("build", "2048", false, true), true},
+		{"a lease defined but not started counts", budget + need + 2<<30 - 1, 100 << 30, define("werft-vm-plain-other1", "2048", true, false), true},
+		{"pool full", budget + need, lease.MinPoolFree - 1, nil, true},
+		{"control: a shut-off domain holds nothing", budget + need, 100 << 30, define("build", "2048", false, false), false},
+		{"control: exactly the budget left", budget + need, 100 << 30, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := world(t)
+			f.TotalMemory = tt.total
+			f.SetPoolCapacity("werft", tt.pool)
+			if tt.setup != nil {
+				tt.setup(t, f)
+			}
+			e := env(t, f, &shell{up: true})
+			e.MemoryBudget = budget
+			var locked []string
+			e.Global = func() (func(), error) {
+				start := len(f.Calls())
+				return func() { locked = f.Calls()[start:] }, nil
+			}
+			before := len(f.Calls())
+			_, err := lease.Start(e, record(), "agent")
+			if !tt.wantError {
+				must(t, err)
+				for _, call := range []string{"HostTotalMemory", "Domains", "PoolInfo werft", "DefineDomain"} {
+					if !slices.ContainsFunc(locked, func(c string) bool { return strings.HasPrefix(c, call) }) {
+						t.Errorf("%s ran outside the global lock; under it: %v", call, locked)
+					}
+				}
+				return
+			}
+			if !failure.Is(err, failure.NoCapacity) || !strings.Contains(err.Error(), "no capacity") {
+				t.Fatalf("Start = %v, want kind no_capacity", err)
+			}
+			if calls := f.Calls()[before:]; slices.ContainsFunc(calls, func(c string) bool {
+				return strings.HasPrefix(c, "CreateVolume") || strings.HasPrefix(c, "DefineDomain")
+			}) {
+				t.Errorf("a refused lease made a volume or a domain: %v", calls)
+			}
+			if _, err := os.Stat(e.Dir.Leases()); !os.IsNotExist(err) {
+				t.Errorf("a refused lease made a lease directory: %v", err)
+			}
+		})
+	}
+}
+
+// TestStartAdmitsInSequence: the memory of an admitted lease counts for the
+// next admission, though the guest has not touched it yet. With room for one
+// lease above the budget, the first lease starts and the second fails with
+// no_capacity; the message names what helps.
+func TestStartAdmitsInSequence(t *testing.T) {
+	f := world(t)
+	f.TotalMemory = 4<<30 + 1<<30 + 1<<29
+	e := env(t, f, &shell{up: true})
+	e.MemoryBudget = 4 << 30
+	_, err := lease.Start(e, record(), "agent")
+	must(t, err)
+	_, err = lease.Start(e, record(), "agent")
+	if !failure.Is(err, failure.NoCapacity) {
+		t.Fatalf("second Start = %v, want kind no_capacity", err)
+	}
+	for _, want := range []string{"host has 5632 MiB", "domains hold 1024 MiB", "lease needs 1024 MiB", "keeps 4096 MiB", "release a lease, stop a VM, or lower memory_budget_mib"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("no_capacity message lacks %q: %v", want, err)
+		}
+	}
+}
+
 func TestStartRefusesARecordWithoutDomain(t *testing.T) {
 	f := world(t)
 	rec := record()

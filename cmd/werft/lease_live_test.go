@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
@@ -24,9 +25,9 @@ import (
 	"github.com/hk9890/werft/internal/virt"
 )
 
-// TestLeaseLive seals a scratch domain, starts two leases of the stock image
-// at the same time, logs in to both with the ssh command werft lease
-// prints, and releases the first. Then it checks the lifetime of the second
+// TestLeaseLive seals a scratch domain, refuses a lease over a budget of
+// 1 PiB, starts two leases of the stock image at the same time, logs in to
+// both with the ssh command werft lease prints, and releases the first. Then it checks the lifetime of the second
 // (leaseLifetime). Control: the stock definition writes the serial console
 // to one file, which the two leases would share; a key other than the lease
 // key gets no login, and the lease key does with the same command line.
@@ -62,6 +63,14 @@ func TestLeaseLive(t *testing.T) {
 	}
 
 	werftJSON(t, 3, "lease", "no-such-image")
+	config := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "werft", "config.toml")
+	cfg, err := os.ReadFile(config)
+	livetest.Must(t, err, "read config.toml")
+	livetest.Must(t, os.WriteFile(config, append(slices.Clone(cfg), "memory_budget_mib = 1073741824\n"...), 0o600), "write a budget of 1 PiB")
+	if doc := werftJSON(t, 6, "lease", src.Name); !strings.Contains(fmt.Sprint(doc["error"]), "no capacity") {
+		t.Errorf("lease over a budget of 1 PiB = %v, want no capacity", doc)
+	}
+	livetest.Must(t, os.WriteFile(config, cfg, 0o600), "restore config.toml")
 	docs := parallelLeases(t, h, prefix, []string{"lease", src.Name, "--tier", "plain", "--owner", "agent-ls"}, []string{"lease", src.Name})
 	doc, second := docs[0], docs[1]
 	id, _ := doc["id"].(string)

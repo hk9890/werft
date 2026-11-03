@@ -37,7 +37,7 @@ real adapters.
   calls werft needs: domain lookup/list/define/start/shutdown/destroy/undefine, state, XML,
   metadata and description; snapshots, and the redefine of snapshot metadata; pools and volumes,
   and the volume list of a pool; DHCP leases; screenshot, send-key,
-  device attach/detach; libvirt version and free host memory. Objects are addressed by name.
+  device attach/detach; libvirt version and total host memory. Objects are addressed by name.
   Metadata and description go to the persistent definition.
 - **`internal/virt/libvirt`** — The go-libvirt adapter. It opens `libvirt-sock` (monolithic daemon)
   or `virtqemud-sock` (modular daemons) and maps libvirt error codes to failure kinds. libvirt
@@ -137,16 +137,24 @@ the questions: a check and the plans of `migrate` and `seal` change nothing (`vi
 ## Lease lifecycle
 
 `werft lease <image> [--tier plain|full] [--owner o] [--view]` runs these steps (`lease.Start` in
-`internal/lease/lease.go`). The flags can stand before or after the image. The capacity check of
-step 2 and the disk password of step 6 are not built yet.
+`internal/lease/lease.go`). The flags can stand before or after the image. The disk password of
+step 6 is not built yet.
 
 1. **Resolve.** Image and tier give the newest stock version in `images.toml`. A record without a
    domain definition (sealed before leases existed) fails with `unsupported` and names the seal.
-2. **Admit.** Take the global lock. Read `StoragePoolGetInfo` and free host memory. Fail with "no
-   capacity" when the lease memory would take free memory below the budget in `config.toml`, or the
-   pool is full. The lock stays held until step 5 ends, so a
-   second admission cannot pass the capacity check first, and reap never sees a lease directory
-   whose domain is not yet defined.
+2. **Admit.** Take the global lock (`lease.admit`). Fail with `no_capacity` when host memory less
+   committed memory less the `<memory>` of the stock definition is below `memory_budget_mib` in
+   `config.toml` (default 4096), or when `StoragePoolGetInfo` gives the stock pool less than 1 GiB
+   free (`lease.MinPoolFree`).
+   - Host memory is the total of `NodeGetInfo`.
+   - Committed memory (`lease.committed`) is the configured `<memory>` of every domain that is not
+     shut off, plus every lease domain in any state, whatever its state directory.
+   - Free memory (`NodeGetFreeMemory`) is no input: it changes with the page cache, and it does not
+     drop for a lease that is defined but not started, or for a guest that has not touched its
+     memory yet.
+
+   The lock stays held until step 5 ends, so the next admission counts the new lease domain, and
+   reap never sees a lease directory whose domain is not yet defined.
 3. **Prepare.** Create a lease ID (6 lowercase letters and digits), the lease directory, and an
    ed25519 key pair in it.
 4. **Disk.** `StorageVolCreateXML` of `<domain>.qcow2` in the pool of the stock version, with a
@@ -544,7 +552,8 @@ Exit codes are part of the contract:
   writers on one disk. Stock files are opened read-only as backing files.
 - `locks/global.lock` (`flock`) serializes admission, seal, reap, extend, stock garbage
   collection, and the creation of the werft key by `prepare`.
-  Admission holds it from the capacity check until the lease domain is defined. Seal holds it while
+  Admission holds it from the capacity check until the lease domain is defined, so the next
+  admission counts the memory of that domain before it starts. Seal holds it while
   it picks the stock name and defines the temporary domain that reserves it, and while it writes
   the record. It is held for seconds: never for a disk copy, never for a boot.
 - `locks/<domain>.lock` serializes `snapshot`, `reset`, `prepare`, `provision`, `seal` and
