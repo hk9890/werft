@@ -25,6 +25,9 @@ To build from source, follow [docs/CODING.md](docs/CODING.md#build-and-run-from-
 Every command takes `--json` and then prints one JSON document on stdout. `werft help <command>`
 shows the flags; `werft help`, or `werft` with no command, lists the exit codes.
 
+For zsh completion of commands, VM names, reset points, images and lease ids, add
+`source <(werft completion zsh)` to `~/.zshrc`.
+
 ### Build VMs
 
 ```sh

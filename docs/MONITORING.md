@@ -36,7 +36,7 @@ writes no log: its output is stderr only.
 Use `werft` first; it reads and changes nothing:
 
 ```
-werft list --json              # every domain: state, disk use, reset points, address
+werft list --json              # every domain: state, disk use, reset points, address, lease VM or not
 werft snapshots <name> --json  # reset points, those of vm included
 ```
 
