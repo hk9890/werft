@@ -6,7 +6,8 @@ the stock image or the host.
 
 Rules:
 - Release every lease when you are done, also after a failure.
-- Use only werft images, lease, leases, extend, release, guide and help.
+- Use only werft images, lease, leases, extend, release, reap, guide and
+  help.
   Never run werft start, stop, reset, snapshot, seal, provision, prepare or
   migrate: they change the user's build VMs.
 - Never touch a VM that is not your lease.
@@ -68,7 +69,30 @@ Rules:
 
     ssh -F <ssh_config> <id> 'sudo -n apt-get update && sudo -n apt-get install -y curl'
 
-4. Watch the time
+  In tier full, the user's tools (mise and the tools it installs) load only
+  in an interactive zsh:
+
+    ssh -F <ssh_config> <id> 'zsh -ic "mise ls"'
+
+4. Move files and reach ports
+
+  The ssh_config also works for scp, tar and port forwards. Copy a
+  directory in, then a file out:
+
+    tar -C <dir> -cf - . | ssh -F <ssh_config> <id> 'mkdir -p src && tar -C src -xf -'
+    scp -F <ssh_config> <id>:src/result.log .
+
+  To reach a port in the VM, such as a web server on port 8080, forward it
+  and keep the command running while you use http://localhost:8080:
+
+    ssh -F <ssh_config> -N -L 8080:localhost:8080 <id>
+
+  The VM may reboot (sudo -n reboot): the lease keeps its id and its ssh
+  command. Run the ssh command until it answers again. Do not power the VM
+  off: a lease that is off does not start again. Release it and take a new
+  lease.
+
+5. Watch the time
 
   A lease lives 4 hours. No timer destroys it: the first werft lease,
   leases, extend, release or reap after the expiry does. Add time before
@@ -82,7 +106,7 @@ Rules:
   tier, address and expiry. An expired lease is gone: extend fails with
   not_found.
 
-5. Release the lease
+6. Release the lease
 
     werft --json release <id>
 
