@@ -570,7 +570,9 @@ Exit codes are part of the contract:
 
 - libvirt is the arbiter. A unique domain name reserves a lease. QEMU image locks prevent two
   writers on one disk. Stock files are opened read-only as backing files.
-- `locks/global.lock` (`flock`) serializes admission, seal, reap, extend, and the creation of the werft key by `prepare`.
+- `locks/global.lock` (`flock`) serializes admission, seal, reap, extend, and the creation of the
+  werft key by `prepare`, between runs with the same state directory: each state directory has its
+  own lock. `release` holds it only for its reap pass, not while it releases the lease.
   Admission holds it from the capacity check until the lease domain is defined, so the next
   admission counts the memory of that domain before it starts. Seal holds it while
   it picks the stock name and defines the temporary domain that reserves it, and while it writes
