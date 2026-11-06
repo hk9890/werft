@@ -539,6 +539,11 @@ line 1, guest password on line 2) goes away.
 - Without a TTY no command prompts; a missing confirmation fails and names the flag (`--yes`).
   `-y` is short for `--yes` on `reset`, `prepare`, `provision`, `migrate` and `seal`, as in `vm`.
 - JSON holds no secret. It gives the path of the lease private key.
+- `werft completion zsh` prints a zsh completion script generated from `commands` in
+  `cmd/werft/cli.go`. `zshArguments` in `cmd/werft/completion.go` maps each placeholder of `args`
+  to a completer; a new placeholder needs an entry in `completers`. The script reads names from
+  `werft --json list`, `snapshots`, `images` and `leases`; the `leases` call releases expired
+  leases first.
 
 Exit codes are part of the contract:
 
@@ -616,4 +621,3 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 - **Scripted secrets.** Is `pass` plus TTY enough, or does an unattended `provision` need a secret
   file or file descriptor? Can an agent run `provision` without a TTY at all, given the key stick
   and the `pinentry` secret?
-- **Shell completion.** Does werft generate zsh completion, replacing `completion-zsh/vm.rc`?

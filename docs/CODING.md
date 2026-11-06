@@ -68,7 +68,8 @@ mise run werft -- <command>     # build, then run in your shell's directory; ver
 3. Return `failure.Usage` for wrong arguments.
 4. Put the logic in an `internal/` package that takes a `virt.Hypervisor`.
 5. Register the command in `commands` in `cmd/werft/cli.go` (`init`), with `name`, `args` and
-   `summary`; `werft help` reads it.
+   `summary`; `werft help` and `werft completion zsh` read it. A new placeholder in `args` needs
+   an entry in `completers` (`cmd/werft/completion.go`).
 6. Test it against the fake through `cli.dial` (`cmd/werft/lifecycle_test.go`).
 
 ## Add a provision step
