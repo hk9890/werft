@@ -92,7 +92,11 @@ werft release <id>                           # destroy the VM, its disk and its 
 werft leases                                 # id, owner, image, tier, address, expiry of each lease
 werft extend <id> --for 1h                   # move the expiry by 1h (default 4h)
 werft reap                                   # release expired leases and orphans now
+werft guide                                  # how an agent leases, uses and releases a VM
 ```
+
+Point an agent at `werft guide`. It prints the lease flow, the JSON fields, the exit codes and the
+rules for an agent, and it matches the installed version.
 
 A lease expires 4 hours after it starts. `lease`, `leases`, `extend` and `release` first release
 the expired leases; `reap` does only that.

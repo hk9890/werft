@@ -539,6 +539,10 @@ line 1, guest password on line 2) goes away.
 - Without a TTY no command prompts; a missing confirmation fails and names the flag (`--yes`).
   `-y` is short for `--yes` on `reset`, `prepare`, `provision`, `migrate` and `seal`, as in `vm`.
 - JSON holds no secret. It gives the path of the lease private key.
+- `werft guide` prints `cmd/werft/guide.txt`, embedded in the binary with `go:embed`; with
+  `--json` it prints `{"guide": "<text>"}`. `cmd/werft/guide_test.go` checks the commands, flags,
+  lease JSON fields and exit codes the guide names against `commands`, `lease.Lease` and
+  `exitCodes`.
 - `werft completion zsh` prints a zsh completion script generated from `commands` in
   `cmd/werft/cli.go`. `zshArguments` in `cmd/werft/completion.go` maps each placeholder of `args`
   to a completer; a new placeholder needs an entry in `completers`. The script reads names from
