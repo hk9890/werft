@@ -29,8 +29,8 @@ func (c *cli) cmdCompletion(args []string) error {
 // completers maps an argument placeholder of the command table to the zsh
 // action that completes it.
 var completers = map[string]string{
-	"name":     "_werft_domains",
-	"build-vm": "_werft_domains",
+	"name":     "_werft_build_vms",
+	"build-vm": "_werft_build_vms",
 	"label":    "_werft_labels",
 	"image":    "_werft_images",
 	"lease-id": "_werft_leases",
@@ -42,11 +42,15 @@ var completers = map[string]string{
 // "[--tier plain|full]".
 var argToken = regexp.MustCompile(`<[^>]*>|\[[^\]]*\]`)
 
+// zshJSONFlag is the spec of --json, which globalFlags takes before and
+// after the command name.
+const zshJSONFlag = "--json[print one JSON document on stdout]"
+
 // zshArguments returns the _arguments specs of cmd, read from its args.
 // When no flag follows a positional argument, the flags must come first, as
 // the flag package parses them.
 func zshArguments(cmd command) ([]string, error) {
-	var specs []string
+	specs := []string{zshJSONFlag}
 	position := 0
 	flagsFirst := true
 	for _, token := range argToken.FindAllString(cmd.args, -1) {
@@ -70,7 +74,7 @@ func zshArguments(cmd command) ([]string, error) {
 		}
 		specs = append(specs, fmt.Sprintf("%d%s%s:%s", position, colons, inner, action))
 	}
-	if flagsFirst && position > 0 && len(specs) > position {
+	if flagsFirst && position > 0 && len(specs) > position+1 {
 		specs = append([]string{"-A", "-*"}, specs...)
 	}
 	return specs, nil
@@ -109,7 +113,7 @@ func zshCompletion() (string, error) {
 	b.WriteString("  )\n  _describe -t commands 'werft command' commands\n}\n")
 	b.WriteString("\n_werft() {\n")
 	b.WriteString("  local curcontext=$curcontext state line _werft_prog=$words[1]\n")
-	b.WriteString("  _arguments -C '--json[print one JSON document on stdout]' '1:command:->command' '*::argument:->argument'\n")
+	fmt.Fprintf(&b, "  _arguments -C -A '-*' %s '1:command:->command' '*::argument:->argument'\n", zshQuote(zshJSONFlag))
 	b.WriteString("  case $state in\n")
 	b.WriteString("    command) _werft_commands ;;\n")
 	b.WriteString("    argument)\n")
@@ -119,9 +123,6 @@ func zshCompletion() (string, error) {
 		specs, err := zshArguments(cmd)
 		if err != nil {
 			return "", err
-		}
-		if len(specs) == 0 {
-			continue
 		}
 		quoted := make([]string, len(specs))
 		for i, spec := range specs {
@@ -139,21 +140,45 @@ func zshCompletion() (string, error) {
 const zshHead = `#compdef werft
 # zsh completion for werft; source <(werft completion zsh)
 
-# _werft_values key command...: the string values of key in the JSON of
-# werft --json command.
-_werft_values() {
-  local key=$1 l
-  shift
-  reply=()
-  for l in ${(f)"$(${_werft_prog:-werft} --json "$@" 2>/dev/null)"}; do
-    [[ $l == *\"$key\":\ \"*\"* ]] && reply+=(${${l#*\": \"}%\"*})
-  done
+# _werft_json command...: reply holds the lines of werft --json command.
+_werft_json() {
+  reply=(${(f)"$(${_werft_prog:-werft} --json "$@" 2>/dev/null)"})
 }
 
-_werft_domains() {
-  local expl
-  _werft_values name list
-  _wanted domains expl 'VM' compadd -a reply
+# _werft_decode rest: REPLY is the JSON string that ends at the last quote of
+# rest, with \" and \\ decoded.
+_werft_decode() {
+  local s=${1%\"*}
+  s=${s//\\\\/$'\1'}
+  s=${s//\\\"/\"}
+  REPLY=${s//$'\1'/\\}
+}
+
+# _werft_values key command...: reply holds the string values of key in the
+# JSON of werft --json command.
+_werft_values() {
+  local key=$1 l
+  local -a values
+  shift
+  _werft_json "$@"
+  for l in $reply; do
+    [[ $l == *\"$key\":\ \"* ]] && _werft_decode ${l#*\": \"} && values+=($REPLY)
+  done
+  reply=($values)
+}
+
+# _werft_build_vms: the VMs of werft list without the lease VMs.
+_werft_build_vms() {
+  local expl l
+  local -a names
+  _werft_json list
+  for l in $reply; do
+    case $l in
+      *'"name": "'*) _werft_decode ${l#*\": \"}; names+=($REPLY) ;;
+      *'"lease": true'*) names[-1]=() ;;
+    esac
+  done
+  _wanted domains expl 'VM' compadd -a names
 }
 
 _werft_images() {
@@ -174,12 +199,13 @@ _werft_labels() {
   local expl l inside=0
   local -a labels
   [[ -n $line[1] ]] || return 1
-  for l in ${(f)"$(${_werft_prog:-werft} --json snapshots $line[1] 2>/dev/null)"}; do
+  _werft_json snapshots ${(Q)line[1]}
+  for l in $reply; do
     case $l in
       *'"reset_points": []'*) break ;;
       *'"reset_points": ['*) inside=1 ;;
-      *']'*) inside=0 ;;
-      *\"*) (( inside )) && labels+=(${${l#*\"}%\"*}) ;;
+      '  ]'*) inside=0 ;;
+      *) (( inside )) && _werft_decode ${l#*\"} && labels+=($REPLY) ;;
     esac
   done
   _wanted labels expl 'reset point' compadd -a labels

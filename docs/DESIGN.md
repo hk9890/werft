@@ -543,7 +543,8 @@ line 1, guest password on line 2) goes away.
   `cmd/werft/cli.go`. `zshArguments` in `cmd/werft/completion.go` maps each placeholder of `args`
   to a completer; a new placeholder needs an entry in `completers`. The script reads names from
   `werft --json list`, `snapshots`, `images` and `leases`; the `leases` call releases expired
-  leases first.
+  leases first. VM names leave out the entries of `werft --json list` with `"lease": true`, the
+  domains with werft lease metadata.
 
 Exit codes are part of the contract:
 

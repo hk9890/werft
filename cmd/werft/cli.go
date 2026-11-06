@@ -154,6 +154,7 @@ func (c *cli) reportError(err error) {
 func (c *cli) writeJSON(v any) {
 	enc := json.NewEncoder(c.stdout)
 	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
 	_ = enc.Encode(v)
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,9 @@ func TestCompletionArguments(t *testing.T) {
 // commands print against the fake hypervisor.
 func TestZshCompletes(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
+	if err != nil && os.Getenv("CI") != "" {
+		t.Fatal("zsh is not installed; .github/workflows/ci.yml installs it")
+	}
 	if err != nil {
 		t.Skip("zsh is not installed")
 	}
@@ -58,10 +62,12 @@ func TestZshCompletes(t *testing.T) {
 		want  []string
 	}{
 		{"werft ", commandNames()},
-		{"werft reset ", []string{"vm1", "werft-vm-plain-abc123"}},
+		{"werft reset ", []string{oddVM, "vm1"}},
 		{"werft reset vm1 ", []string{"clean-install", "provision-base"}},
+		{"werft reset --json vm1 ", []string{"clean-install", "provision-base"}},
+		{"werft reset " + shQuote(oddVM) + " ", []string{oddLabel}},
 		{"werft --json seal --yes vm1 ", []string{"clean-install", "provision-base"}},
-		{"werft lease ", []string{"ubuntu-26-04"}},
+		{"werft lease --json ", []string{"ubuntu-26-04"}},
 		{"werft lease ubuntu-26-04 --tier ", []string{"full", "plain"}},
 		{"werft release ", []string{"abc123"}},
 		{"werft help ", commandNames()},
@@ -74,6 +80,17 @@ func TestZshCompletes(t *testing.T) {
 	}
 }
 
+// oddVM and oddLabel hold the characters JSON escapes, and & that Go's
+// HTML escaping would turn into \u0026.
+const (
+	oddVM    = `q"a\b&c`
+	oddLabel = `x\y"z&`
+)
+
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func commandNames() []string {
 	names := make([]string, len(commands))
 	for i, cmd := range commands {
@@ -84,7 +101,8 @@ func commandNames() []string {
 }
 
 // fakeWerft writes a werft script into dir/bin that prints the JSON of
-// list, snapshots vm1, images and leases, made by the real commands.
+// list, snapshots of vm1 and oddVM, images and leases, made by the real
+// commands. The lease VM is in the list.
 func fakeWerft(t *testing.T, dir string) string {
 	t.Helper()
 	state := t.TempDir()
@@ -95,6 +113,12 @@ func fakeWerft(t *testing.T, dir string) string {
 		if err := lh.fake.CreateSnapshot("vm1", label, ""); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := lh.fake.DefineDomain(`<domain type='kvm'><name>q&quot;a\b&amp;c</name></domain>`); err != nil {
+		t.Fatal(err)
+	}
+	if err := lh.fake.CreateSnapshot(oddVM, oddLabel, ""); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(state, "werft"), 0o700); err != nil {
 		t.Fatal(err)
@@ -110,16 +134,16 @@ func fakeWerft(t *testing.T, dir string) string {
 	}
 	var fake strings.Builder
 	fake.WriteString("#!/bin/sh\ncase \"$*\" in\n")
-	for _, args := range []string{"--json list", "--json snapshots vm1", "--json images", "--json leases"} {
-		r := lh.run(strings.Fields(args)...)
+	for i, args := range [][]string{{"--json", "list"}, {"--json", "snapshots", "vm1"}, {"--json", "snapshots", oddVM}, {"--json", "images"}, {"--json", "leases"}} {
+		r := lh.run(args...)
 		if r.code != 0 {
-			t.Fatalf("werft %s = %+v", args, r)
+			t.Fatalf("werft %q = %+v", args, r)
 		}
-		file := filepath.Join(dir, strings.ReplaceAll(args, " ", "_")+".json")
+		file := filepath.Join(dir, fmt.Sprintf("%d.json", i))
 		if err := os.WriteFile(file, []byte(r.stdout), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		fake.WriteString("\"" + args + "\") cat '" + file + "' ;;\n")
+		fake.WriteString(shQuote(strings.Join(args, " ")) + ") cat " + shQuote(file) + " ;;\n")
 	}
 	fake.WriteString("esac\n")
 	if err := os.WriteFile(filepath.Join(bin, "werft"), []byte(fake.String()), 0o700); err != nil {
