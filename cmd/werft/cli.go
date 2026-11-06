@@ -43,12 +43,19 @@ var commands []command
 
 func init() {
 	commands = []command{
+		{name: "extend", args: "<lease-id> [--for duration]", summary: "move the expiry of a lease by --for (default 4h)", run: (*cli).cmdExtend},
 		{name: "help", args: "[command]", summary: "show the usage of werft or of one command", run: (*cli).cmdHelp},
+		{name: "images", summary: "list the stock images: image, tier, version, date", run: (*cli).cmdImages},
+		{name: "lease", args: "<image> [--tier plain|full] [--owner o] [--view]", summary: "lease a disposable VM from the newest stock image; returns when SSH answers", run: (*cli).cmdLease},
+		{name: "leases", summary: "list the leases: id, owner, image, tier, address, expiry; releases expired ones first", run: (*cli).cmdLeases},
 		{name: "list", summary: "list all VMs: state, disk use, reset points, LUKS marker, address", run: (*cli).cmdList},
 		{name: "migrate", args: "[--yes] <name>", summary: "move a build VM from the reset points of vm to native ones: keep provision-base (clean on -full), export clean-install", run: (*cli).cmdMigrate},
 		{name: "prepare", args: "[--yes] [--recipe file] <name>", summary: "make a stock install the base provision starts from: werft key and your own key, hostname, provision-base", run: (*cli).cmdPrepare},
 		{name: "provision", args: "[--yes] [--recipe file] [--key mount] <name>", summary: "run the recipe on <name> from provision-base and keep the result as <name>-full", run: (*cli).cmdProvision},
+		{name: "reap", summary: "release expired leases, lease VMs without a lease directory, and lease directories without a VM", run: (*cli).cmdReap},
+		{name: "release", args: "<lease-id>", summary: "destroy a lease: its VM, disk and key; a second release succeeds", run: (*cli).cmdRelease},
 		{name: "reset", args: "[--yes] <name> [label]", summary: "roll a shut-off VM back to a reset point (default label: clean-install)", run: (*cli).cmdReset},
+		{name: "seal", args: "[--yes] <build-vm> <label>", summary: "make a new stock image version from a reset point of a build VM; provision-base gives the plain tier", run: (*cli).cmdSeal},
 		{name: "snapshot", args: "[--replace] <name> [label]", summary: "take a reset point of a shut-off VM (default label: clean-install); --replace retakes one", run: (*cli).cmdSnapshot},
 		{name: "snapshots", args: "<name>", summary: "list the reset points of a VM, and those vm keeps", run: (*cli).cmdSnapshots},
 		{name: "start", args: "[--view] <name>", summary: "start a VM headless and wait for its address; --view also opens virt-viewer", run: (*cli).cmdStart},

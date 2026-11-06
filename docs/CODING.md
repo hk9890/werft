@@ -32,7 +32,7 @@ mise run werft -- <command>     # build, then run in your shell's directory; ver
 
 - **Commands**: `cmd/werft`, one file per command group (`lifecycle.go`: `list`, `start`, `stop`;
   `resetpoint.go`: `snapshot`, `snapshots`, `reset`, `migrate`; `provision.go`: `prepare`,
-  `provision`). Flags, rendering and confirmation only; policy goes in `internal/`.
+  `provision`; `image.go`: `seal`, `images`; `lease.go`: `lease`, `release`, `leases`, `extend`, `reap`). Flags, rendering and confirmation only; policy goes in `internal/`.
 - **Real adapters**: build them only in `cmd/werft/main.go` and `cmd/werft/adapters.go`
   (`dialLibvirt`, `buildVMRun`). Every other package takes the interfaces.
 - **libvirt**: call it only through `virt.Hypervisor` (`internal/virt/virt.go`). For a new call,

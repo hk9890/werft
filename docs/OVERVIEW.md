@@ -13,6 +13,8 @@ internal/virttest/         fake hypervisor for unit tests
 internal/domxml/           read, build and edit domain XML (libvirtxml)
 internal/lifecycle/        list, start, stop
 internal/resetpoint/       snapshot, snapshots, reset, migrate, raw-NVRAM guard
+internal/image/            seal and the stock image records (images.toml)
+internal/lease/            lease and release
 internal/pipeline/         step runner for prepare and provision
 internal/steps/            built-in steps and their assembly
 internal/recipe/           recipe TOML load and validation
@@ -28,8 +30,6 @@ internal/build/            version stamp (ldflags)
 internal/livetest/         helpers for live tests (build tag live)
 examples/setup/            the setup-repo recipe werft ships until the setup repo takes it over
 ```
-
-`internal/image` and `internal/lease` do not exist yet; DESIGN.md holds their target.
 
 Where werft keeps state on disk and in libvirt: [DESIGN.md, "Where state lives"](DESIGN.md#where-state-lives).
 

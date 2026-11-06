@@ -167,3 +167,34 @@ func TestQCOW2NVRAM(t *testing.T) {
 		t.Error("QCOW2NVRAM accepted a domain without a loader path")
 	}
 }
+
+func TestMemory(t *testing.T) {
+	tests := map[string]struct {
+		xml  string
+		want uint64
+	}{
+		"KiB, as libvirt writes it": {`<memory unit='KiB'>1048576</memory>`, 1 << 30},
+		"no unit is KiB":            {`<memory>2048</memory>`, 2 << 20},
+		"MiB":                       {`<memory unit='MiB'>1024</memory>`, 1 << 30},
+		"GB is decimal":             {`<memory unit='GB'>2</memory>`, 2e9},
+		"bytes":                     {`<memory unit='bytes'>4096</memory>`, 4096},
+	}
+	for name, tt := range tests {
+		d, err := domxml.Parse("<domain type='kvm'><name>s</name>" + tt.xml + "</domain>")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := domxml.Memory(d); err != nil || got != tt.want {
+			t.Errorf("%s: Memory = %d, %v, want %d", name, got, err, tt.want)
+		}
+	}
+	for _, xml := range []string{"", `<memory unit='pages'>1</memory>`} {
+		d, err := domxml.Parse("<domain type='kvm'><name>s</name>" + xml + "</domain>")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := domxml.Memory(d); err == nil {
+			t.Errorf("Memory of %q succeeded", xml)
+		}
+	}
+}

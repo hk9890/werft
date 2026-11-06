@@ -37,7 +37,7 @@ real adapters.
   calls werft needs: domain lookup/list/define/start/shutdown/destroy/undefine, state, XML,
   metadata and description; snapshots, and the redefine of snapshot metadata; pools and volumes,
   and the volume list of a pool; DHCP leases; screenshot, send-key,
-  device attach/detach; libvirt version and free host memory. Objects are addressed by name.
+  device attach/detach; libvirt version and total host memory. Objects are addressed by name.
   Metadata and description go to the persistent definition.
 - **`internal/virt/libvirt`** — The go-libvirt adapter. It opens `libvirt-sock` (monolithic daemon)
   or `virtqemud-sock` (modular daemons) and maps libvirt error codes to failure kinds. libvirt
@@ -47,8 +47,8 @@ real adapters.
   log, and failure injection.
 - **`internal/domxml`** — Pure functions that read, build and edit domain XML with libvirtxml.
   They read disks, loader, NVRAM, UEFI, vsock CID, MACs, description and the LUKS marker. They
-  build clones of build VMs (new name, UUID, MAC) and the qcow2 NVRAM rewrite for migration, and
-  will build lease domains.
+  build clones of build VMs (new name, UUID, MAC), the qcow2 NVRAM rewrite for migration, and
+  lease domains (`domxml.Lease`).
 - **`internal/guest`** — The guest port and its OpenSSH adapter: run a command, run a script with
   data on stdin, copy files, probe readiness. A secret goes on stdin, never on the command line. A
   copy empties the target directory and sends the files as one tar stream over one login. The
@@ -110,13 +110,13 @@ real adapters.
 | State | Location | Source of truth |
 |---|---|---|
 | Build VMs, leases | libvirt domains | libvirt |
-| Lease owner, expiry, stock version | `<metadata>` element of the lease domain, werft namespace | libvirt |
+| Lease owner, created, expiry, stock version, state directory | `<metadata>` element of the lease domain, werft namespace | libvirt |
 | Reset points | libvirt snapshot metadata plus qcow2 internal snapshots in disk and NVRAM | libvirt |
 | Stock files, lease overlays, `clean-install` exports of `migrate` | storage pool `werft`, `/var/lib/libvirt/images/werft/` | libvirt |
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
 | LUKS marker | domain description line, same format as `vm` writes | libvirt |
-| Image records (user, guest family, systemd version, vsock support, versions) | `~/.local/state/werft/images.toml`, written by `seal` | werft |
-| Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/` | werft, removed on release |
+| Image records (user, guest family, systemd version, versions, the domain definition leases start from) | `~/.local/state/werft/images.toml`, written by `seal` | werft |
+| Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/`: `id_ed25519`, `id_ed25519.pub`, `ssh_config` | werft, removed on release |
 | werft key for build VMs (installed by `prepare`), build VM `ssh_config` | `~/.local/state/werft/id_ed25519`, `~/.local/state/werft/ssh_config` | werft |
 | Provision logs | `~/.local/state/werft/logs/provision-<name>-<YYYYmmdd-HHMMSS>.log` | werft |
 | Locks | `~/.local/state/werft/locks/` | werft |
@@ -129,49 +129,120 @@ storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception
 (`/var/lib/libvirt/qemu/nvram` is `0755`) to find the `.bak` files of `vm`. werft creates the
 `werft` pool on first use with `StoragePoolDefineXML` and builds it through the libvirt API, with no
 sudo. libvirt keeps the NVRAM files in no pool by itself. When no pool lists an NVRAM file in
-`/var/lib/libvirt/qemu/nvram`, `clone` and `migrate` refresh the pool on that directory, or define
-the pool `nvram` on it the same way when no pool has that target, and look again
+`/var/lib/libvirt/qemu/nvram`, `clone`, `migrate` and `seal` refresh the pool on that directory,
+or define the pool `nvram` on it the same way when no pool has that target, and look again
 (`virt.NVRAMVolume`). libvirt allows one pool per directory. They do this only in their run, after
-the questions: a check and the plan of `migrate` change nothing (`virt.FindNVRAM`).
+the questions: a check and the plans of `migrate` and `seal` change nothing (`virt.FindNVRAM`).
 
 ## Lease lifecycle
 
-1. **Resolve.** Image and tier give the newest stock version in `images.toml`.
-2. **Admit.** Take the global lock. Read `StoragePoolGetInfo` and free host memory. Fail with "no
-   capacity" when the lease memory would take free memory below the budget in `config.toml`, or the
-   pool is full. The lock stays held until step 5 ends, so a
-   second admission cannot pass the capacity check first, and reap never sees a lease directory
-   whose domain is not yet defined.
-3. **Prepare.** Create a lease ID, an ed25519 key pair in the lease directory, and a random MAC.
-4. **Disk.** `StorageVolCreateXML` with a `backingStore` on the stock file. Thin, created in
-   milliseconds.
+`werft lease <image> [--tier plain|full] [--owner o] [--view]` runs these steps (`lease.Start` in
+`internal/lease/lease.go`). The flags can stand before or after the image. The disk password of
+step 6 is not built yet.
+
+1. **Resolve.** Image and tier give the newest stock version in `images.toml`. A record without a
+   domain definition (sealed before leases existed) fails with `unsupported` and names the seal.
+2. **Admit.** Take the global lock (`lease.admit`). Fail with `no_capacity` when host memory less
+   committed memory less the `<memory>` of the stock definition is below `memory_budget_mib` in
+   `config.toml` (default 4096), or when `StoragePoolGetInfo` gives the stock pool less than 1 GiB
+   free (`lease.MinPoolFree`).
+   - Host memory is the total of `NodeGetInfo`.
+   - Committed memory (`lease.committed`) is the configured `<memory>` of every domain that is not
+     shut off, plus every lease domain in any state, whatever its state directory.
+   - Free memory (`NodeGetFreeMemory`) is no input: it changes with the page cache, and it does not
+     drop for a lease that is defined but not started, or for a guest that has not touched its
+     memory yet.
+
+   The lock stays held until step 5 ends, so the next admission counts the new lease domain, and
+   reap never sees a lease directory whose domain is not yet defined.
+3. **Prepare.** Create a lease ID (6 lowercase letters and digits), the lease directory, and an
+   ed25519 key pair in it.
+4. **Disk.** `StorageVolCreateXML` of `<domain>.qcow2` in the pool of the stock version, with a
+   `backingStore` on the stock file. Thin, created in milliseconds.
 5. **Define.** `DomainDefineXMLFlags` with the unique name. This reserves the lease atomically. The
-   XML holds:
-   - `<nvram template=… templateFormat='qcow2' format='qcow2'>` with the stock vars as template,
-     so the lease keeps the installer's boot entries;
+   XML is the domain definition of the stock record, with a new UUID and a random MAC, the overlay
+   as its only disk, no title and no description. It holds:
+   - the explicit loader of the stock definition, without firmware autoselection, and
+     `<nvram template=… templateFormat='qcow2' format='qcow2'>` with the stock vars as template,
+     so the lease keeps the installer's boot entries. libvirt makes the NVRAM file at the first
+     start;
    - `<vsock><cid auto='yes'/>`;
+   - a serial or console device with a file source gets a pty, and every `<log>` goes: a file of
+     the stock definition is one path for every lease, and the second lease that starts fails to
+     open it;
    - SMBIOS credentials: `system.hostname` (the domain name), `system.machine_id` (new),
-     `ssh.ephemeral-authorized_keys-all` (the lease public key), and `werft.ssh.authorized_keys`
-     for the TCP path;
-   - werft metadata: owner, created, expiry, stock version.
+     `ssh.ephemeral-authorized_keys-all` (the lease public key, for every user over vsock), and
+     `werft.ssh.authorized_keys` for the TCP path. A `tmpfiles.extra` credential appends that key
+     to `/home/<user>/.ssh/authorized_keys` at each boot, and a
+     `systemd.unit-dropin.systemd-tmpfiles-setup.service` credential adds
+     `ImportCredential=werft.*`, because `systemd-tmpfiles-setup` imports no other credential.
+     Known limits: unit drop-ins from credentials need systemd 256, so the TCP path does not reach
+     the key in an older guest (seal needs systemd 256 too, so no such image exists today); the key
+     line is appended again at each boot; the home directory is assumed to be `/home/<user>`;
+   - werft metadata in namespace `https://github.com/hk9890/werft/lease`: owner, created, expiry
+     (created plus 4 hours), stock version, and the state directory of the werft run.
 
    Then release the global lock. Steps 2 to 5 take seconds and do not include the boot.
 6. **Boot.** `DomainCreateWithFlags`. The domain keeps its graphics device, but no viewer opens
    unless `--view`. When the stock image carries the LUKS marker, type the disk password as the
    `boot` step does; it comes from `pass`, so a lease without a TTY needs the GPG agent unlocked.
 7. **Address.** vsock CID from the live XML when the image record says the guest has systemd 256
-   or later. Else the DHCP lease for the MAC (`NetworkGetDhcpLeases`).
-8. **Ready.** Probe SSH with the lease key until it answers or the boot timeout ends. Few attempts,
-   with growing intervals.
-9. **Hand over.** Print the lease ID, SSH user, address, key path, a ready `ssh` command, the path
-   of the lease `ssh_config`, and the expiry.
+   or later. Else the DHCP lease for the MAC (`NetworkGetDhcpLeases`), within the boot timeout.
+   Write the lease `ssh_config`: `Host <id>` with that address, the image's user and the lease key.
+8. **Ready.** Probe SSH through the lease `ssh_config` until it answers or the boot timeout (5
+   minutes) ends. Few attempts, with growing intervals.
+9. **Hand over.** Print the lease ID, domain, stock version, owner, SSH user, address, key path, a
+   ready `ssh` command (`ssh -F <ssh_config> <id>`), the path of the lease `ssh_config`, the
+   creation time and the expiry.
 
-Release destroys the domain, undefines it with its NVRAM, deletes the overlay, and removes the
-lease directory. Each step accepts "already gone", so release can run twice and finishes a
+A lease that fails after step 3, SIGINT included, is released before werft exits; the error keeps
+the kind of the failure. When an overlay delete fails and no domain was defined, `werft release`
+cannot find the overlay, so the error names the `virsh vol-delete` command that removes it.
+
+The owner is the `--owner` flag, else `$WERFT_OWNER`, else `$USER`. It is a label for `werft
+leases` and the reap output. Release does not check it: the lease ID is the handle, and the host
+has one user.
+
+`werft release <lease-id>` (`lease.Release`) finds the lease domain by its name
+`werft-*-<id>` and its werft metadata; a domain without the metadata is no lease and stays. It
+destroys the domain, deletes the overlay, undefines the domain with its NVRAM, and removes the lease
+directory. The domain is the only way to find the overlay, so a failed overlay delete keeps the
+domain and the lease directory, and fails; the next release tries again. Each step accepts
+"already gone", so release can run twice, exits 0 for a lease that is gone, and finishes a
 half-done release.
 
 Every command that reads leases first releases the expired ones and the orphans (a lease domain
-without a lease directory, or the reverse). `werft reap` does only that.
+without a lease directory, or the reverse). `werft reap` does only that (`lease.Reap` in
+`internal/lease/reap.go`). The commands with this reap pass are `lease`, `leases`, `extend` and
+`release`. `list` has none: it changes nothing. Reap rules:
+
+- It takes the global lock, so it never sees a lease directory whose domain is not yet defined.
+- A lease domain is a domain named `<prefix><image>-<plain|full>-<id>` with werft lease metadata
+  (`lease.List`). A domain without the metadata, or with another name, is no lease and stays.
+- A lease belongs to the state directory its metadata names, compared also after symlinks.
+  `leases`, `extend` and reap act on the leases of their own state directory, and on the leases
+  without one (made before the element existed). A live test runs with an isolated state
+  directory, so a werft run with the real one never acts on a live-test lease, and the reverse.
+- A lease expires at its expiry time. A lease without a readable expiry never expires. Reap
+  releases an expired lease of its own state directory or of none.
+- A lease domain is an orphan only when its metadata names this state directory and its lease
+  directory is missing. A lease without a state directory is never an orphan: its lease directory
+  can be in any state directory.
+- A lease directory is an orphan when it is under `leases/`, is named like a lease ID, and no lease
+  domain has that ID, whatever state directory the domain names.
+- It releases a lease as `werft release` does, so a failed overlay delete keeps the domain and the
+  lease directory, and the next reap tries again. It goes on with the next lease and names every
+  failure. `werft reap` then fails with `failed`; the reap pass of the other commands only warns
+  on stderr. `werft release` takes no global lock, so a domain that goes during the reap counts
+  as released.
+
+`werft leases` lists each lease: ID, domain, image and tier (from the domain name), stock version,
+owner, created, expiry (from the metadata), and the user, address, key, `ssh_config` and `ssh`
+command of the lease directory. A lease that still boots has no address yet.
+
+`werft extend <lease-id> [--for duration]` (`lease.Extend`) adds `--for` (default 4 hours) to the
+expiry, under the global lock, and writes the metadata again with `SetDomainMetadata`. An expired
+lease is `not_found`.
 
 ## Reset points
 
@@ -273,17 +344,51 @@ side by side, one per domain.
 
 ## Stock images and seal
 
-`werft seal <build-vm> <label>` makes a new stock version:
+`werft seal [--yes] <build-vm> <label>` makes a new stock version (`image.Plan`, `Seal.Run` in
+`internal/image/seal.go`). Only the `plain` tier exists yet: label `provision-base` on a build VM
+that is not `-full`.
 
-1. Revert the build VM to the label. Copy disk and NVRAM with `StorageVolCreateXMLFrom`; the copy
-   is flat, with no internal snapshots.
-2. Boot a temporary domain on the copy. As root, run the embedded seal script: empty
-   `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the key `prepare`
-   installed; add the host-key regeneration drop-in (required: a guest without host keys accepts the
-   vsock connection and closes it at once), passwordless sudo, and the tmpfiles line for
-   `werft.ssh.authorized_keys`.
-3. Power off from inside the guest. Undefine the temporary domain, keep the volumes under
-   the stock name, write the image record.
+1. Check before any change: the label exists, and the build VM is shut off and passes the
+   raw-NVRAM guard. The revert brings back the definition the reset point holds, so check that one
+   (`SnapshotXML`): one writable disk in a storage pool, a UEFI NVRAM, and no LUKS marker. Then
+   confirm: the revert loses what the build VM wrote since the label.
+2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
+   from the checked definition fails the run before anything is copied.
+3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` that no
+   record, no volume of the pool and no domain has. Define a temporary domain under that name, so
+   the name is reserved: the build VM XML on the stock volumes `<name>.qcow2` and
+   `<name>_VARS.qcow2` in the `werft` pool (`pool` in `config.toml`), with a new UUID and MAC, a
+   vsock device, and SMBIOS credentials that replace those of the build VM. The credentials are a
+   new key pair of the run as `ssh.ephemeral-authorized_keys-all`, and a `sshd-vsock@` drop-in that
+   runs `ssh-keygen -A`, because a cloud image has no host keys.
+4. Without the global lock, copy disk and NVRAM to the stock volumes with
+   `StorageVolCreateXMLFrom`; the copy is flat, with no internal snapshots.
+5. Boot the temporary domain and log in as root over vsock with the key of the run. This needs no
+   guest password, and needs systemd 256 or later.
+6. Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
+   systemd version; empty `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
+   werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest
+   without host keys accepts the vsock connection and closes it at once) as a `sshd-vsock@`
+   drop-in and as a oneshot that `ssh` and `sshd` want; give `$USER` passwordless sudo; schedule
+   the poweroff 2 s later with `systemd-run`. It fails when the guest has no user `$USER`. The
+   tmpfiles line for `werft.ssh.authorized_keys` comes with the lease, which passes that
+   credential ([Lease lifecycle](#lease-lifecycle), step 5).
+7. Wait for the poweroff. No SSH login comes after the script: it would start a `sshd-vsock@`
+   instance whose drop-in makes new host keys, and every lease of the image would share them.
+   Undefine the temporary domain, keep the volumes under the stock name, and append the record to
+   `images.toml` under the global lock. The record keeps the definition of the temporary domain
+   without its credentials; leases start from it, so they do not depend on the build VM.
+
+A failed run removes the temporary domain and both volumes. When that removal fails, the error
+names what is left.
+
+`werft images --json` gives every field of each record but the domain definition: name, image,
+tier, version, date, source build VM and label, pool, volumes, user, guest family and systemd
+version. The text table shows name, image, tier, version, date and user.
+
+`TestSealLive` in `cmd/werft/image_live_test.go` proves the result. It reads the stock disk with
+`debugfs` and finds no host keys, no hostname and an empty machine-id. It boots two overlays of the
+stock disk and finds a different machine-id and different host keys in each.
 
 Build VMs and `-full` stay without passwordless sudo, as today. Only stock images get the seal
 changes. Seal removes no secrets: a `full` lease holds them by design
@@ -422,7 +527,7 @@ line 1, guest password on line 2) goes away.
 - On error with `--json`, stdout holds `{"error": {"kind": "...", "message": "..."}}`, with the
   kind from the table below.
 - Without a TTY no command prompts; a missing confirmation fails and names the flag (`--yes`).
-  `-y` is short for `--yes` on `reset`, `prepare`, `provision` and `migrate`, as in `vm`.
+  `-y` is short for `--yes` on `reset`, `prepare`, `provision`, `migrate` and `seal`, as in `vm`.
 - JSON holds no secret. It gives the path of the lease private key.
 
 Exit codes are part of the contract:
@@ -445,10 +550,12 @@ Exit codes are part of the contract:
 
 - libvirt is the arbiter. A unique domain name reserves a lease. QEMU image locks prevent two
   writers on one disk. Stock files are opened read-only as backing files.
-- `locks/global.lock` (`flock`) serializes admission, seal, reap, stock garbage collection, and
-  the creation of the werft key by `prepare`.
-  Admission holds it from the capacity check until the lease domain is defined. It is held for
-  seconds, never for a boot.
+- `locks/global.lock` (`flock`) serializes admission, seal, reap, extend, stock garbage
+  collection, and the creation of the werft key by `prepare`.
+  Admission holds it from the capacity check until the lease domain is defined, so the next
+  admission counts the memory of that domain before it starts. Seal holds it while
+  it picks the stock name and defines the temporary domain that reserves it, and while it writes
+  the record. It is held for seconds: never for a disk copy, never for a boot.
 - `locks/<domain>.lock` serializes `snapshot`, `reset`, `prepare`, `provision`, `seal` and
   `migrate` on one build VM. A second run fails with `conflict` and does not wait.
 - Leases run in parallel. Limits: the memory budget, pool free space, and the 253 addresses of the
@@ -481,7 +588,8 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
   explicit loader. `TestSecureBootMigrateLive` proves `migrate`, `snapshot` and `reset` on the shape
   of a virt-manager build VM: Secure Boot with enrolled keys, `OVMF_CODE_4M.ms.fd`, SMM.
 - **systemd versions.** vsock SSH and `ssh.ephemeral-authorized_keys-all` need systemd 256.
-  Ubuntu 24.04 has 255 and uses the TCP fallback. A static `/etc/hostname` overrides the hostname
+  Ubuntu 24.04 has 255 and uses the TCP fallback. Seal has no TCP fallback yet, so it cannot seal
+  Ubuntu 24.04. A static `/etc/hostname` overrides the hostname
   credential, so seal must delete it.
 - **Duplicate DHCP DUID.** Clones with one machine-id get one IP. The machine-id credential
   prevents it only if seal empties `/etc/machine-id`.
@@ -499,5 +607,3 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
   file or file descriptor? Can an agent run `provision` without a TTY at all, given the key stick
   and the `pinentry` secret?
 - **Shell completion.** Does werft generate zsh completion, replacing `completion-zsh/vm.rc`?
-- **Lease owner.** Where the value comes from: an `--owner` flag, an env var set by the agent
-  harness, or `$USER`. Does `release` refuse a lease of another owner?

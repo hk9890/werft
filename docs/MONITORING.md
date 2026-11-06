@@ -28,7 +28,8 @@ writes no log: its output is stderr only.
 - `locks/global.lock`, `locks/<domain>.lock` are `flock` files (`state.Dir.LockGlobal`,
   `state.Dir.LockDomain`). The file stays after a run; it says nothing. A held lock gives
   `another werft run works on <name>`. Find the holder with `lsof ~/.local/state/werft/locks/<name>.lock`.
-- `images.toml` and `leases/<id>/` exist only after `seal` and `lease`, which are not in code yet.
+- `images.toml` exists after the first `seal`; `werft images --json` reads it. `leases/<id>/`
+  exists from `werft lease` until the release or the reap of the lease.
 
 ## Domain state, reset points, addresses
 
@@ -66,6 +67,10 @@ virsh -c qemu:///system vol-download --pool werft-test <domain>-console.log /tmp
 ```
 
 Use these only on pool `werft-test` and domains named `werft-test-*`.
+
+A lease writes its console to no file, also when its stock image does: in `domxml.Lease`, a serial
+or console device with a file source gets a pty, and every `<log>` goes. Watch the console of a running lease with
+`virsh -c qemu:///system console <lease domain>`; type nothing into it.
 
 ## libvirt domain logs
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
@@ -85,6 +86,31 @@ func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run,
 }
 
 func dialLibvirt() (virt.Hypervisor, error) { return libvirt.Dial() }
+
+// rootShell is a shell that logs in as root with a new key pair, and the
+// public half of the key. The seal gives it to the guest as a credential.
+// cleanup removes the key.
+func rootShell() (sh guest.Shell, pubkey string, cleanup func(), err error) {
+	tmp, err := os.MkdirTemp("", "werft-seal-")
+	if err != nil {
+		return nil, "", nil, failure.Wrap(failure.Failed, err, "create a directory for the seal key")
+	}
+	cleanup = func() { _ = os.RemoveAll(tmp) }
+	key, config := filepath.Join(tmp, "id_ed25519"), filepath.Join(tmp, "ssh_config")
+	if err := guestEnsureKey(key); err != nil {
+		cleanup()
+		return nil, "", nil, failure.Wrap(failure.Failed, err, "create the seal key")
+	}
+	pub, err := os.ReadFile(key + ".pub")
+	if err == nil {
+		err = guest.WriteConfig(config, key)
+	}
+	if err != nil {
+		cleanup()
+		return nil, "", nil, failure.Wrap(failure.Failed, err, "set up the seal key")
+	}
+	return guest.OpenSSH{Config: config}, strings.TrimSpace(string(pub)), cleanup, nil
+}
 
 // openViewer opens virt-viewer in a session of its own, so the window
 // outlives werft. Over SSH to the host there is no display, and the viewer

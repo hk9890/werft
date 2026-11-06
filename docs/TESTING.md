@@ -14,7 +14,8 @@ the test image is missing.
 
 ## Live test setup
 
-1. Put your user in group `libvirt`.
+1. Put your user in group `libvirt`. Install `qemu-img` and `e2fsprogs`: `TestSealLive` reads the
+   stock disk with `debugfs`.
 2. Download the test image once, and check it against `SHA256SUMS` from the same directory:
 
    ```sh
@@ -63,6 +64,10 @@ Build on `internal/livetest`; `internal/virt/libvirt/uefi_reset_live_test.go` is
   `livetest.RemoveDomain`. Both refuse a name without the `werft-test-` prefix. `NewGuest`
   removes leftovers of an earlier run, and removes the domain and its volumes in `t.Cleanup`.
 - Give each domain and volume the prefix of your track, so parallel runs do not collide.
+- Before a test runs `werft lease`, set `leasePrefix` (`cmd/werft/lease.go`) to the prefix of
+  its track, as `TestLeaseLive` does; the default `werft-` names no test domain.
+- To make a lease expire, move `clock` (`cmd/werft/lease.go`) forward with `setClock`, as
+  `leaseLifetime` in `cmd/werft/lease_live_test.go` does.
 - Reach the guest with `Guest.Boot`, `Guest.Run` and `Guest.SSH`: root over vsock, with the test key
   as the `ssh.ephemeral-authorized_keys-all` credential. The cloud image has no SSH host keys and
   no network configuration, so the guest gets two more credentials: a `sshd-vsock@` drop-in that

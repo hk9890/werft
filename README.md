@@ -11,9 +11,14 @@ The status of each phase is in the [roadmap](docs/PRODUCT.md#roadmap).
 
 ## Install
 
-werft has no release yet; build it from source. The build steps are in
-[docs/CODING.md](docs/CODING.md#build-and-run-from-source). Release binaries that mise installs
-come with task `werft-git8j8`.
+Install a release with mise. The repository is private, so mise needs a GitHub token with access
+to it ([docs/RELEASING.md](docs/RELEASING.md#install-through-mise)).
+
+```sh
+mise use -g github:hk9890/werft@X.Y.Z    # a version from the releases page
+```
+
+To build from source, follow [docs/CODING.md](docs/CODING.md#build-and-run-from-source).
 
 ## Usage
 
@@ -58,6 +63,40 @@ werft prepare ubuntu-26-04                   # once: werft key and your own key,
 werft provision ubuntu-26-04                 # reset, run the recipe, clone to ubuntu-26-04-full
 werft provision --key /media/$USER/BACKUP ubuntu-26-04  # the key stick at another mount point
 ```
+
+### Stock images
+
+A stock image is a sealed copy of a build VM reset point. Leases start from it.
+
+```sh
+werft seal ubuntu-26-04 provision-base       # reset to provision-base, seal a copy as the plain tier; asks first
+werft images                                 # every stock version: image, tier, version, date
+```
+
+`seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
+
+### Leases
+
+A lease is a disposable VM on a thin overlay of the newest stock version.
+
+```sh
+werft lease ubuntu-26-04                     # boot a plain lease; prints its id and ssh command when SSH answers
+werft lease ubuntu-26-04 --owner agent-7     # label the lease (default $WERFT_OWNER, else $USER)
+ssh -F ~/.local/state/werft/leases/<id>/ssh_config <id>
+werft release <id>                           # destroy the VM, its disk and its key; a second release exits 0
+werft leases                                 # id, owner, image, tier, address, expiry of each lease
+werft extend <id> --for 1h                   # move the expiry by 1h (default 4h)
+werft reap                                   # release expired leases and orphans now
+```
+
+A lease expires 4 hours after it starts. `lease`, `leases`, `extend` and `release` first release
+the expired leases; `reap` does only that.
+
+Leases run in parallel. `werft lease` exits 6 (`no_capacity`) when the host memory, less the memory
+of the running VMs and of every lease, less the new lease, is below `memory_budget_mib` in
+`~/.config/werft/config.toml` (default 4096).
+
+A stock image sealed before `werft lease` existed has no domain definition for leases; seal it again.
 
 ## Further reading
 
