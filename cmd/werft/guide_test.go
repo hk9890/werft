@@ -28,20 +28,22 @@ func TestGuide(t *testing.T) {
 	}
 }
 
-// guideCall is a werft call of the guide: an example line, or one after
-// "run".
-var guideCall = regexp.MustCompile(`(?m)(?:^[ \t]+|run )werft (?:--json )?([a-z]+)(.*)$`)
+// guideExample is an example call of the guide: an indented werft line.
+var guideExample = regexp.MustCompile(`(?m)^[ \t]+werft (?:--json )?([a-z]+)(.*)$`)
+
+// guideNames is every werft mention of the guide: one command, or a list
+// such as "werft start, stop or reset".
+var guideNames = regexp.MustCompile(`werft (?:--json )?([a-z]+(?:, [a-z]+)*(?:,? (?:and|or) [a-z]+)?)`)
 
 func TestGuideNamesRealCommandsAndFlags(t *testing.T) {
-	calls := guideCall.FindAllStringSubmatch(guide, -1)
-	if len(calls) < 6 {
-		t.Fatalf("found %d werft calls in the guide, want the examples", len(calls))
+	examples := guideExample.FindAllStringSubmatch(guide, -1)
+	if len(examples) < 6 {
+		t.Fatalf("found %d werft examples in the guide, want the examples", len(examples))
 	}
-	for _, call := range calls {
+	for _, call := range examples {
 		cmd, ok := lookup(call[1])
 		if !ok {
-			t.Errorf("the guide names command %q, which werft does not have", call[1])
-			continue
+			continue // the check of every werft mention below reports it
 		}
 		for _, f := range regexp.MustCompile(`--[a-z]+`).FindAllString(call[2], -1) {
 			if f != "--json" && !strings.Contains(cmd.args, f) {
@@ -50,15 +52,18 @@ func TestGuideNamesRealCommandsAndFlags(t *testing.T) {
 		}
 	}
 	flat := strings.Join(strings.Fields(guide), " ")
-	for _, list := range []*regexp.Regexp{regexp.MustCompile(`Use only ([a-z, ]+)\.`), regexp.MustCompile(`Never run ([a-z, ]+):`)} {
-		m := list.FindStringSubmatch(flat)
-		if m == nil {
-			t.Fatalf("the guide has no rule %q", list)
-		}
+	named := map[string]bool{}
+	for _, m := range guideNames.FindAllStringSubmatch(flat, -1) {
 		for _, name := range regexp.MustCompile(`,? (?:and|or) |, `).Split(m[1], -1) {
+			named[name] = true
 			if _, ok := lookup(name); !ok {
-				t.Errorf("the rules name command %q, which werft does not have", name)
+				t.Errorf("the guide names command %q in %q, which werft does not have", name, m[0])
 			}
+		}
+	}
+	for _, name := range []string{"images", "lease", "leases", "extend", "release", "reap", "migrate"} {
+		if !named[name] {
+			t.Errorf("the check did not see command %q in the guide", name)
 		}
 	}
 }
