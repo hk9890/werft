@@ -14,6 +14,7 @@ import (
 
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/virt"
 )
@@ -29,7 +30,8 @@ const (
 // Entry is one domain in the list. Used and Size are the allocation and
 // capacity of its first disk, nil when that disk is in no storage pool.
 // ResetPoints counts native snapshots and the reset points vm keeps.
-// Address is empty unless the domain runs.
+// Address is empty unless the domain runs. Lease marks a lease VM: a domain
+// with the werft lease metadata.
 type Entry struct {
 	Name        string  `json:"name"`
 	State       string  `json:"state"`
@@ -38,6 +40,7 @@ type Entry struct {
 	ResetPoints int     `json:"reset_points"`
 	LUKS        bool    `json:"luks"`
 	Address     string  `json:"address"`
+	Lease       bool    `json:"lease"`
 }
 
 // List describes every domain, sorted by name. A domain that goes away
@@ -89,6 +92,11 @@ func describe(h virt.Hypervisor, name string) (Entry, error) {
 		ResetPoints: len(native) + len(legacy),
 		LUKS:        domxml.HasLUKSMarker(domxml.Description(d)),
 	}
+	_, err = h.DomainMetadata(name, lease.Namespace)
+	if err != nil && !failure.Is(err, failure.NotFound) {
+		return Entry{}, err
+	}
+	e.Lease = err == nil
 	e.Used, e.Size = diskUsage(h, d)
 	if state == virt.StateRunning {
 		e.Address = Address(h, name)

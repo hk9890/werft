@@ -11,6 +11,7 @@ import (
 
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/lifecycle"
 	"github.com/hk9890/werft/internal/virt"
 	"github.com/hk9890/werft/internal/virttest"
@@ -70,6 +71,7 @@ func noSleep(time.Duration) {}
 func TestList(t *testing.T) {
 	f := host(t)
 	must(t, f.StartDomain("werft-a"))
+	must(t, f.SetDomainMetadata("werft-a", lease.Namespace, "werft", "<lease/>"))
 	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:02", IP: "fe80::1"})
 	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:02", IP: "192.168.122.9"})
 	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5"})
@@ -79,7 +81,7 @@ func TestList(t *testing.T) {
 	used, size := uint64(5), uint64(20<<30)
 	want := []lifecycle.Entry{
 		{Name: "ubuntu", State: "shut off", Used: &used, Size: &size, ResetPoints: 3, LUKS: true},
-		{Name: "werft-a", State: "running", Address: "vsock/3"},
+		{Name: "werft-a", State: "running", Address: "vsock/3", Lease: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("List =\n%+v\nwant\n%+v", got, want)

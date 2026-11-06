@@ -120,7 +120,7 @@ func TestListJSON(t *testing.T) {
 	if r.code != 0 || len(doc) != 2 {
 		t.Fatalf("list --json = %+v", r)
 	}
-	want := map[string]any{"name": "vm1", "state": "shut off", "used_bytes": float64(0), "size_bytes": float64(20 << 30), "reset_points": float64(0), "luks": false, "address": ""}
+	want := map[string]any{"name": "vm1", "state": "shut off", "used_bytes": float64(0), "size_bytes": float64(20 << 30), "reset_points": float64(0), "luks": false, "address": "", "lease": false}
 	if !reflect.DeepEqual(doc[0], want) {
 		t.Errorf("entry = %v, want %v", doc[0], want)
 	}
