@@ -102,7 +102,9 @@ Requirements:
   names the flag that gives it.
 - Secrets never appear on a command line, in a process list, or in JSON output.
 - A lease lives 4 hours by default. `werft extend <lease-id>` adds time. werft destroys an expired
-  lease, so an agent that crashes does not leak a VM.
+  lease at the next werft run that reads leases with the same state directory; no timer runs
+  ([DESIGN.md, "Lease lifecycle"](DESIGN.md#lease-lifecycle) names those commands). The VM of an
+  agent that crashes stays until then.
 - `werft leases --json` lists active leases with owner, image, tier, address, and expiry.
 - More than one lease can run at the same time. werft refuses a new lease ("no capacity") when the
   host memory that no VM and no lease holds would drop below a configured budget.

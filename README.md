@@ -79,6 +79,19 @@ werft images                                 # every stock version: image, tier,
 
 `seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
 
+To refresh both tiers after a change to the base, run these in order. New leases take the newest
+version; old versions stay.
+
+```sh
+werft reset ubuntu-26-04 provision-base      # back to the base
+werft start ubuntu-26-04                     # make the change in the guest, then:
+werft stop ubuntu-26-04
+werft snapshot --replace ubuntu-26-04 provision-base
+werft seal ubuntu-26-04 provision-base       # new plain version
+werft provision ubuntu-26-04                 # new ubuntu-26-04-full with the reset point clean
+werft seal ubuntu-26-04-full clean           # new full version
+```
+
 ### Leases
 
 A lease is a disposable VM on a thin overlay of the newest stock version.

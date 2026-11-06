@@ -81,8 +81,8 @@ real adapters.
   `secret_unavailable`. Holds it in memory only and gives it to steps as stdin data.
 - **`internal/hostdev`** — Host side of USB passthrough: `findmnt`, `udevadm`, `fuser`,
   `udisksctl`. Finds the stick, makes sure no host process uses it, and unmounts and releases it.
-- **`internal/config`**, **`internal/state`**, **`internal/build`** — `config.toml` (pool, lease
-  limits, lifetime, recipe per build VM; the URI is fixed to `qemu:///system`); paths, locks and image records under
+- **`internal/config`**, **`internal/state`**, **`internal/build`** — `config.toml` (pool,
+  memory budget, recipe per build VM; the URI is fixed to `qemu:///system`); paths, locks and image records under
   `~/.local/state/werft/`; the ldflags version stamp.
 - **`internal/livetest`** — Live-test helpers behind build tag `live`
   ([TESTING.md](TESTING.md#write-a-live-test)).
@@ -99,7 +99,7 @@ real adapters.
   (on `-full`).
 - **Stock image.** A flat qcow2 disk file plus a qcow2 NVRAM vars file, made from a build VM reset
   point by `seal`. Named `<image>-<tier>-<YYYYMMDD>[-n]`. Immutable: werft never attaches it to a
-  domain or writes it. A new seal makes a new version; old versions stay until no lease uses them.
+  domain or writes it. A new seal makes a new version. Old versions stay: no command deletes a stock version yet.
 - **Tier.** `plain` comes from the `provision-base` reset point of the build VM. `full` comes from
   the `clean` reset point of the `-full` build VM.
 - **Lease.** A domain `werft-<image>-<tier>-<id>` with a thin overlay on one stock version, its own
@@ -560,7 +560,7 @@ Exit codes are part of the contract:
 | 3 | `not_found` | no such domain, image, lease or reset point |
 | 4 | `conflict` | VM not shut off, label exists without `--replace` |
 | 5 | `needs_confirmation` | no TTY and no `--yes` |
-| 6 | `no_capacity` | lease limit, pool space or memory |
+| 6 | `no_capacity` | pool space or memory |
 | 7 | `timeout` | no SSH, no lease address, no shutdown in time |
 | 8 | `checks_failed` | the provision checks failed |
 | 9 | `unsupported` | raw-NVRAM guard, libvirt version |
@@ -570,8 +570,9 @@ Exit codes are part of the contract:
 
 - libvirt is the arbiter. A unique domain name reserves a lease. QEMU image locks prevent two
   writers on one disk. Stock files are opened read-only as backing files.
-- `locks/global.lock` (`flock`) serializes admission, seal, reap, extend, stock garbage
-  collection, and the creation of the werft key by `prepare`.
+- `locks/global.lock` (`flock`) serializes admission, seal, reap, extend, and the creation of the
+  werft key by `prepare`, between runs with the same state directory: each state directory has its
+  own lock. `release` holds it only for its reap pass, not while it releases the lease.
   Admission holds it from the capacity check until the lease domain is defined, so the next
   admission counts the memory of that domain before it starts. Seal holds it while
   it picks the stock name and defines the temporary domain that reserves it, and while it writes
@@ -580,7 +581,6 @@ Exit codes are part of the contract:
   `migrate` on one build VM. A second run fails with `conflict` and does not wait.
 - Leases run in parallel. Limits: the memory budget, pool free space, and the 253 addresses of the
   NAT range.
-- A stock version is deleted only when no lease domain names it in its metadata.
 
 ## Migration from `vm`
 

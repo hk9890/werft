@@ -6,10 +6,12 @@ the stock image or the host.
 
 Rules:
 - Release every lease when you are done, also after a failure.
-- Use only werft images, lease, leases, extend, release, guide and help.
-  Never run werft start, stop, reset, snapshot, seal, provision, prepare or
-  migrate: they change the user's build VMs.
-- Never touch a VM that is not your lease.
+- Use only werft images, lease, leases, extend, release, reap, guide and
+  help. Never run werft start, stop, reset, snapshot, seal, provision,
+  prepare or migrate: they change the user's build VMs.
+- Never touch a VM that is not your lease. The one exception is reap: it
+  removes only expired leases and orphans, the same pass that every lease
+  command runs first.
 - Add --json to every command. stdout then holds one JSON document;
   progress goes to stderr.
 - Give every lease an --owner that is unique to you, such as your session
@@ -68,7 +70,46 @@ Rules:
 
     ssh -F <ssh_config> <id> 'sudo -n apt-get update && sudo -n apt-get install -y curl'
 
-4. Watch the time
+  In tier full, the user's tools load only in an interactive login shell
+  of the user. Run the command through it:
+
+    ssh -F <ssh_config> <id> '$SHELL -ic "mise ls"'
+
+4. Move files and reach ports
+
+  The ssh_config also works for scp, tar and port forwards. Copy a
+  directory in, then a file out:
+
+    tar -C <dir> -cf - . | ssh -F <ssh_config> <id> 'mkdir -p src && tar -C src -xf -'
+    scp -F <ssh_config> <id>:src/result.log .
+
+  Start a server in the VM with its input and output detached, or the ssh
+  call does not return:
+
+    ssh -F <ssh_config> <id> 'nohup python3 -m http.server 8080 </dev/null >/dev/null 2>&1 &'
+
+  To reach a port in the VM, such as that web server on port 8080, forward it
+  from a free local port. Other agents may forward ports too, so pick a
+  port of your own, such as 18080. With -f the forward runs in the
+  background once it is up; ExitOnForwardFailure makes ssh fail when the
+  local port is taken:
+
+    ssh -F <ssh_config> -f -N -o ExitOnForwardFailure=yes -L 18080:localhost:8080 <id>
+
+  Then use http://localhost:18080. The forward ends when the VM reboots.
+
+5. Reboot and power off
+
+  The VM may reboot (sudo -n systemctl reboot): the lease keeps its id and
+  its ssh command. Try the ssh command every 5 seconds for up to 5 minutes;
+  if it does not answer by then, release the lease. Start a port forward
+  again after the reboot.
+
+  Do not power the VM off. You may not start a lease again, and a started
+  lease can get a new address that its ssh command does not know. Release
+  it and take a new lease.
+
+6. Watch the time
 
   A lease lives 4 hours. No timer destroys it: the first werft lease,
   leases, extend, release or reap after the expiry does. Add time before
@@ -82,7 +123,7 @@ Rules:
   tier, address and expiry. An expired lease is gone: extend fails with
   not_found.
 
-5. Release the lease
+7. Release the lease
 
     werft --json release <id>
 
