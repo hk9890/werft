@@ -70,6 +70,7 @@ A stock image is a sealed copy of a build VM reset point. Leases start from it.
 
 ```sh
 werft seal ubuntu-26-04 provision-base       # reset to provision-base, seal a copy as the plain tier; asks first
+werft seal ubuntu-26-04-full clean           # reset to clean, seal a copy as the full tier of ubuntu-26-04; asks first
 werft images                                 # every stock version: image, tier, version, date
 ```
 
@@ -81,6 +82,7 @@ A lease is a disposable VM on a thin overlay of the newest stock version.
 
 ```sh
 werft lease ubuntu-26-04                     # boot a plain lease; prints its id and ssh command when SSH answers
+werft lease ubuntu-26-04 --tier full         # boot a lease of the full tier
 werft lease ubuntu-26-04 --owner agent-7     # label the lease (default $WERFT_OWNER, else $USER)
 ssh -F ~/.local/state/werft/leases/<id>/ssh_config <id>
 werft release <id>                           # destroy the VM, its disk and its key; a second release exits 0

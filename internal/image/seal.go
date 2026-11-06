@@ -22,9 +22,14 @@ import (
 	"github.com/hk9890/werft/internal/virt"
 )
 
-// Plain is the tier of a stock image from the provision-base reset point of
-// a build VM: the vendor install, prepared for SSH access.
-const Plain = "plain"
+const (
+	// Plain is the tier of a stock image from the provision-base reset
+	// point of a build VM: the vendor install, prepared for SSH access.
+	Plain = "plain"
+	// Full is the tier of a stock image from the clean reset point of the
+	// -full build VM: the state after the bootstrap, secrets included.
+	Full = "full"
+)
 
 const (
 	bootTimeout     = 3 * time.Minute
@@ -52,10 +57,12 @@ type Seal struct {
 }
 
 // Plan checks that the build VM can be sealed from label now, and changes
-// nothing. Only the plain tier exists yet.
+// nothing. The provision-base reset point of a build VM gives the plain
+// tier; the clean reset point of its -full build VM gives the full tier.
 func Plan(h virt.Hypervisor, buildVM, label string) (*Seal, error) {
-	if label != resetpoint.ProvisionBase || strings.HasSuffix(buildVM, resetpoint.FullSuffix) {
-		return nil, failure.New(failure.Usage, "seal makes the %s tier from the reset point '%s' of a build VM; no other tier exists yet", Plain, resetpoint.ProvisionBase)
+	img, tier, err := tierOf(buildVM, label)
+	if err != nil {
+		return nil, err
 	}
 	if err := resetpoint.CheckRevert(h, buildVM, label); err != nil {
 		return nil, err
@@ -70,11 +77,24 @@ func Plan(h virt.Hypervisor, buildVM, label string) (*Seal, error) {
 	if err := snap.Unmarshal(text); err != nil || snap.Domain == nil {
 		return nil, failure.New(failure.Failed, "the reset point '%s' of %s holds no domain definition: %v", label, buildVM, err)
 	}
-	s := &Seal{BuildVM: buildVM, Label: label, Image: buildVM, Tier: Plain}
+	s := &Seal{BuildVM: buildVM, Label: label, Image: img, Tier: tier}
 	if err := s.inspect(h, snap.Domain); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// tierOf is the image and tier that the label of the build VM gives.
+func tierOf(buildVM, label string) (img, tier string, err error) {
+	base, full := strings.CutSuffix(buildVM, resetpoint.FullSuffix)
+	switch {
+	case !full && label == resetpoint.ProvisionBase:
+		return buildVM, Plain, nil
+	case full && base != "" && label == resetpoint.Clean:
+		return base, Full, nil
+	}
+	return "", "", failure.New(failure.Usage, "seal makes the %s tier from the reset point '%s' of a build VM, and the %s tier from the reset point '%s' of its %s build VM",
+		Plain, resetpoint.ProvisionBase, Full, resetpoint.Clean, resetpoint.FullSuffix)
 }
 
 // reread reads the definition of the build VM after the revert, for the

@@ -110,7 +110,9 @@ func TestPlanRefuses(t *testing.T) {
 		want   failure.Kind
 	}{
 		{"other label", "vm", "clean-install", buildVM, nil, failure.Usage},
-		{"full tier", "vm-full", "provision-base", buildVM, nil, failure.Usage},
+		{"provision-base of a -full build VM", "vm-full", "provision-base", buildVM, nil, failure.Usage},
+		{"clean of a build VM that is not -full", "vm", "clean", buildVM, nil, failure.Usage},
+		{"clean of a build VM named only -full", "-full", "clean", buildVM, nil, failure.Usage},
 		{"unknown VM", "none", "provision-base", buildVM, nil, failure.NotFound},
 		{"running", "vm", "provision-base", buildVM, func(f *virttest.Fake) { f.SetState("vm", virt.StateRunning) }, failure.Conflict},
 		{"no reset point", "vm", "provision-base", buildVM, func(f *virttest.Fake) { must(t, f.DeleteSnapshot("vm", "provision-base")) }, failure.NotFound},
@@ -235,6 +237,30 @@ func TestSealWritesVolumesAndRecord(t *testing.T) {
 	}
 	if records, _ := image.Load(e.Catalog); len(records) != 2 {
 		t.Errorf("catalog after two seals = %+v", records)
+	}
+}
+
+// TestSealFullTier seals the clean reset point of a -full build VM: the
+// record has the image without -full and the tier full.
+func TestSealFullTier(t *testing.T) {
+	f := worldOf(t, buildVM)
+	_, err := f.DefineDomain(strings.Replace(buildVM, "<name>vm</name>", "<name>vm-full</name>", 1))
+	must(t, err)
+	must(t, f.CreateSnapshot("vm-full", "clean", ""))
+	e := env(t, f, &shell{f: f})
+	s, err := image.Plan(f, "vm-full", "clean")
+	must(t, err)
+	if s.Image != "vm" || s.Tier != image.Full {
+		t.Errorf("plan = image %s, tier %s; want image vm, tier full", s.Image, s.Tier)
+	}
+	rec, err := s.Run(e)
+	must(t, err)
+	if rec.Name != "vm-full-20261102" || rec.Image != "vm" || rec.Tier != "full" || rec.Source != "vm-full" || rec.Label != "clean" ||
+		rec.Disk != "vm-full-20261102.qcow2" || rec.NVRAM != "vm-full-20261102_VARS.qcow2" {
+		t.Errorf("record = %+v", rec)
+	}
+	if _, err := image.Plan(f, "vm-full", "provision-base"); !failure.Is(err, failure.Usage) {
+		t.Errorf("Plan of provision-base on vm-full = %v, want usage", err)
 	}
 }
 

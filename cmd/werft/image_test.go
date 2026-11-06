@@ -26,6 +26,23 @@ family = "ubuntu"
 systemd = 259
 `
 
+const fullImageTOML = `
+[[image]]
+name = "ubuntu-26-04-full-20261106"
+image = "ubuntu-26-04"
+tier = "full"
+version = "20261106"
+date = 2026-11-06T21:00:00Z
+source = "ubuntu-26-04-full"
+label = "clean"
+pool = "werft"
+disk = "ubuntu-26-04-full-20261106.qcow2"
+nvram = "ubuntu-26-04-full-20261106_VARS.qcow2"
+user = "hans"
+family = "ubuntu"
+systemd = 259
+`
+
 func TestImages(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
@@ -37,23 +54,26 @@ func TestImages(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(state, "werft"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(state, "werft", "images.toml"), []byte(imagesTOML), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(state, "werft", "images.toml"), []byte(imagesTOML+fullImageTOML), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	r := lh.run("--json", "images")
 	var list []map[string]any
-	if err := json.Unmarshal([]byte(r.stdout), &list); err != nil || r.code != 0 || len(list) != 1 {
+	if err := json.Unmarshal([]byte(r.stdout), &list); err != nil || r.code != 0 || len(list) != 2 {
 		t.Fatalf("images --json = %+v, %v", r, err)
 	}
 	if e := list[0]; e["image"] != "ubuntu-26-04" || e["tier"] != "plain" || e["version"] != "20261102" ||
 		e["date"] != "2026-11-02T21:00:00Z" || e["user"] != "hans" || e["systemd"] != float64(259) {
 		t.Errorf("images entry = %v", e)
 	}
+	if e := list[1]; e["image"] != "ubuntu-26-04" || e["tier"] != "full" || e["source"] != "ubuntu-26-04-full" || e["label"] != "clean" {
+		t.Errorf("full images entry = %v", e)
+	}
 
 	r = lh.run("images")
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
-	if r.code != 0 || len(lines) != 2 || strings.Join(strings.Fields(lines[0]), " ") != "NAME IMAGE TIER VERSION DATE USER" ||
+	if r.code != 0 || len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != "NAME IMAGE TIER VERSION DATE USER" ||
 		!strings.HasPrefix(strings.Join(strings.Fields(lines[1]), " "), "ubuntu-26-04-plain-20261102 ubuntu-26-04 plain 20261102 2026-11-0") {
 		t.Errorf("images = %+v", r)
 	}

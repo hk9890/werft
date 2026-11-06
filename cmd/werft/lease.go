@@ -74,7 +74,7 @@ func (c *cli) cmdLease(args []string) error {
 	if img == "" || fs.NArg() != 0 {
 		return failure.New(failure.Usage, "lease takes one image name; werft images lists them")
 	}
-	if *tier != image.Plain && *tier != "full" {
+	if *tier != image.Plain && *tier != image.Full {
 		return failure.New(failure.Usage, "--tier is plain or full, not %q", *tier)
 	}
 	dir, err := state.Root()

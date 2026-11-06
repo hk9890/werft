@@ -345,8 +345,16 @@ side by side, one per domain.
 ## Stock images and seal
 
 `werft seal [--yes] <build-vm> <label>` makes a new stock version (`image.Plan`, `Seal.Run` in
-`internal/image/seal.go`). Only the `plain` tier exists yet: label `provision-base` on a build VM
-that is not `-full`.
+`internal/image/seal.go`). The build VM and the label give the tier (`tierOf`), and seal refuses
+every other pair with `usage`:
+
+- Label `provision-base` on a build VM that is not `-full` gives the `plain` tier of the image with
+  the build VM name.
+- Label `clean` on a `-full` build VM gives the `full` tier of the image with the build VM name
+  without `-full`: `werft seal ubuntu-26-04-full clean` makes `ubuntu-26-04-full-<YYYYMMDD>`, image
+  `ubuntu-26-04`.
+
+Both tiers run the same steps:
 
 1. Check before any change: the label exists, and the build VM is shut off and passes the
    raw-NVRAM guard. The revert brings back the definition the reset point holds, so check that one
@@ -388,7 +396,9 @@ version. The text table shows name, image, tier, version, date and user.
 
 `TestSealLive` in `cmd/werft/image_live_test.go` proves the result. It reads the stock disk with
 `debugfs` and finds no host keys, no hostname and an empty machine-id. It boots two overlays of the
-stock disk and finds a different machine-id and different host keys in each.
+stock disk and finds a different machine-id and different host keys in each. `TestSealFullLive`
+seals the `clean` reset point of a scratch `-full` domain, and its `--tier full` lease logs in with
+a new machine-id and holds the files of `clean`.
 
 Build VMs and `-full` stay without passwordless sudo, as today. Only stock images get the seal
 changes. Seal removes no secrets: a `full` lease holds them by design
