@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -91,6 +92,32 @@ func TestHelp(t *testing.T) {
 		r := runCLI("", false, args...)
 		if r.code != 0 || !strings.HasPrefix(r.stdout, "usage: werft version\n") {
 			t.Errorf("%q = %+v", args, r)
+		}
+	}
+}
+
+func TestUsageAlignsSummaries(t *testing.T) {
+	longest := commands[0]
+	for _, cmd := range commands {
+		if len(cmd.name+" "+cmd.args) > len(longest.name+" "+longest.args) {
+			longest = cmd
+		}
+	}
+	if len(longest.name+" "+longest.args) <= commandColumn {
+		t.Fatalf("no command overflows the column; the test checks nothing")
+	}
+	summaryColumn := 2 + commandColumn + 1
+	lines := strings.Split(usage(), "\n")
+	for _, cmd := range commands {
+		i := slices.IndexFunc(lines, func(l string) bool { return strings.HasSuffix(l, " "+cmd.summary) })
+		if i < 0 {
+			t.Fatalf("usage has no line that ends in the summary of %s", cmd.name)
+		}
+		if got := strings.Index(lines[i], cmd.summary); got != summaryColumn {
+			t.Errorf("summary of %s starts in column %d, want %d:\n%s", cmd.name, got, summaryColumn, lines[i])
+		}
+		if cmd.name == longest.name && lines[i-1] != "  "+strings.TrimSpace(cmd.name+" "+cmd.args) {
+			t.Errorf("longest command %s is not alone on the line above its summary: %q", cmd.name, lines[i-1])
 		}
 	}
 }
