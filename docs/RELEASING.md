@@ -25,24 +25,26 @@ mise run release:snapshot    # archives into dist/, publishes nothing
 ## Cut a release
 
 1. Pick `vX.Y.Z` and confirm it is free: `git fetch --tags origin && git tag --list "v*"`.
-2. From the main checkout, create a worktree detached at `origin/main` in a temporary directory,
-   and run the gate in it. A hook on this host blocks `git worktree add` under
-   `.claude/worktrees/`.
+2. From the main checkout, create a worktree detached at `origin/main` under `/tmp`, and run the
+   gate in it. A hook on this host blocks `git worktree add` under `.claude/worktrees/`.
 
    ```bash
+   WT=/tmp/werft-release-vX.Y.Z
    git fetch origin
-   WT="$(mktemp -d)/release-vX.Y.Z"
    git worktree add --detach "$WT" origin/main
    mise -C "$WT" run quality
    ```
 
-3. In the same shell, so `$WT` still holds the path, tag the worktree's commit, push the tag, then
-   remove the worktree:
+3. From the main checkout, check that the worktree is at `origin/main`, tag its commit, push the
+   tag, then remove the worktree. Each code block sets `WT` itself, so a fresh shell runs it; the
+   chain stops when the worktree is not at `origin/main`.
 
    ```bash
-   git -C "$WT" tag -a vX.Y.Z -m "werft vX.Y.Z"
-   git push origin vX.Y.Z
-   git worktree remove "$WT" && rmdir "$(dirname "$WT")"
+   WT=/tmp/werft-release-vX.Y.Z
+   test "$(git -C "$WT" rev-parse HEAD)" = "$(git rev-parse origin/main)" &&
+     git -C "$WT" tag -a vX.Y.Z -m "werft vX.Y.Z" &&
+     git push origin vX.Y.Z &&
+     git worktree remove "$WT"
    ```
 
 4. Dispatch the workflow on the tag and watch it. The run takes a few seconds to register; re-run
@@ -62,9 +64,10 @@ mise run release:snapshot    # archives into dist/, publishes nothing
 
 **Dispatch on the tag, not on `main`.** `workflow_dispatch` reads the workflow from the ref it
 runs on, and GoReleaser needs the checked-out commit to be the tagged one. To fix the release
-workflow for a tag: land the fix by PR, repeat step 2 on the new `origin/main`, move the tag with
-`tag -f` and `git push -f origin vX.Y.Z`, then repeat steps 4 and 5. A second dispatch on the
-same tag replaces its assets (`release.replace_existing_artifacts`).
+workflow for a tag: land the fix by PR, then repeat step 2 on the new `origin/main`. Repeat
+step 3 with `tag -f -a` and `git push -f origin vX.Y.Z`, so the tag moves inside `"$WT"` and the
+worktree is removed. Then repeat steps 4 and 5. A second dispatch on the same tag replaces its
+assets (`release.replace_existing_artifacts`).
 
 ## Install through mise
 
