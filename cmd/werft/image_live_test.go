@@ -223,3 +223,63 @@ func werftList(t *testing.T, args ...string) []map[string]any {
 	livetest.Must(t, json.Unmarshal(out.Bytes(), &list), "parse the output of werft "+strings.Join(args, " "))
 	return list
 }
+
+// TestSealFullLive seals the clean reset point of a scratch -full domain and
+// leases the full tier. The lease must reach SSH with a new machine-id and
+// hold what the -full domain had at clean. Control: a file written after
+// clean is not in the lease, provision-base of the -full domain is refused,
+// and the image has no plain tier.
+func TestSealFullLive(t *testing.T) {
+	isolate(t)
+	h := livetest.Connect(t)
+	prefix := livetest.DomainPrefix + "sf-"
+	old := leasePrefix
+	leasePrefix = prefix
+	t.Cleanup(func() { leasePrefix = old })
+
+	img := prefix + "vm"
+	src := livetest.NewGuest(t, h, img+"-full")
+	u, err := user.Current()
+	livetest.Must(t, err, "current user")
+	dir, err := state.Root()
+	livetest.Must(t, err, "state directory")
+	livetest.Must(t, guest.EnsureKey(dir.SSHKey()), "create the werft key")
+	src.Boot()
+	addImageUser(src, u.Username, publicKey(dir.SSHKey()+".pub"), livetest.NewKey(t).Public)
+	src.Run("touch /root/at-clean && sync")
+	machineID := src.Run("cat /etc/machine-id")
+	src.Poweroff()
+	werftJSON(t, 0, "snapshot", src.Name, "clean")
+	werftJSON(t, 0, "snapshot", src.Name, "provision-base")
+	src.Boot()
+	src.Run("touch /root/after-clean && sync")
+	src.Poweroff()
+
+	werftJSON(t, 2, "seal", "--yes", src.Name, "provision-base")
+	doc := werftJSON(t, 0, "seal", "--yes", src.Name, "clean")
+	stock, _ := doc["name"].(string)
+	t.Cleanup(func() {
+		livetest.RemoveDomain(t, h, stock)
+		livetest.DeleteVolumes(h, stock+".qcow2", stock+"_VARS.qcow2")
+	})
+	version := time.Now().Format("20060102")
+	if stock != img+"-full-"+version || doc["image"] != img || doc["tier"] != "full" || doc["source"] != src.Name || doc["label"] != "clean" {
+		t.Fatalf("seal = %v", doc)
+	}
+	images := werftList(t, "images")
+	if len(images) != 1 || images[0]["name"] != stock || images[0]["image"] != img || images[0]["tier"] != "full" {
+		t.Errorf("images = %v", images)
+	}
+
+	werftJSON(t, 3, "lease", img)
+	lease := parallelLeases(t, h, prefix, []string{"lease", img, "--tier", "full"})[0]
+	id, _ := lease["id"].(string)
+	if lease["domain"] != prefix+img+"-full-"+id || lease["stock"] != stock || lease["user"] != u.Username {
+		t.Errorf("lease = %v", lease)
+	}
+	out := leaseSSH(t, lease["ssh"].(string), "cat /etc/machine-id; sudo -n test -e /root/at-clean && echo at-clean; sudo -n test -e /root/after-clean || echo no-after-clean")
+	lines := strings.Split(out, "\n")
+	if len(lines) != 3 || len(lines[0]) != 32 || lines[0] == machineID || lines[1] != "at-clean" || lines[2] != "no-after-clean" {
+		t.Errorf("machine-id and files of the full lease:\n%s\nwant a machine-id other than %s, at-clean and no-after-clean", out, machineID)
+	}
+}
