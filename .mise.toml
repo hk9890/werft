@@ -9,7 +9,7 @@ goreleaser = "2.19.0"
 [env]
 CGO_ENABLED = "0"
 
-# ---- build -----------------------------------------------------------------
+# ---- build & run -----------------------------------------------------------
 
 [tasks.build]
 description = "Build the werft binary into ./bin"
@@ -20,6 +20,11 @@ DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG=github.com/hk9890/werft/internal/build
 go build -ldflags "-s -w -X $PKG.Version=$VERSION -X $PKG.Commit=$COMMIT -X $PKG.Date=$DATE" -o bin/werft ./cmd/werft
 """
+
+[tasks.werft]
+description = "Build from source and run in your shell's directory. Usage: mise run werft -- <args>"
+# Single line so mise appends your args to the werft invocation, not to the build.
+run = 'cd "$MISE_PROJECT_ROOT" && go build -o bin/werft ./cmd/werft && cd "${MISE_ORIGINAL_CWD:-$PWD}" && exec "$MISE_PROJECT_ROOT/bin/werft"'
 
 [tasks."release:check"]
 description = "Validate .goreleaser.yaml"
@@ -80,6 +85,20 @@ description = "Live tests against qemu:///system (docs/TESTING.md)"
 run = "gotestsum --format testname -- -race -count=1 -tags=live -timeout 25m ./..."
 [tasks."test:live".env]
 CGO_ENABLED = "1"
+
+[tasks."test:all"]
+description = "All layers: unit + live (test:live runs the unit tests too)"
+depends = ["test:live"]
+
+[tasks."test:coverage:summary"]
+description = "Per-package coverage, least-covered first. Reports; gates nothing."
+run = """
+set -e
+go test -coverprofile=coverage.out -covermode=atomic ./... >/dev/null 2>&1 || true
+go tool cover -func=coverage.out | awk '$1 != "total:" {print}' | sort -k3 -n | head -25
+go tool cover -func=coverage.out | grep total:
+rm -f coverage.out
+"""
 
 # ---- gates -----------------------------------------------------------------
 

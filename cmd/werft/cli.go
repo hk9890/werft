@@ -118,7 +118,7 @@ func (c *cli) globalFlags(args []string) []string {
 
 func (c *cli) dispatch(args []string) error {
 	if len(args) == 0 {
-		return failure.New(failure.Usage, "no command; run 'werft help'")
+		args = []string{"help"}
 	}
 	name, rest := args[0], args[1:]
 	if name == "-h" || name == "--help" {
