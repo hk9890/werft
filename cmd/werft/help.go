@@ -61,12 +61,23 @@ func commandHelpJSON(cmd command, fs *flag.FlagSet) commandJSON {
 	return out
 }
 
+// commandColumn is the width of the command column in usage. A longer
+// command puts its summary on the next line, so every summary starts in the
+// same column.
+const commandColumn = 24
+
 func usage() string {
 	var b strings.Builder
 	b.WriteString("werft - disposable test VMs from stock images\n\n")
 	b.WriteString("usage: werft [--json] <command> [arguments]\n\ncommands:\n")
 	for _, cmd := range commands {
-		fmt.Fprintf(&b, "  %-24s %s\n", strings.TrimSpace(cmd.name+" "+cmd.args), cmd.summary)
+		call := strings.TrimSpace(cmd.name + " " + cmd.args)
+		if len(call) > commandColumn {
+			fmt.Fprintf(&b, "  %s\n  %-*s", call, commandColumn, "")
+		} else {
+			fmt.Fprintf(&b, "  %-*s", commandColumn, call)
+		}
+		fmt.Fprintf(&b, " %s\n", cmd.summary)
 	}
 	b.WriteString("\nglobal flags:\n")
 	b.WriteString("  --json                   print one JSON document on stdout; on error\n")
