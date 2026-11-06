@@ -90,7 +90,7 @@ func tierOf(buildVM, label string) (img, tier string, err error) {
 	switch {
 	case !full && label == resetpoint.ProvisionBase:
 		return buildVM, Plain, nil
-	case full && label == resetpoint.Clean:
+	case full && base != "" && label == resetpoint.Clean:
 		return base, Full, nil
 	}
 	return "", "", failure.New(failure.Usage, "seal makes the %s tier from the reset point '%s' of a build VM, and the %s tier from the reset point '%s' of its %s build VM",

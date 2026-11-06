@@ -112,6 +112,7 @@ func TestPlanRefuses(t *testing.T) {
 		{"other label", "vm", "clean-install", buildVM, nil, failure.Usage},
 		{"provision-base of a -full build VM", "vm-full", "provision-base", buildVM, nil, failure.Usage},
 		{"clean of a build VM that is not -full", "vm", "clean", buildVM, nil, failure.Usage},
+		{"clean of a build VM named only -full", "-full", "clean", buildVM, nil, failure.Usage},
 		{"unknown VM", "none", "provision-base", buildVM, nil, failure.NotFound},
 		{"running", "vm", "provision-base", buildVM, func(f *virttest.Fake) { f.SetState("vm", virt.StateRunning) }, failure.Conflict},
 		{"no reset point", "vm", "provision-base", buildVM, func(f *virttest.Fake) { must(t, f.DeleteSnapshot("vm", "provision-base")) }, failure.NotFound},
