@@ -1,0 +1,109 @@
+werft - a guide for agents
+
+A werft lease is a disposable VM on this host. Install and test software in
+it, then give it back. Release destroys the VM; nothing you do in it reaches
+the stock image or the host.
+
+Rules:
+- Release every lease when you are done, also after a failure.
+- Use only werft images, lease, leases, extend, release, guide and help.
+  Never run werft start, stop, reset, snapshot, seal, provision, prepare or
+  migrate: they change the user's build VMs.
+- Never touch a VM that is not your lease.
+- Add --json to every command. stdout then holds one JSON document;
+  progress goes to stderr.
+- Give every lease an --owner that is unique to you, such as your session
+  or task name. The owner is how you find your lease again.
+
+1. Find an image
+
+    werft --json images
+
+  Each entry has "image" and "tier". Tier "plain" is the vendor install
+  with SSH and nothing more. Tier "full" is the user's full setup, with the
+  user's secrets; use it only when the task needs that setup.
+
+2. Lease a VM
+
+    werft --json lease ubuntu-26-04 --tier plain --owner <your-name>
+
+  The command returns when the VM accepts SSH. It waits up to 5 minutes
+  for an address and then up to 5 minutes for SSH, plus the time of each
+  attempt and the wait for the lock of other lease calls. Give the call a
+  timeout of at least 15 minutes, or run it in the background and wait for
+  it. The id comes only in the JSON document at the end.
+
+  If the call was killed or its output is lost, find your lease by its
+  owner in the output of werft --json leases and release it.
+
+  The default tier is plain. The JSON document has these fields:
+
+    id          the lease id; every other command takes it
+    domain      the VM name
+    image       the image name
+    tier        plain or full
+    stock       the stock image version
+    owner       the --owner flag, else $WERFT_OWNER, else $USER
+    user        the login user in the VM
+    address     the SSH address, such as vsock/3
+    key         the path of the private key of the lease
+    ssh_config  the path of the ssh_config of the lease
+    ssh         the ssh command, such as: ssh -F <ssh_config> <id>
+    created     the creation time (RFC 3339)
+    expiry      the expiry time (RFC 3339)
+
+  A lease that fails cleans up after itself. If its error message names
+  werft release <id>, run that command. Then try the lease once more.
+
+3. Run commands in the VM
+
+  Append the command to the "ssh" value. One command per ssh call; it
+  needs no terminal and asks no question:
+
+    ssh -F <ssh_config> <id> 'uname -a'
+
+  The user has passwordless sudo. Use sudo -n, so a missing grant fails at
+  once and does not wait for a password. The image is minimal: install what
+  you need, and update the package lists first:
+
+    ssh -F <ssh_config> <id> 'sudo -n apt-get update && sudo -n apt-get install -y curl'
+
+4. Watch the time
+
+  A lease lives 4 hours. No timer destroys it: the first werft lease,
+  leases, extend, release or reap after the expiry does. Add time before
+  the expiry:
+
+    werft --json extend <id> --for 2h
+    werft --json leases
+
+  The leases command lists the leases of this user's state directory:
+  yours and those of other agents that share it, with id, owner, image,
+  tier, address and expiry. An expired lease is gone: extend fails with
+  not_found.
+
+5. Release the lease
+
+    werft --json release <id>
+
+  Release is idempotent: a second release of the same id exits 0. If a
+  release fails, run it again.
+
+Exit codes:
+  0   ok
+  1   failed              unexpected libvirt or SSH error; read the message
+  2   usage               wrong command, flag or argument; run werft help <command>
+  3   not_found           no such image, tier or lease; run werft --json images or leases
+  4   conflict            a VM is not shut off, or a name exists
+  5   needs_confirmation  the command needs --yes; agent commands never do
+  6   no_capacity         not enough host memory or disk for a new lease;
+                          release a lease of yours, or wait and try again
+  7   timeout             no SSH, no address or no libvirt answer in time;
+                          after a lease, follow "A lease that fails" above;
+                          after a release, run the release again
+  8   checks_failed       the provision checks failed
+  9   unsupported         the image cannot be leased; take another image
+  10  secret_unavailable  a secret is not available without a terminal
+
+On error, the --json document is:
+  {"error": {"kind": "<kind>", "message": "<text>"}}
