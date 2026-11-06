@@ -25,21 +25,24 @@ mise run release:snapshot    # archives into dist/, publishes nothing
 ## Cut a release
 
 1. Pick `vX.Y.Z` and confirm it is free: `git fetch --tags origin && git tag --list "v*"`.
-2. From the main checkout's root, create a worktree detached at `origin/main` and run the gate in
-   it:
+2. From the main checkout, create a worktree detached at `origin/main` in a temporary directory,
+   and run the gate in it. A hook on this host blocks `git worktree add` under
+   `.claude/worktrees/`.
 
    ```bash
    git fetch origin
-   git worktree add --detach .claude/worktrees/release-vX.Y.Z origin/main
-   mise -C .claude/worktrees/release-vX.Y.Z run quality
+   WT="$(mktemp -d)/release-vX.Y.Z"
+   git worktree add --detach "$WT" origin/main
+   mise -C "$WT" run quality
    ```
 
-3. Tag the worktree's commit, push the tag, then remove the worktree:
+3. In the same shell, so `$WT` still holds the path, tag the worktree's commit, push the tag, then
+   remove the worktree:
 
    ```bash
-   git -C .claude/worktrees/release-vX.Y.Z tag -a vX.Y.Z -m "werft vX.Y.Z"
+   git -C "$WT" tag -a vX.Y.Z -m "werft vX.Y.Z"
    git push origin vX.Y.Z
-   git worktree remove .claude/worktrees/release-vX.Y.Z
+   git worktree remove "$WT" && rmdir "$(dirname "$WT")"
    ```
 
 4. Dispatch the workflow on the tag and watch it. The run takes a few seconds to register; re-run
@@ -73,6 +76,10 @@ mise uses.
 ```bash
 mise use -g github:hk9890/werft@X.Y.Z
 ```
+
+On this host `~/.config/mise` is a stow link into the setup repo, so `mise use -g` writes into
+`~/setup/dotfiles/mise/.config/mise/config.toml`. The setup repo keeps that werft line; commit it
+there.
 
 An exact version passes mise's `minimum_release_age`. `latest` skips a release younger than that
 age until `github:hk9890/werft` is in `minimum_release_age_excludes`.
