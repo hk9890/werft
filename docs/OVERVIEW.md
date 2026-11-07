@@ -29,6 +29,7 @@ internal/ansi/             strip terminal escapes for the provision log
 internal/build/            version stamp (ldflags)
 internal/livetest/         helpers for live tests (build tag live)
 examples/setup/            the setup-repo recipe werft ships until the setup repo takes it over
+scripts/release-notes      prints a CHANGELOG.md section as the release text
 ```
 
 Where werft keeps state on disk and in libvirt: [DESIGN.md, "Where state lives"](DESIGN.md#where-state-lives).

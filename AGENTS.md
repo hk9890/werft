@@ -30,7 +30,7 @@ Every route below is **mandatory, not advisory**. Load the document BEFORE the f
 
 ### Release
 
-**MUST read [docs/RELEASING.md](docs/RELEASING.md) before cutting a release or changing `.goreleaser.yaml` or `.github/workflows/release.yml`.** It owns the tag, the dispatch, the verification, and the install through mise.
+**MUST read [docs/RELEASING.md](docs/RELEASING.md) before cutting a release, writing `CHANGELOG.md`, or changing `.goreleaser.yaml` or `.github/workflows/release.yml`.** It owns the CHANGELOG section, the tag, the dispatch and the verification.
 
 ### Run werft by hand
 
