@@ -1,9 +1,14 @@
 package lease_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	stdimage "image"
+	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -76,10 +81,19 @@ func (s *shell) Run(_ context.Context, addr guest.Addr, _ string, _ io.Reader, _
 	return nil
 }
 
+// catalogTOML is the images.toml that holds record().
+const catalogTOML = `[[image]]
+name = "vm-plain-20261102"
+image = "vm"
+tier = "plain"
+`
+
 func env(t *testing.T, f *virttest.Fake, sh *shell) lease.Env {
 	t.Helper()
+	dir := state.Dir(t.TempDir())
+	must(t, os.WriteFile(dir.Images(), []byte(catalogTOML), 0o600))
 	return lease.Env{
-		Ctx: context.Background(), H: f, Dir: state.Dir(t.TempDir()), Prefix: "werft-",
+		Ctx: context.Background(), H: f, Dir: dir, Prefix: "werft-",
 		Shell: func(config string) guest.Shell { sh.config = config; return sh },
 		NewKey: func(path string) error {
 			if err := os.WriteFile(path, []byte("private"), 0o600); err != nil {
@@ -332,6 +346,33 @@ func TestStartRefusesARecordWithoutDomain(t *testing.T) {
 	}
 }
 
+// TestStartFindsTheRecordUnderTheLock: a version that werft images --prune
+// deleted after Resolve gets no overlay and no domain.
+func TestStartFindsTheRecordUnderTheLock(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	must(t, os.WriteFile(e.Dir.Images(), nil, 0o600))
+	if _, err := lease.Start(e, record(), "agent"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("Start = %v, want not_found", err)
+	}
+	if calls := strings.Join(f.Calls(), "\n"); strings.Contains(calls, "CreateVolume werft werft-") || strings.Contains(calls, "DefineDomain") {
+		t.Errorf("Start of a pruned version made an overlay or a domain:\n%s", calls)
+	}
+}
+
+func TestStocks(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l, err := lease.Start(e, record(), "agent")
+	must(t, err)
+	_, err = f.DefineDomain("<domain type='kvm'><name>vm</name><memory unit='MiB'>1024</memory></domain>")
+	must(t, err)
+	stocks, err := lease.Stocks(f)
+	if err != nil || len(stocks) != 1 || !stocks[l.Stock] {
+		t.Errorf("Stocks = %v, %v, want only %s", stocks, err, l.Stock)
+	}
+}
+
 func TestResolve(t *testing.T) {
 	catalog := filepath.Join(t.TempDir(), "images.toml")
 	must(t, os.WriteFile(catalog, []byte(`[[image]]
@@ -405,5 +446,161 @@ func TestReleaseFinishesAHalfDoneRelease(t *testing.T) {
 	}
 	if _, err := f.Domain(l.Domain); !failure.Is(err, failure.NotFound) {
 		t.Errorf("%s is left: %v", l.Domain, err)
+	}
+}
+
+// screen is the fake whose every console shows a still prompt.
+type screen struct{ *virttest.Fake }
+
+func (s screen) Screenshot(domain string, w io.Writer) (string, error) {
+	if _, err := s.Fake.Screenshot(domain, io.Discard); err != nil {
+		return "", err
+	}
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, 4, 4))
+	img.Set(1, 1, color.White)
+	return "image/png", png.Encode(w, img)
+}
+
+// store is pass with one entry.
+type store map[string]string
+
+func (s store) Show(entry string) (string, error) {
+	if v, ok := s[entry]; ok {
+		return v, nil
+	}
+	return "", failure.New(failure.SecretUnavailable, "pass show %s failed", entry)
+}
+
+// noTerminal is stdin that is no terminal, as for an agent.
+type noTerminal struct{}
+
+func (noTerminal) ReadSecret(prompt string) (string, error) {
+	return "", failure.New(failure.SecretUnavailable, "%s: stdin is no terminal to ask on", prompt)
+}
+
+func luksRecord() image.Record {
+	rec := record()
+	rec.LUKS, rec.DiskPasswordPass = true, "vm/guest-password"
+	return rec
+}
+
+// keyShell is a guest that answers SSH only once keys were typed: an
+// encrypted guest takes no address before its disk is open.
+type keyShell struct {
+	shell
+	f *virttest.Fake
+}
+
+func (s *keyShell) Run(ctx context.Context, addr guest.Addr, cmd string, in io.Reader, stdout, stderr io.Writer) error {
+	s.up = slices.ContainsFunc(s.f.Calls(), func(c string) bool { return strings.HasPrefix(c, "SendKey ") })
+	return s.shell.Run(ctx, addr, cmd, in, stdout, stderr)
+}
+
+func TestStartTypesTheDiskPasswordOnce(t *testing.T) {
+	f := world(t)
+	sh := &keyShell{f: f}
+	e := env(t, f, &sh.shell)
+	e.Shell = func(string) guest.Shell { return sh }
+	e.H = screen{f}
+	var out bytes.Buffer
+	e.Out = &out
+	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
+	l, err := lease.Start(e, luksRecord(), "agent")
+	must(t, err)
+
+	// p, w, Enter: once.
+	if keys := f.SentKeys(l.Domain); len(keys) != 3 || keys[2][0] != 28 {
+		t.Errorf("keys = %v, want the password and Enter once", keys)
+	}
+	if len(sh.logins) != 1 {
+		t.Errorf("logins = %v, want one after the password", sh.logins)
+	}
+	doc, err := json.Marshal(l)
+	must(t, err)
+	if strings.Contains(string(doc), `"pw"`) || strings.Contains(out.String(), "pw\n") {
+		t.Errorf("the password shows in the JSON or the output:\n%s\n%s", doc, out.String())
+	}
+}
+
+func TestStartWithoutTheDiskPassword(t *testing.T) {
+	tests := map[string]image.Record{
+		"pass cannot give it":     luksRecord(),
+		"the record has no entry": func() image.Record { r := luksRecord(); r.DiskPasswordPass = ""; return r }(),
+	}
+	for name, rec := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := world(t)
+			e := env(t, f, &shell{up: true})
+			e.Secrets, e.Terminal = store{}, noTerminal{}
+			before := len(f.Calls())
+			if _, err := lease.Start(e, rec, "agent"); !failure.Is(err, failure.SecretUnavailable) {
+				t.Fatalf("Start = %v, want secret_unavailable", err)
+			}
+			for _, c := range f.Calls()[before:] {
+				t.Errorf("Start without the password called libvirt: %s", c)
+			}
+			if _, err := os.Stat(e.Dir.Leases()); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("Start without the password made %s: %v", e.Dir.Leases(), err)
+			}
+		})
+	}
+}
+
+func TestStartWithALockedPasswordStoreTellsWhatToDo(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	e.Secrets, e.Terminal = store{}, noTerminal{}
+	_, err := lease.Start(e, luksRecord(), "agent")
+	if !failure.Is(err, failure.SecretUnavailable) {
+		t.Fatalf("Start = %v, want secret_unavailable", err)
+	}
+	for _, want := range []string{"ask the user to unlock the password store", "pass show vm/guest-password once", "then lease again", "do not print or ask for the password yourself"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to say %q", err, want)
+		}
+	}
+}
+
+func TestStartRefusesAnUntypeablePassword(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	e.Secrets, e.Terminal = store{"vm/guest-password": "pässword"}, noTerminal{}
+	before := len(f.Calls())
+	if _, err := lease.Start(e, luksRecord(), "agent"); !failure.Is(err, failure.Usage) || strings.Contains(err.Error(), "pässword") {
+		t.Fatalf("Start = %v, want usage without the password", err)
+	}
+	for _, c := range f.Calls()[before:] {
+		t.Errorf("Start with an untypeable password called libvirt: %s", c)
+	}
+	if _, err := os.Stat(e.Dir.Leases()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Start with an untypeable password made %s: %v", e.Dir.Leases(), err)
+	}
+}
+
+// TestStartOfARefusedPasswordNamesNoRemovedDomain: the failed start removes
+// the lease domain, so the error must not send the user to its console.
+func TestStartOfARefusedPasswordNamesNoRemovedDomain(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{})
+	e.H = screen{f}
+	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
+	_, err := lease.Start(e, luksRecord(), "agent")
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "refused the typed password") {
+		t.Fatalf("Start = %v, want a timeout that names the password", err)
+	}
+	if strings.Contains(err.Error(), "virt-viewer") {
+		t.Errorf("Start names the console of the removed domain: %v", err)
+	}
+}
+
+// TestStartOfAPlainImageTypesNothing: an image without the LUKS marker
+// reads no secret.
+func TestStartOfAPlainImageTypesNothing(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l, err := lease.Start(e, record(), "agent")
+	must(t, err)
+	if keys := f.SentKeys(l.Domain); len(keys) != 0 {
+		t.Errorf("keys = %v, want none", keys)
 	}
 }

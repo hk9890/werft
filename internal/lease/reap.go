@@ -87,6 +87,32 @@ func scan(e Env) ([]found, error) {
 	return all, nil
 }
 
+// Stocks is the stock version that each domain with werft lease metadata
+// names, whatever its name and its state directory: werft images --prune
+// keeps those versions.
+func Stocks(h virt.Hypervisor) (map[string]bool, error) {
+	domains, err := h.Domains()
+	if err != nil {
+		return nil, err
+	}
+	stocks := map[string]bool{}
+	for _, d := range domains {
+		text, err := h.DomainMetadata(d.Name, Namespace)
+		if failure.Is(err, failure.NotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var r record
+		if err := xml.Unmarshal([]byte(text), &r); err != nil {
+			return nil, failure.Wrap(failure.Failed, err, "the lease metadata of %s", d.Name)
+		}
+		stocks[r.Stock] = true
+	}
+	return stocks, nil
+}
+
 // ownership compares the state directory a lease names with dir, also
 // after symlinks, so /home and /var/home name one directory.
 func ownership(named string, dir state.Dir) int {

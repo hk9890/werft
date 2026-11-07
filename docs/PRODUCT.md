@@ -53,7 +53,8 @@ Humans come second. They use the same commands and get readable output.
   returns the build VM to exactly that state. If werft cannot save or restore both halves, the
   command fails. Only build VMs have reset points.
 - **Stock image.** A sealed, immutable copy of one build VM reset point. werft never changes it.
-  Leases start from it. A new seal makes a new version.
+  Leases start from it. A new seal makes a new version. `werft images --prune` deletes the old
+  versions that no lease uses.
 - **Tier.** The state a stock image comes from. `plain` is the vendor install, prepared for SSH
   access. `full` is the state after the full bootstrap and its checks.
 - **Lease.** A disposable VM that one user gets from a stock image and tier. The lease has an
@@ -115,7 +116,8 @@ Requirements:
   commands, the lease JSON fields, the exit codes and the rules. `werft help` lists it. It is part
   of the binary, so it matches the installed version.
 - A lease of an encrypted image (Omarchy) boots like any other: werft types the disk password. The
-  agent never sees it.
+  agent never sees it. werft reads it from `pass`, so the GPG agent of the user must be unlocked;
+  else the lease fails with `secret_unavailable`. `seal` types the password in the same way.
 
 ## What carries over from `vm`
 
@@ -144,8 +146,9 @@ repo owns. werft only runs it.
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
    `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: `seal`,
-   `images`, `lease`, `release`, `leases`, `extend`, `reap` and parallel leases with a memory
-   budget, of the `plain` and `full` tiers, in code.
+   `images`, `lease`, `release`, `leases`, `extend`, `reap`, parallel leases with a memory
+   budget, and stock garbage collection (`images --prune`), of the `plain` and `full` tiers and of
+   encrypted images, in code.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it. Status:
    `werft guide` in code.

@@ -15,6 +15,7 @@ import (
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/lease"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
@@ -33,16 +34,22 @@ var clock = time.Now
 func (c *cli) leaseEnv(h virt.Hypervisor, dir state.Dir) lease.Env {
 	return lease.Env{
 		Ctx: context.Background(), H: h, Dir: dir, Prefix: leasePrefix,
-		Shell:  func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
-		NewKey: guestEnsureKey,
-		Global: func() (func(), error) {
-			lock, err := dir.LockGlobal()
-			if err != nil {
-				return nil, err
-			}
-			return func() { _ = lock.Release() }, nil
-		},
-		Now: clock, Sleep: c.sleep, Out: c.stderr,
+		Shell:   func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
+		NewKey:  guestEnsureKey,
+		Secrets: secret.Pass{}, Terminal: prompter{c},
+		Global: globalLock(dir),
+		Now:    clock, Sleep: c.sleep, Out: c.stderr,
+	}
+}
+
+// globalLock takes the global lock of dir.
+func globalLock(dir state.Dir) func() (func(), error) {
+	return func() (func(), error) {
+		lock, err := dir.LockGlobal()
+		if err != nil {
+			return nil, err
+		}
+		return func() { _ = lock.Release() }, nil
 	}
 }
 
