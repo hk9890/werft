@@ -138,18 +138,37 @@ the questions: a check and the plans of `migrate` and `seal` change nothing (`vi
 
 ## Lease lifecycle
 
-`werft lease <image> [--tier plain|full] [--owner o] [--view]` runs these steps (`lease.Start` in
-`internal/lease/lease.go`). The flags can stand before or after the image.
+`werft lease <image> [--tier plain|full] [--stock name] [--memory mib] [--cpus n] [--for duration]
+[--owner o] [--view]` runs these steps (`lease.Start` in `internal/lease/lease.go`). The flags can
+stand before or after the image.
 
-1. **Resolve.** Image and tier give the newest stock version in `images.toml`. A record without a
-   domain definition (sealed before leases existed) fails with `unsupported` and names the seal.
-   When the record carries the LUKS marker, read the disk password now, before any change: from
-   the `pass` entry the record names, else at a TTY. An agent has no TTY, so its lease needs that
-   entry and an unlocked GPG agent. Without both, the lease fails with `secret_unavailable`.
+`cmdLease` in `cmd/werft/lease.go` checks the flags before it reads `images.toml` or calls libvirt,
+and fails with `usage` outside these bounds:
+
+- `--memory` is in MiB, at least 256 (`lease.MinMemory`). It catches a size in GiB where MiB is
+  meant. The host memory is the upper bound, through admission.
+- `--cpus` is at least 1. libvirt checks the upper bound when it defines or starts the domain.
+- `--for` is from 15 minutes (`lease.MinLifetime`) to 24 hours (`lease.MaxLifetime`). The address
+  and SSH waits of steps 7 and 8 take up to 10 minutes, and the reap pass of another werft run must
+  not release a lease that still boots. `werft extend` adds time past 24 hours.
+
+1. **Resolve.** Image and tier give the newest stock version in `images.toml`. `--stock` gives the
+   version of that name: `not_found` when `images.toml` has none, `usage` when it is of another
+   image. Without `--tier`, the lease takes the tier of that version; an explicit `--tier` of
+   another tier fails with `usage`. A record without a domain definition (sealed before leases
+   existed) fails with `unsupported` and names the seal. `--memory` and `--cpus` change the
+   `<memory>`, `<currentMemory>` and `<vcpu>` of the domain definition (`domxml.Resize`); a CPU
+   topology becomes one socket with that many cores. A definition with NUMA cells or a
+   `<maxMemory>` fails with `unsupported`. `--cpus` also fails with `unsupported` when the
+   `<cputune>` of the definition names vCPU ids (`vcpupin`, `vcpusched`, `cachetune`,
+   `memorytune`). When the record carries the LUKS marker, read the disk password now, before any
+   change: from the `pass` entry the record names, else at a TTY. An agent has no TTY, so its
+   lease needs that entry and an unlocked GPG agent. Without both, the lease fails with
+   `secret_unavailable`.
 2. **Admit.** Take the global lock. Find the stock record in `images.toml` again; a version that
    `werft images --prune` deleted after step 1 fails with `not_found` (`lease.stillThere`). Fail
    (`lease.admit`) with `no_capacity` when host memory less committed memory less the `<memory>`
-   of the stock definition is below `memory_budget_mib` in `config.toml` (default 4096), or when
+   of the lease definition is below `memory_budget_mib` in `config.toml` (default 4096), or when
    `StoragePoolGetInfo` gives the stock pool less than 1 GiB free (`lease.MinPoolFree`).
    - Host memory is the total of `NodeGetInfo`.
    - Committed memory (`lease.committed`) is the configured `<memory>` of every domain that is not
@@ -185,7 +204,7 @@ the questions: a check and the plans of `migrate` and `seal` change nothing (`vi
      the key in an older guest (seal needs systemd 256 too, so no such image exists today); the key
      line is appended again at each boot; the home directory is assumed to be `/home/<user>`;
    - werft metadata in namespace `https://github.com/hk9890/werft/lease`: owner, created, expiry
-     (created plus 4 hours), stock version, and the state directory of the werft run.
+     (created plus `--for`, default 4 hours), stock version, and the state directory of the werft run.
 
    Then release the global lock. Steps 2 to 5 take seconds and do not include the boot.
 6. **Boot.** `DomainCreateWithFlags`. The domain keeps its graphics device, but no viewer opens

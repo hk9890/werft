@@ -78,3 +78,40 @@ func Overlay(name string, capacity uint64, backing string) string {
 	text, _ := v.Marshal() // strings and a number always marshal
 	return text
 }
+
+// Resize gives d memory bytes and cpus vCPUs; a zero value keeps that of d.
+// A CPU topology becomes one socket with cpus cores. It refuses a d with
+// NUMA cells or a maxMemory, whose sizes it would have to split, and new
+// vCPUs for a d whose <cputune> names vCPU ids, which could be out of range.
+func Resize(d *libvirtxml.Domain, memory uint64, cpus uint) error {
+	if memory == 0 && cpus == 0 {
+		return nil
+	}
+	if d.CPU != nil && d.CPU.Numa != nil && len(d.CPU.Numa.Cell) > 0 {
+		return fmt.Errorf("domain %s has NUMA cells", d.Name)
+	}
+	if memory > 0 {
+		if d.MaximumMemory != nil {
+			return fmt.Errorf("domain %s has a maxMemory for memory hotplug", d.Name)
+		}
+		kib := uint(memory >> 10)
+		d.Memory = &libvirtxml.DomainMemory{Value: kib, Unit: "KiB"}
+		if d.CurrentMemory != nil {
+			d.CurrentMemory = &libvirtxml.DomainCurrentMemory{Value: kib, Unit: "KiB"}
+		}
+	}
+	if cpus > 0 {
+		if t := d.CPUTune; t != nil && len(t.VCPUPin)+len(t.VCPUSched)+len(t.CacheTune)+len(t.MemoryTune) > 0 {
+			return fmt.Errorf("domain %s has a <cputune> that names vCPU ids", d.Name)
+		}
+		vcpu := libvirtxml.DomainVCPU{Value: cpus}
+		if d.VCPU != nil {
+			vcpu.Placement, vcpu.CPUSet = d.VCPU.Placement, d.VCPU.CPUSet
+		}
+		d.VCPU, d.VCPUs = &vcpu, nil
+		if d.CPU != nil && d.CPU.Topology != nil {
+			d.CPU.Topology = &libvirtxml.DomainCPUTopology{Sockets: 1, Cores: int(cpus), Threads: 1}
+		}
+	}
+	return nil
+}

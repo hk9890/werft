@@ -32,8 +32,17 @@ import (
 )
 
 const (
-	// Lifetime is how long a lease lives.
+	// Lifetime is how long a lease lives when werft lease has no --for.
 	Lifetime = 4 * time.Hour
+	// MinLifetime is longer than the address and SSH waits of a start
+	// together, so the reap pass of another werft run does not release a
+	// lease that still boots.
+	MinLifetime = 15 * time.Minute
+	// MaxLifetime caps the lifetime at lease time; werft extend adds more.
+	MaxLifetime = 24 * time.Hour
+	// MinMemory is the least memory werft lease --memory gives a VM. It
+	// catches a size given in GiB where MiB is meant.
+	MinMemory = 256 << 20
 	// BootTimeout is how long a lease waits for an address, and then for
 	// SSH.
 	BootTimeout = 5 * time.Minute
@@ -95,12 +104,38 @@ type Env struct {
 
 func (e Env) printf(format string, args ...any) { _, _ = fmt.Fprintf(e.Out, format+"\n", args...) }
 
-// Resolve is the newest stock version of image and tier in the images.toml
-// at catalog.
-func Resolve(catalog, img, tier string) (image.Record, error) {
+// Options are the choices of werft lease. A zero Memory or CPUs keeps the
+// value of the stock definition; a zero Lifetime is Lifetime.
+type Options struct {
+	Owner string
+	// Memory is the memory of the VM in bytes.
+	Memory   uint64
+	CPUs     uint
+	Lifetime time.Duration
+}
+
+// Resolve is the stock version stock of image and tier in the images.toml
+// at catalog; with stock empty, the newest one. With tier empty, the stock
+// version gives the tier.
+func Resolve(catalog, img, tier, stock string) (image.Record, error) {
 	records, err := image.Load(catalog)
 	if err != nil {
 		return image.Record{}, err
+	}
+	if stock != "" {
+		for _, r := range records {
+			if r.Name != stock {
+				continue
+			}
+			if r.Image != img {
+				return image.Record{}, failure.New(failure.Usage, "stock version %s is of image %s, not of image %s", stock, r.Image, img)
+			}
+			if tier != "" && r.Tier != tier {
+				return image.Record{}, failure.New(failure.Usage, "stock version %s is of tier %s, not of tier %s", stock, r.Tier, tier)
+			}
+			return r, nil
+		}
+		return image.Record{}, failure.New(failure.NotFound, "no stock version %s; werft images lists them", stock)
 	}
 	for i := len(records) - 1; i >= 0; i-- {
 		if r := records[i]; r.Image == img && r.Tier == tier {
@@ -110,10 +145,10 @@ func Resolve(catalog, img, tier string) (image.Record, error) {
 	return image.Record{}, failure.New(failure.NotFound, "no stock image %s of tier %s; werft images lists them", img, tier)
 }
 
-// Start leases a VM from the stock version rec for owner, and returns when
-// it accepts an SSH login with the lease key. A failed start releases what
-// it made.
-func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
+// Start leases a VM from the stock version rec with the options o, and
+// returns when it accepts an SSH login with the lease key. A failed start
+// releases what it made.
+func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 	if rec.Domain == "" {
 		return Lease{}, failure.New(failure.Unsupported, "%s has no domain definition for leases; seal %s again", rec.Name, rec.Source)
 	}
@@ -121,11 +156,17 @@ func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
 	if err != nil {
 		return Lease{}, failure.Wrap(failure.Failed, err, "the domain definition of %s", rec.Name)
 	}
+	if err := domxml.Resize(tmpl, o.Memory, o.CPUs); err != nil {
+		return Lease{}, failure.Wrap(failure.Unsupported, err, "set the memory or the vCPUs of a lease of %s", rec.Name)
+	}
+	if o.Lifetime == 0 {
+		o.Lifetime = Lifetime
+	}
 	password, err := diskPassword(e, rec)
 	if err != nil {
 		return Lease{}, err
 	}
-	l, err = reserve(e, rec, owner, tmpl)
+	l, err = reserve(e, rec, o, tmpl)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -189,7 +230,7 @@ func diskPassword(e Env, rec image.Record) (string, error) {
 
 // reserve makes the lease directory with its key pair, the overlay, and the
 // domain, under the global lock. The defined domain reserves the name.
-func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Lease, error) {
+func reserve(e Env, rec image.Record, o Options, tmpl *libvirtxml.Domain) (Lease, error) {
 	stockDisk, err := e.H.VolumePath(rec.Pool, rec.Disk)
 	if err != nil {
 		return Lease{}, err
@@ -218,9 +259,9 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 	now := e.Now().UTC().Truncate(time.Second)
 	l := Lease{
 		ID: id, Domain: e.Prefix + rec.Image + "-" + rec.Tier + "-" + id,
-		Image: rec.Image, Tier: rec.Tier, Stock: rec.Name, Owner: owner, User: rec.User,
+		Image: rec.Image, Tier: rec.Tier, Stock: rec.Name, Owner: o.Owner, User: rec.User,
 		Key: filepath.Join(dir, "id_ed25519"), SSHConfig: filepath.Join(dir, "ssh_config"),
-		Created: now, Expiry: now.Add(Lifetime), pool: rec.Pool, state: string(e.Dir),
+		Created: now, Expiry: now.Add(o.Lifetime), pool: rec.Pool, state: string(e.Dir),
 	}
 	l.SSH = "ssh -F " + l.SSHConfig + " " + id
 	if err := os.MkdirAll(e.Dir.Leases(), 0o700); err != nil {
@@ -293,7 +334,7 @@ func admit(e Env, tmpl *libvirtxml.Domain, pool string) error {
 	if err != nil {
 		return err
 	}
-	if total < held+need || total-held-need < e.MemoryBudget {
+	if held > total || need > total-held || total-held-need < e.MemoryBudget {
 		return failure.New(failure.NoCapacity, "no capacity: the host has %d MiB of memory, domains hold %d MiB, the lease needs %d MiB, and memory_budget_mib in config.toml keeps %d MiB; release a lease, stop a VM, or lower memory_budget_mib",
 			total>>20, held>>20, need>>20, e.MemoryBudget>>20)
 	}

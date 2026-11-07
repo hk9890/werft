@@ -18,7 +18,7 @@ import (
 func startAt(t *testing.T, e lease.Env, now time.Time) lease.Lease {
 	t.Helper()
 	e.Now = func() time.Time { return now }
-	l, err := lease.Start(e, record(), "agent")
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
 	return l
 }

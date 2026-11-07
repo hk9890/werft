@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"libvirt.org/go/libvirtxml"
+
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/lease"
@@ -310,10 +314,11 @@ func TestLeaseCommandArguments(t *testing.T) {
 	}
 }
 
-// TestLeaseOverTheBudget: memory_budget_mib in config.toml reaches the
-// admission of werft lease, and a lease over it exits 6 with kind
-// no_capacity, before it makes a volume or a domain.
-func TestLeaseOverTheBudget(t *testing.T) {
+// stockHost is a lifecycle host with 8 GiB of memory, memory_budget_mib
+// budget in config.toml, and the stock image of imagesTOML with a domain
+// definition of 2 GiB.
+func stockHost(t *testing.T, budget int) *lifecycleHost {
+	t.Helper()
 	state, config := t.TempDir(), t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("XDG_CONFIG_HOME", config)
@@ -329,7 +334,7 @@ func TestLeaseOverTheBudget(t *testing.T) {
 	}
 	for path, content := range map[string]string{
 		filepath.Join(state, "werft", "images.toml"):  imagesTOML + "domain = \"<domain type='kvm'><name>ubuntu-26-04</name><memory unit='GiB'>2</memory></domain>\"\n",
-		filepath.Join(config, "werft", "config.toml"): "memory_budget_mib = 7168\n",
+		filepath.Join(config, "werft", "config.toml"): fmt.Sprintf("memory_budget_mib = %d\n", budget),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -338,18 +343,235 @@ func TestLeaseOverTheBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	return lh
+}
+
+// noCapacity runs werft --json args on lh and wants exit 6 with kind
+// no_capacity and every one of want in the message, before the lease makes
+// a volume or a domain.
+func noCapacity(t *testing.T, lh *lifecycleHost, args []string, want ...string) {
+	t.Helper()
 	before := len(lh.fake.Calls())
-	r := lh.run("--json", "lease", "ubuntu-26-04")
+	r := lh.run(append([]string{"--json"}, args...)...)
 	var doc struct {
 		Error struct{ Kind, Message string } `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil || r.code != 6 || doc.Error.Kind != string(failure.NoCapacity) ||
-		!strings.Contains(doc.Error.Message, "the lease needs 2048 MiB") || !strings.Contains(doc.Error.Message, "keeps 7168 MiB") {
-		t.Fatalf("lease over the budget = %+v, %v; want exit 6 with kind no_capacity", r, err)
+	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil || r.code != 6 || doc.Error.Kind != string(failure.NoCapacity) {
+		t.Fatalf("werft %q = %+v, %v; want exit 6 with kind no_capacity", args, r, err)
+	}
+	for _, w := range want {
+		if !strings.Contains(doc.Error.Message, w) {
+			t.Errorf("werft %q: message %q lacks %q", args, doc.Error.Message, w)
+		}
 	}
 	if calls := lh.fake.Calls()[before:]; slices.ContainsFunc(calls, func(c string) bool {
 		return strings.HasPrefix(c, "CreateVolume") || strings.HasPrefix(c, "DefineDomain")
 	}) {
 		t.Errorf("a refused lease made a volume or a domain: %v", calls)
+	}
+}
+
+// TestLeaseOverTheBudget: memory_budget_mib in config.toml reaches the
+// admission of werft lease, and a lease over it exits 6 with kind
+// no_capacity, before it makes a volume or a domain.
+func TestLeaseOverTheBudget(t *testing.T) {
+	lh := stockHost(t, 7168)
+	noCapacity(t, lh, []string{"lease", "ubuntu-26-04"}, "the lease needs 2048 MiB", "keeps 7168 MiB")
+}
+
+// TestLeaseMemoryReachesAdmission: with --memory, admission counts the
+// requested memory, also for a stock version that --stock names. Control:
+// the 2 GiB of the stock definition fit the same budget, so the refusal
+// comes from the flag.
+func TestLeaseMemoryReachesAdmission(t *testing.T) {
+	lh := stockHost(t, 5120)
+	noCapacity(t, lh, []string{"lease", "ubuntu-26-04", "--memory", "4096"}, "the lease needs 4096 MiB", "keeps 5120 MiB")
+	noCapacity(t, lh, []string{"lease", "--stock", "ubuntu-26-04-plain-20261102", "--memory", "4096", "ubuntu-26-04"}, "the lease needs 4096 MiB")
+	lh = stockHost(t, 6144)
+	noCapacity(t, lh, []string{"lease", "ubuntu-26-04", "--memory", "4096"}, "the lease needs 4096 MiB")
+	lh.fake.FailOn("CreateVolume", failure.New(failure.Failed, "control: past admission"))
+	if r := lh.run("--json", "lease", "ubuntu-26-04"); !strings.Contains(r.stdout, "control: past admission") {
+		t.Errorf("control: a lease with the stock memory = %+v, want it past admission", r)
+	}
+}
+
+// TestLeaseOptionArguments: a flag out of its bounds exits 2 before werft
+// reads images.toml or calls libvirt; a --stock that does not exist exits
+// 3, and one of another image, or of another tier than an explicit --tier,
+// exits 2.
+func TestLeaseOptionArguments(t *testing.T) {
+	lh := stockHost(t, 0)
+	before := len(lh.fake.Calls())
+	for _, tt := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"ubuntu-26-04", "--memory", "8"}, 2, "--memory is a size in MiB, at least 256"},
+		{[]string{"ubuntu-26-04", "--memory", "0"}, 2, "--memory is a size in MiB"},
+		{[]string{"ubuntu-26-04", "--memory", "8G"}, 2, "invalid value"},
+		{[]string{"ubuntu-26-04", "--cpus", "0"}, 2, "--cpus is at least 1"},
+		{[]string{"ubuntu-26-04", "--cpus", "-1"}, 2, "invalid value"},
+		{[]string{"ubuntu-26-04", "--for", "10m"}, 2, "--for is a duration from 15m to 24h"},
+		{[]string{"ubuntu-26-04", "--for", "25h"}, 2, "--for is a duration"},
+		{[]string{"ubuntu-26-04", "--for", "soon"}, 2, "invalid value"},
+		{[]string{"ubuntu-26-04", "--stock", "ubuntu-26-04-plain-20261030"}, 3, "no stock version ubuntu-26-04-plain-20261030"},
+		{[]string{"ubuntu-26-04", "--tier", "full", "--stock", "ubuntu-26-04-plain-20261102"}, 2, "is of tier plain, not of tier full"},
+		{[]string{"debian-13", "--stock", "ubuntu-26-04-plain-20261102"}, 2, "is of image ubuntu-26-04, not of image debian-13"},
+	} {
+		args := append([]string{"--json", "lease"}, tt.args...)
+		if r := lh.run(args...); r.code != tt.code || !strings.Contains(r.stdout, tt.want) {
+			t.Errorf("werft %q = %+v, want exit %d with %q", args, r, tt.code, tt.want)
+		}
+	}
+	if calls := lh.fake.Calls()[before:]; len(calls) > 0 {
+		t.Errorf("a refused lease called libvirt: %v", calls)
+	}
+}
+
+// TestLeaseStockGivesTheTier: --stock of a full version without --tier
+// leases that version, in a domain of tier full. The start fails, and so
+// does the undefine, so the defined domain stays for the test to read.
+func TestLeaseStockGivesTheTier(t *testing.T) {
+	lh := stockHost(t, 0)
+	saved := guestEnsureKey
+	guestEnsureKey = func(path string) error { return os.WriteFile(path+".pub", []byte("ssh-ed25519 AAAA test"), 0o600) }
+	t.Cleanup(func() { guestEnsureKey = saved })
+	for _, v := range []string{"ubuntu-26-04-full-20261102.qcow2", "ubuntu-26-04-full-20261102_VARS.qcow2"} {
+		if _, err := lh.fake.CreateVolume("werft", "<volume><name>"+v+"</name><capacity unit='G'>20</capacity></volume>"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	disk, err := lh.fake.VolumePath("werft", "ubuntu-26-04-full-20261102.qcow2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := strings.ReplaceAll(imagesTOML, "plain", "full") + fmt.Sprintf("domain = \"<domain type='kvm'><name>ubuntu-26-04</name><memory unit='GiB'>2</memory><vcpu>2</vcpu>"+
+		"<os><type>hvm</type><loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE.fd</loader></os>"+
+		"<devices><disk type='file' device='disk'><source file='%s'/><target dev='vda' bus='virtio'/></disk></devices></domain>\"\n", disk)
+	catalog := filepath.Join(os.Getenv("XDG_STATE_HOME"), "werft", "images.toml")
+	plain, err := os.ReadFile(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalog, append(plain, full...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lh.fake.FailOn("StartDomain", failure.New(failure.Failed, "test: no start"))
+	lh.fake.FailOn("UndefineDomain", failure.New(failure.Failed, "test: keep the domain"))
+
+	if r := lh.run("--json", "lease", "ubuntu-26-04", "--stock", "ubuntu-26-04-full-20261102"); !strings.Contains(r.stdout, "test: no start") {
+		t.Fatalf("werft lease --stock of a full version = %+v, want it to fail at the start", r)
+	}
+	domains, err := lh.fake.Domains()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range domains {
+		if !strings.Contains(d.Name, "ubuntu-26-04-full-") {
+			continue
+		}
+		meta, err := lh.fake.DomainMetadata(d.Name, lease.Namespace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(meta, "ubuntu-26-04-full-20261102") {
+			t.Errorf("metadata = %q, want stock version ubuntu-26-04-full-20261102", meta)
+		}
+		return
+	}
+	t.Errorf("domains = %v, want a lease domain of tier full", domains)
+}
+
+// TestLeaseOptionsReachTheDomain: --cpus, --memory and --for reach the
+// definition of the lease domain, and --stock picks an older stock version
+// over the newest one. The start fails, and so does the undefine, so the
+// defined domain stays for the test to read. Control: without the flags,
+// the lease has the newest version and the default lifetime.
+func TestLeaseOptionsReachTheDomain(t *testing.T) {
+	lh := stockHost(t, 0)
+	setClock(t, time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC))
+	saved := guestEnsureKey
+	guestEnsureKey = func(path string) error { return os.WriteFile(path+".pub", []byte("ssh-ed25519 AAAA test"), 0o600) }
+	t.Cleanup(func() { guestEnsureKey = saved })
+	for _, v := range []string{"ubuntu-26-04-plain-20261030.qcow2", "ubuntu-26-04-plain-20261030_VARS.qcow2"} {
+		if _, err := lh.fake.CreateVolume("werft", "<volume><name>"+v+"</name><capacity unit='G'>20</capacity></volume>"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var catalog strings.Builder
+	for _, version := range []string{"20261030", "20261102"} {
+		disk, err := lh.fake.VolumePath("werft", "ubuntu-26-04-plain-"+version+".qcow2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		catalog.WriteString(strings.ReplaceAll(imagesTOML, "20261102", version))
+		fmt.Fprintf(&catalog, "domain = \"<domain type='kvm'><name>ubuntu-26-04</name><memory unit='GiB'>2</memory><vcpu>2</vcpu>"+
+			"<os><type>hvm</type><loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE.fd</loader></os>"+
+			"<devices><disk type='file' device='disk'><source file='%s'/><target dev='vda' bus='virtio'/></disk></devices></domain>\"\n", disk)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("XDG_STATE_HOME"), "werft", "images.toml"), []byte(catalog.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lh.fake.FailOn("StartDomain", failure.New(failure.Failed, "test: no start"))
+	lh.fake.FailOn("UndefineDomain", failure.New(failure.Failed, "test: keep the domain"))
+
+	// defined runs werft lease ubuntu-26-04 args and returns the definition
+	// and the werft metadata of the domain it defined.
+	defined := func(args ...string) (*libvirtxml.Domain, string) {
+		t.Helper()
+		before, err := lh.fake.Domains()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r := lh.run(append([]string{"--json", "lease", "ubuntu-26-04"}, args...)...); !strings.Contains(r.stdout, "test: no start") {
+			t.Fatalf("werft lease %q = %+v, want it to fail at the start", args, r)
+		}
+		after, err := lh.fake.Domains()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range after {
+			if slices.Contains(before, d) {
+				continue
+			}
+			text, err := lh.fake.DomainXML(d.Name, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dom, err := domxml.Parse(text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta, err := lh.fake.DomainMetadata(d.Name, lease.Namespace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return dom, meta
+		}
+		t.Fatalf("werft lease %q defined no domain", args)
+		return nil, ""
+	}
+
+	d, meta := defined("--cpus", "4", "--memory", "3072", "--for", "90m", "--stock", "ubuntu-26-04-plain-20261030")
+	if d.VCPU == nil || d.VCPU.Value != 4 {
+		t.Errorf("vcpu = %+v, want 4", d.VCPU)
+	}
+	if n, err := domxml.Memory(d); err != nil || n != 3<<30 {
+		t.Errorf("memory = %d, %v; want 3 GiB", n, err)
+	}
+	for _, want := range []string{"2026-11-03T11:30:00Z", "ubuntu-26-04-plain-20261030"} {
+		if !strings.Contains(meta, want) {
+			t.Errorf("metadata = %q, want %q", meta, want)
+		}
+	}
+	d, meta = defined()
+	if d.VCPU == nil || d.VCPU.Value != 2 {
+		t.Errorf("control: vcpu = %+v, want the 2 of the stock definition", d.VCPU)
+	}
+	for _, want := range []string{"2026-11-03T14:00:00Z", "ubuntu-26-04-plain-20261102"} {
+		if !strings.Contains(meta, want) {
+			t.Errorf("control: metadata = %q, want %q", meta, want)
+		}
 	}
 }

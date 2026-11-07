@@ -102,12 +102,14 @@ Requirements:
 - No command asks a question when stdin is not a TTY. A command that needs confirmation fails and
   names the flag that gives it.
 - Secrets never appear on a command line, in a process list, or in JSON output.
-- A lease lives 4 hours by default. `werft extend <lease-id>` adds time. werft destroys an expired
-  lease at the next werft run that reads leases with the same state directory; no timer runs
-  ([DESIGN.md, "Lease lifecycle"](DESIGN.md#lease-lifecycle) names those commands). The VM of an
-  agent that crashes stays until then.
+- A lease lives 4 hours by default; `werft lease --for` sets another lifetime. `werft extend
+  <lease-id>` adds time. werft destroys an expired lease at the next werft run that reads leases
+  with the same state directory; no timer runs ([DESIGN.md, "Lease lifecycle"](DESIGN.md#lease-lifecycle)
+  names those commands). The VM of an agent that crashes stays until then.
 - `werft leases --json` lists active leases with owner, image, tier, state, address, and expiry.
   A lease that does not run, such as one the guest powered off, lists its state and no address.
+- A lease gets the memory and vCPUs of its stock image by default; `--memory` and `--cpus` set
+  others. `--stock` picks an older stock version of the image and tier, for example to bisect.
 - More than one lease can run at the same time. werft refuses a new lease ("no capacity") when the
   host memory that no VM and no lease holds would drop below a configured budget.
 - A lease runs headless: the guest desktop runs, but no viewer window opens on the host. `--view`

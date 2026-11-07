@@ -112,7 +112,7 @@ func TestStart(t *testing.T) {
 	f := world(t)
 	sh := &shell{up: true}
 	e := env(t, f, sh)
-	l, err := lease.Start(e, record(), "agent")
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
 
 	dir := e.Dir.Lease(l.ID)
@@ -169,6 +169,48 @@ func TestStart(t *testing.T) {
 	}
 }
 
+// TestStartWithOptions: memory and vCPUs reach the domain definition, and
+// the lifetime reaches the expiry and its metadata.
+func TestStartWithOptions(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent", Memory: 3 << 30, CPUs: 4, Lifetime: 90 * time.Minute})
+	must(t, err)
+	if l.Expiry != e.Now().Add(90*time.Minute) {
+		t.Errorf("expiry = %v, want 90 minutes after %v", l.Expiry, e.Now())
+	}
+	if meta, _ := f.DomainMetadata(l.Domain, lease.Namespace); !strings.Contains(meta, "<werft:expiry>2026-11-03T11:30:00Z</werft:expiry>") {
+		t.Errorf("metadata = %q, want the expiry 90 minutes on", meta)
+	}
+	text, err := f.DomainXML(l.Domain, false)
+	must(t, err)
+	d, err := domxml.Parse(text)
+	must(t, err)
+	if n, err := domxml.Memory(d); err != nil || n != 3<<30 {
+		t.Errorf("memory = %d, %v; want 3 GiB", n, err)
+	}
+	if d.VCPU == nil || d.VCPU.Value != 4 {
+		t.Errorf("vcpu = %+v, want 4", d.VCPU)
+	}
+}
+
+// TestStartAdmitsTheRequestedMemory: admission counts the memory of
+// Options, not that of the stock definition. Control: the same host admits
+// a lease with the memory of the stock definition.
+func TestStartAdmitsTheRequestedMemory(t *testing.T) {
+	f := world(t)
+	f.TotalMemory = 4<<30 + 2<<30 - 1
+	e := env(t, f, &shell{up: true})
+	e.MemoryBudget = 4 << 30
+	_, err := lease.Start(e, record(), lease.Options{Owner: "agent", Memory: 2 << 30})
+	if !failure.Is(err, failure.NoCapacity) || !strings.Contains(err.Error(), "lease needs 2048 MiB") {
+		t.Fatalf("Start with 2 GiB = %v, want no_capacity for 2048 MiB", err)
+	}
+	if _, err := lease.Start(e, record(), lease.Options{Owner: "agent"}); err != nil {
+		t.Errorf("control: Start with the 1 GiB of the stock definition = %v", err)
+	}
+}
+
 // TestStartOverDHCP: a guest before systemd 256 has no SSH over vsock, so
 // the lease waits for the DHCP lease of its MAC.
 func TestStartOverDHCP(t *testing.T) {
@@ -186,7 +228,7 @@ func TestStartOverDHCP(t *testing.T) {
 			f.AddDHCPLease("default", virt.DHCPLease{MAC: domxml.Interfaces(d)[0].MAC, IP: "192.168.122.40"})
 		}
 	}
-	l, err := lease.Start(e, rec, "agent")
+	l, err := lease.Start(e, rec, lease.Options{Owner: "agent"})
 	must(t, err)
 	if l.Address != "192.168.122.40" {
 		t.Errorf("address = %s", l.Address)
@@ -215,7 +257,7 @@ func TestStartFailsAndReleases(t *testing.T) {
 				f.FailOn(tt.fail, failure.New(tt.want, "injected"))
 			}
 			e := env(t, f, &shell{up: tt.up})
-			if _, err := lease.Start(e, record(), "agent"); !failure.Is(err, tt.want) {
+			if _, err := lease.Start(e, record(), lease.Options{Owner: "agent"}); !failure.Is(err, tt.want) {
 				t.Fatalf("Start = %v, want kind %s", err, tt.want)
 			}
 			if domains, _ := f.Domains(); len(domains) != 0 {
@@ -290,7 +332,7 @@ func TestStartAdmits(t *testing.T) {
 				return func() { locked = f.Calls()[start:] }, nil
 			}
 			before := len(f.Calls())
-			_, err := lease.Start(e, record(), "agent")
+			_, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 			if !tt.wantError {
 				must(t, err)
 				for _, call := range []string{"HostTotalMemory", "Domains", "PoolInfo werft", "DefineDomain"} {
@@ -324,9 +366,9 @@ func TestStartAdmitsInSequence(t *testing.T) {
 	f.TotalMemory = 4<<30 + 1<<30 + 1<<29
 	e := env(t, f, &shell{up: true})
 	e.MemoryBudget = 4 << 30
-	_, err := lease.Start(e, record(), "agent")
+	_, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
-	_, err = lease.Start(e, record(), "agent")
+	_, err = lease.Start(e, record(), lease.Options{Owner: "agent"})
 	if !failure.Is(err, failure.NoCapacity) {
 		t.Fatalf("second Start = %v, want kind no_capacity", err)
 	}
@@ -341,7 +383,7 @@ func TestStartRefusesARecordWithoutDomain(t *testing.T) {
 	f := world(t)
 	rec := record()
 	rec.Domain = ""
-	if _, err := lease.Start(env(t, f, &shell{up: true}), rec, "agent"); !failure.Is(err, failure.Unsupported) {
+	if _, err := lease.Start(env(t, f, &shell{up: true}), rec, lease.Options{Owner: "agent"}); !failure.Is(err, failure.Unsupported) {
 		t.Errorf("Start = %v, want unsupported", err)
 	}
 }
@@ -352,7 +394,7 @@ func TestStartFindsTheRecordUnderTheLock(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
 	must(t, os.WriteFile(e.Dir.Images(), nil, 0o600))
-	if _, err := lease.Start(e, record(), "agent"); !failure.Is(err, failure.NotFound) {
+	if _, err := lease.Start(e, record(), lease.Options{Owner: "agent"}); !failure.Is(err, failure.NotFound) {
 		t.Errorf("Start = %v, want not_found", err)
 	}
 	if calls := strings.Join(f.Calls(), "\n"); strings.Contains(calls, "CreateVolume werft werft-") || strings.Contains(calls, "DefineDomain") {
@@ -363,7 +405,7 @@ func TestStartFindsTheRecordUnderTheLock(t *testing.T) {
 func TestStocks(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
-	l, err := lease.Start(e, record(), "agent")
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
 	_, err = f.DefineDomain("<domain type='kvm'><name>vm</name><memory unit='MiB'>1024</memory></domain>")
 	must(t, err)
@@ -384,22 +426,44 @@ name = "vm-plain-20261102"
 image = "vm"
 tier = "plain"
 [[image]]
+name = "vm-full-20261102"
+image = "vm"
+tier = "full"
+[[image]]
 name = "other-plain-20261103"
 image = "other"
 tier = "plain"
 `), 0o600))
-	if r, err := lease.Resolve(catalog, "vm", "plain"); err != nil || r.Name != "vm-plain-20261102" {
+	if r, err := lease.Resolve(catalog, "vm", "plain", ""); err != nil || r.Name != "vm-plain-20261102" {
 		t.Errorf("Resolve = %s, %v, want the newest version", r.Name, err)
 	}
-	if _, err := lease.Resolve(catalog, "vm", "full"); !failure.Is(err, failure.NotFound) {
+	if _, err := lease.Resolve(catalog, "other", "full", ""); !failure.Is(err, failure.NotFound) {
 		t.Errorf("Resolve of a missing tier = %v, want not_found", err)
+	}
+	if r, err := lease.Resolve(catalog, "vm", "plain", "vm-plain-20261101"); err != nil || r.Name != "vm-plain-20261101" {
+		t.Errorf("Resolve of an older stock version = %s, %v, want that version", r.Name, err)
+	}
+	if _, err := lease.Resolve(catalog, "vm", "plain", "vm-plain-20261030"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("Resolve of a missing stock version = %v, want not_found", err)
+	}
+	if _, err := lease.Resolve(catalog, "vm", "plain", "other-plain-20261103"); !failure.Is(err, failure.Usage) {
+		t.Errorf("Resolve of a stock version of another image = %v, want usage", err)
+	}
+	if _, err := lease.Resolve(catalog, "vm", "full", "vm-plain-20261102"); !failure.Is(err, failure.Usage) {
+		t.Errorf("Resolve of a stock version of another tier = %v, want usage", err)
+	}
+	if r, err := lease.Resolve(catalog, "vm", "", "vm-full-20261102"); err != nil || r.Tier != "full" {
+		t.Errorf("Resolve of a stock version without a tier = %+v, %v, want the full version", r, err)
+	}
+	if _, err := lease.Resolve(catalog, "vm", "", "other-plain-20261103"); !failure.Is(err, failure.Usage) {
+		t.Errorf("Resolve without a tier of a stock version of another image = %v, want usage", err)
 	}
 }
 
 func TestRelease(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
-	l, err := lease.Start(e, record(), "agent")
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
 	// A domain with a lease name but no lease metadata is no lease.
 	_, err = f.DefineDomain("<domain type='kvm'><name>werft-other-plain-" + l.ID + "</name></domain>")
@@ -434,7 +498,7 @@ func TestRelease(t *testing.T) {
 func TestReleaseFinishesAHalfDoneRelease(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
-	l, err := lease.Start(e, record(), "agent")
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
 	f.FailOn("UndefineDomain", failure.New(failure.Failed, "injected"))
 	if _, err := lease.Release(f, e.Dir, "werft-", l.ID); err == nil {
@@ -505,7 +569,7 @@ func TestStartTypesTheDiskPasswordOnce(t *testing.T) {
 	var out bytes.Buffer
 	e.Out = &out
 	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
-	l, err := lease.Start(e, luksRecord(), "agent")
+	l, err := lease.Start(e, luksRecord(), lease.Options{Owner: "agent"})
 	must(t, err)
 
 	// p, w, Enter: once.
@@ -533,7 +597,7 @@ func TestStartWithoutTheDiskPassword(t *testing.T) {
 			e := env(t, f, &shell{up: true})
 			e.Secrets, e.Terminal = store{}, noTerminal{}
 			before := len(f.Calls())
-			if _, err := lease.Start(e, rec, "agent"); !failure.Is(err, failure.SecretUnavailable) {
+			if _, err := lease.Start(e, rec, lease.Options{Owner: "agent"}); !failure.Is(err, failure.SecretUnavailable) {
 				t.Fatalf("Start = %v, want secret_unavailable", err)
 			}
 			for _, c := range f.Calls()[before:] {
@@ -550,7 +614,7 @@ func TestStartWithALockedPasswordStoreTellsWhatToDo(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
 	e.Secrets, e.Terminal = store{}, noTerminal{}
-	_, err := lease.Start(e, luksRecord(), "agent")
+	_, err := lease.Start(e, luksRecord(), lease.Options{Owner: "agent"})
 	if !failure.Is(err, failure.SecretUnavailable) {
 		t.Fatalf("Start = %v, want secret_unavailable", err)
 	}
@@ -566,7 +630,7 @@ func TestStartRefusesAnUntypeablePassword(t *testing.T) {
 	e := env(t, f, &shell{up: true})
 	e.Secrets, e.Terminal = store{"vm/guest-password": "pässword"}, noTerminal{}
 	before := len(f.Calls())
-	if _, err := lease.Start(e, luksRecord(), "agent"); !failure.Is(err, failure.Usage) || strings.Contains(err.Error(), "pässword") {
+	if _, err := lease.Start(e, luksRecord(), lease.Options{Owner: "agent"}); !failure.Is(err, failure.Usage) || strings.Contains(err.Error(), "pässword") {
 		t.Fatalf("Start = %v, want usage without the password", err)
 	}
 	for _, c := range f.Calls()[before:] {
@@ -584,7 +648,7 @@ func TestStartOfARefusedPasswordNamesNoRemovedDomain(t *testing.T) {
 	e := env(t, f, &shell{})
 	e.H = screen{f}
 	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
-	_, err := lease.Start(e, luksRecord(), "agent")
+	_, err := lease.Start(e, luksRecord(), lease.Options{Owner: "agent"})
 	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "refused the typed password") {
 		t.Fatalf("Start = %v, want a timeout that names the password", err)
 	}
@@ -598,7 +662,7 @@ func TestStartOfARefusedPasswordNamesNoRemovedDomain(t *testing.T) {
 func TestStartOfAPlainImageTypesNothing(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
-	l, err := lease.Start(e, record(), "agent")
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
 	if keys := f.SentKeys(l.Domain); len(keys) != 0 {
 		t.Errorf("keys = %v, want none", keys)

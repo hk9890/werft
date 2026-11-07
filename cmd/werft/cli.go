@@ -48,7 +48,7 @@ func init() {
 		{name: "guide", summary: "print how an agent leases a VM, uses it and gives it back", run: (*cli).cmdGuide},
 		{name: "help", args: "[command]", summary: "show the usage of werft or of one command", run: (*cli).cmdHelp},
 		{name: "images", args: "[--prune] [--yes]", summary: "list the stock images: image, tier, version, date; --prune deletes the old versions no lease uses", run: (*cli).cmdImages},
-		{name: "lease", args: "<image> [--tier plain|full] [--owner o] [--view]", summary: "lease a disposable VM from the newest stock image; returns when SSH answers", run: (*cli).cmdLease},
+		{name: "lease", args: "<image> [--tier plain|full] [--stock name] [--memory mib] [--cpus n] [--for duration] [--owner o] [--view]", summary: "lease a disposable VM from a stock image, the newest by default; returns when SSH answers", run: (*cli).cmdLease},
 		{name: "leases", summary: "list the leases: id, owner, image, tier, state, address, expiry; releases expired ones first", run: (*cli).cmdLeases},
 		{name: "list", summary: "list all VMs: state, disk use, reset points, LUKS marker, address", run: (*cli).cmdList},
 		{name: "migrate", args: "[--yes] <name>", summary: "move a build VM from the reset points of vm to native ones: keep provision-base (clean on -full), export clean-install", run: (*cli).cmdMigrate},
