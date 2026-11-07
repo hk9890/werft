@@ -22,6 +22,10 @@ type Addr struct {
 	Host string
 }
 
+// VsockSystemd is the first systemd version with SSH over AF_VSOCK, and with
+// the ssh.ephemeral-authorized_keys-all credential.
+const VsockSystemd = 256
+
 func (a Addr) String() string { return a.User + "@" + a.Host }
 
 // Shell runs cmd in the guest at addr, with stdin as its input; a nil stdin

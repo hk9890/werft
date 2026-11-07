@@ -46,9 +46,9 @@ real adapters.
 - **`internal/virttest`** — The fake hypervisor: in-memory domains, volumes and snapshots, a call
   log, and failure injection.
 - **`internal/domxml`** — Pure functions that read, build and edit domain XML with libvirtxml.
-  They read disks, loader, NVRAM, UEFI, vsock CID, MACs, description and the LUKS marker. They
-  build clones of build VMs (new name, UUID, MAC), the qcow2 NVRAM rewrite for migration, and
-  lease domains (`domxml.Lease`).
+  They read disks, loader, NVRAM, UEFI, vsock CID, MACs, description, the LUKS marker and the
+  systemd line. They build clones of build VMs (new name, UUID, MAC), the qcow2 NVRAM rewrite for
+  migration, and lease domains (`domxml.Lease`).
 - **`internal/guest`** — The guest port and its OpenSSH adapter: run a command, run a script with
   data on stdin, copy files, probe readiness. A secret goes on stdin, never on the command line. A
   copy empties the target directory and sends the files as one tar stream over one login. The
@@ -116,6 +116,7 @@ real adapters.
 | Stock files, lease overlays, `clean-install` exports of `migrate` | storage pool `werft`, `/var/lib/libvirt/images/werft/` | libvirt |
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
 | LUKS marker | domain description line, same format as `vm` writes | libvirt |
+| Guest systemd version of a build VM | domain description line `werft: the guest has systemd <N>`, written by `detect-guest`; a reset point holds the line of its time | libvirt |
 | Image records (user, guest family, systemd version, versions, the domain definition leases start from) | `~/.local/state/werft/images.toml`, written by `seal` | werft |
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/`: `id_ed25519`, `id_ed25519.pub`, `ssh_config` | werft, removed on release |
 | werft key for build VMs (installed by `prepare`), build VM `ssh_config` | `~/.local/state/werft/id_ed25519`, `~/.local/state/werft/ssh_config` | werft |
@@ -360,7 +361,10 @@ Both tiers run the same steps:
 
 1. Check before any change: the label exists, and the build VM is shut off and passes the
    raw-NVRAM guard. The revert brings back the definition the reset point holds, so check that one
-   (`SnapshotXML`): one writable disk in a storage pool, a UEFI NVRAM, and no LUKS marker. Then
+   (`SnapshotXML`): one writable disk in a storage pool, a UEFI NVRAM, and no LUKS marker. When
+   its description records a systemd version below 256, refuse with `unsupported`: the login of
+   step 5 cannot work, so seal stops before the revert and before any copy. A reset point without
+   that line (taken before `detect-guest` recorded it) is not checked, and seal runs. Then
    confirm: the revert loses what the build VM wrote since the label.
 2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
    from the checked definition fails the run before anything is copied.
@@ -374,7 +378,9 @@ Both tiers run the same steps:
 4. Without the global lock, copy disk and NVRAM to the stock volumes with
    `StorageVolCreateXMLFrom`; the copy is flat, with no internal snapshots.
 5. Boot the temporary domain and log in as root over vsock with the key of the run. This needs no
-   guest password, and needs systemd 256 or later.
+   guest password, and needs systemd 256 or later. When the login times out and the reset point
+   has no systemd line, the `timeout` error adds a hint: run `werft prepare <vm>` and take the
+   reset point again, so seal can check the version before the copy.
 6. Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
    systemd version; empty `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
    werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest
@@ -458,7 +464,7 @@ All generic.
 | `viewer` | Open a viewer; `undo` or a successful run closes it, a failed run leaves it open |
 | `wait-ssh` | Wait until sshd answers; `prepare` also installs the werft key and the user's own key |
 | `verify-guest-password` | Check the guest password with one `sudo` call; a lost SSH connection is `failed` and blames no password |
-| `detect-guest` | Detect the family (`ubuntu` or `omarchy`) and the session process |
+| `detect-guest` | Detect the family (`ubuntu` or `omarchy`) and the session process; write the systemd version of the guest as a description line, and replace an older one |
 | `hostname` | Set the guest hostname to the domain name |
 | `luks-mark` | Probe the root disk for LUKS and set or remove the LUKS marker line; the rest of the description, blank lines too, stays. A probe whose connection drops fails the step and keeps the marker |
 | `autologin` | Turn GDM autologin on, and off again in cleanup; `prepare` checks it is off |
@@ -624,8 +630,9 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
   explicit loader. `TestSecureBootMigrateLive` proves `migrate`, `snapshot` and `reset` on the shape
   of a virt-manager build VM: Secure Boot with enrolled keys, `OVMF_CODE_4M.ms.fd`, SMM.
 - **systemd versions.** vsock SSH and `ssh.ephemeral-authorized_keys-all` need systemd 256.
-  Ubuntu 24.04 has 255 and uses the TCP fallback. Seal has no TCP fallback yet, so it cannot seal
-  Ubuntu 24.04. A static `/etc/hostname` overrides the hostname
+  Ubuntu 24.04 has 255 and uses the TCP fallback. Seal has no TCP fallback, so it cannot seal
+  Ubuntu 24.04; it refuses a reset point whose recorded systemd version is below 256 before it
+  copies anything. A static `/etc/hostname` overrides the hostname
   credential, so seal must delete it.
 - **Duplicate DHCP DUID.** Clones with one machine-id get one IP. The machine-id credential
   prevents it only if seal empties `/etc/machine-id`.

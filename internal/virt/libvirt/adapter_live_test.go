@@ -264,12 +264,29 @@ func checkDeviceAttachAndDetach(t *testing.T, h virt.Hypervisor, g *livetest.Gue
 	})
 }
 
+// checkShutdownAndUndefine also proves what seal relies on: a description
+// set while the domain runs (detect-guest) stays through the poweroff and
+// reaches the definition of a snapshot taken after it.
 func checkShutdownAndUndefine(t *testing.T, h virt.Hypervisor, g *livetest.Guest) {
 	t.Helper()
+	line := domxml.SystemdLine(255)
+	x, err := h.DomainXML(g.Name, true)
+	livetest.Must(t, err, "inactive XML")
+	if strings.Contains(x, line) {
+		t.Fatalf("the definition has the systemd line before the set:\n%s", x)
+	}
+	livetest.Must(t, h.SetDomainDescription(g.Name, line), "set description while running")
 	livetest.Must(t, h.ShutdownDomain(g.Name), "shutdown")
 	g.WaitShutOff(2 * time.Minute)
+	livetest.Must(t, h.CreateSnapshot(g.Name, "s2", ""), "snapshot after the poweroff")
+	x, err = h.SnapshotXML(g.Name, "s2")
+	livetest.Must(t, err, "snapshot XML")
+	if !strings.Contains(x, line) {
+		t.Errorf("the snapshot lacks the description set while the domain ran:\n%s", x)
+	}
+	livetest.Must(t, h.DeleteSnapshot(g.Name, "s2"), "delete snapshot")
 	mustKind(t, h.DestroyDomain(g.Name), failure.Conflict, "destroy of a shut-off domain")
 	livetest.Must(t, h.UndefineDomain(g.Name, virt.UndefineNVRAM), "undefine")
-	_, err := h.Domain(g.Name)
+	_, err = h.Domain(g.Name)
 	mustKind(t, err, failure.NotFound, "lookup after undefine")
 }

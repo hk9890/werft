@@ -156,6 +156,27 @@ func HasLUKSMarker(description string) bool {
 	return slices.Contains(strings.Split(description, "\n"), LUKSMarker)
 }
 
+// systemdPrefix starts the line in a domain description that holds the
+// systemd version of the guest, as detect-guest found it. A reset point
+// holds the description of its time, so it tells the version of its guest.
+const systemdPrefix = "werft: the guest has systemd "
+
+func SystemdLine(version int) string { return systemdPrefix + strconv.Itoa(version) }
+
+func IsSystemdLine(line string) bool { return strings.HasPrefix(line, systemdPrefix) }
+
+// SystemdOf is the systemd version in the description; false when no line
+// holds one.
+func SystemdOf(description string) (int, bool) {
+	for _, line := range strings.Split(description, "\n") {
+		if v, ok := strings.CutPrefix(line, systemdPrefix); ok {
+			n, err := strconv.Atoi(v)
+			return n, err == nil
+		}
+	}
+	return 0, false
+}
+
 // QCOW2NVRAM makes d keep its UEFI variables in the qcow2 file path, so a
 // libvirt snapshot holds them. Firmware autoselection knows only raw NVRAM,
 // so d gets its loader as an explicit path, which it must have.
