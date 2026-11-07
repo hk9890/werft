@@ -118,4 +118,16 @@ func TestResizeRefuses(t *testing.T) {
 			t.Errorf("%s: Resize succeeded", name)
 		}
 	}
+	const pinned = `<domain><name>s</name><memory>1048576</memory><vcpu>4</vcpu><cputune><vcpupin vcpu='3' cpuset='3'/></cputune></domain>`
+	d, err := domxml.Parse(pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := domxml.Resize(d, 0, 2); err == nil {
+		t.Error("vcpupin: Resize of the vCPUs succeeded")
+	}
+	d, _ = domxml.Parse(pinned)
+	if err := domxml.Resize(d, 2<<30, 0); err != nil {
+		t.Errorf("control: vcpupin: Resize of the memory alone = %v", err)
+	}
 }

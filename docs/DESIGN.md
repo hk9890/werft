@@ -157,7 +157,8 @@ and fails with `usage` outside these bounds:
    `unsupported` and names the seal. `--memory` and `--cpus` change the `<memory>`,
    `<currentMemory>` and `<vcpu>` of the domain definition (`domxml.Resize`); a CPU topology
    becomes one socket with that many cores. A definition with NUMA cells or a `<maxMemory>` fails
-   with `unsupported`.
+   with `unsupported`. `--cpus` also fails with `unsupported` when the `<cputune>` of the
+   definition names vCPU ids (`vcpupin`, `vcpusched`, `cachetune`, `memorytune`).
 2. **Admit.** Take the global lock (`lease.admit`). Fail with `no_capacity` when host memory less
    committed memory less the `<memory>` of the lease definition is below `memory_budget_mib` in
    `config.toml` (default 4096), or when `StoragePoolGetInfo` gives the stock pool less than 1 GiB

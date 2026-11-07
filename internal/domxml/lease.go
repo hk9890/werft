@@ -81,7 +81,8 @@ func Overlay(name string, capacity uint64, backing string) string {
 
 // Resize gives d memory bytes and cpus vCPUs; a zero value keeps that of d.
 // A CPU topology becomes one socket with cpus cores. It refuses a d with
-// NUMA cells or a maxMemory, whose sizes it would have to split.
+// NUMA cells or a maxMemory, whose sizes it would have to split, and new
+// vCPUs for a d whose <cputune> names vCPU ids, which could be out of range.
 func Resize(d *libvirtxml.Domain, memory uint64, cpus uint) error {
 	if memory == 0 && cpus == 0 {
 		return nil
@@ -100,6 +101,9 @@ func Resize(d *libvirtxml.Domain, memory uint64, cpus uint) error {
 		}
 	}
 	if cpus > 0 {
+		if t := d.CPUTune; t != nil && len(t.VCPUPin)+len(t.VCPUSched)+len(t.CacheTune)+len(t.MemoryTune) > 0 {
+			return fmt.Errorf("domain %s has a <cputune> that names vCPU ids", d.Name)
+		}
 		vcpu := libvirtxml.DomainVCPU{Value: cpus}
 		if d.VCPU != nil {
 			vcpu.Placement, vcpu.CPUSet = d.VCPU.Placement, d.VCPU.CPUSet

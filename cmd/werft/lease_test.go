@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"libvirt.org/go/libvirtxml"
+
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/lease"
@@ -389,5 +392,98 @@ func TestLeaseOptionArguments(t *testing.T) {
 	}
 	if calls := lh.fake.Calls()[before:]; len(calls) > 0 {
 		t.Errorf("a refused lease called libvirt: %v", calls)
+	}
+}
+
+// TestLeaseOptionsReachTheDomain: --cpus, --memory and --for reach the
+// definition of the lease domain, and --stock picks an older stock version
+// over the newest one. The start fails, and so does the undefine, so the
+// defined domain stays for the test to read. Control: without the flags,
+// the lease has the newest version and the default lifetime.
+func TestLeaseOptionsReachTheDomain(t *testing.T) {
+	lh := stockHost(t, 0)
+	setClock(t, time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC))
+	saved := guestEnsureKey
+	guestEnsureKey = func(path string) error { return os.WriteFile(path+".pub", []byte("ssh-ed25519 AAAA test"), 0o600) }
+	t.Cleanup(func() { guestEnsureKey = saved })
+	for _, v := range []string{"ubuntu-26-04-plain-20261030.qcow2", "ubuntu-26-04-plain-20261030_VARS.qcow2"} {
+		if _, err := lh.fake.CreateVolume("werft", "<volume><name>"+v+"</name><capacity unit='G'>20</capacity></volume>"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var catalog strings.Builder
+	for _, version := range []string{"20261030", "20261102"} {
+		disk, err := lh.fake.VolumePath("werft", "ubuntu-26-04-plain-"+version+".qcow2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		catalog.WriteString(strings.ReplaceAll(imagesTOML, "20261102", version))
+		fmt.Fprintf(&catalog, "domain = \"<domain type='kvm'><name>ubuntu-26-04</name><memory unit='GiB'>2</memory><vcpu>2</vcpu>"+
+			"<os><type>hvm</type><loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE.fd</loader></os>"+
+			"<devices><disk type='file' device='disk'><source file='%s'/><target dev='vda' bus='virtio'/></disk></devices></domain>\"\n", disk)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("XDG_STATE_HOME"), "werft", "images.toml"), []byte(catalog.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lh.fake.FailOn("StartDomain", failure.New(failure.Failed, "test: no start"))
+	lh.fake.FailOn("UndefineDomain", failure.New(failure.Failed, "test: keep the domain"))
+
+	// defined runs werft lease ubuntu-26-04 args and returns the definition
+	// and the werft metadata of the domain it defined.
+	defined := func(args ...string) (*libvirtxml.Domain, string) {
+		t.Helper()
+		before, err := lh.fake.Domains()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r := lh.run(append([]string{"--json", "lease", "ubuntu-26-04"}, args...)...); !strings.Contains(r.stdout, "test: no start") {
+			t.Fatalf("werft lease %q = %+v, want it to fail at the start", args, r)
+		}
+		after, err := lh.fake.Domains()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range after {
+			if slices.Contains(before, d) {
+				continue
+			}
+			text, err := lh.fake.DomainXML(d.Name, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dom, err := domxml.Parse(text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta, err := lh.fake.DomainMetadata(d.Name, lease.Namespace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return dom, meta
+		}
+		t.Fatalf("werft lease %q defined no domain", args)
+		return nil, ""
+	}
+
+	d, meta := defined("--cpus", "4", "--memory", "3072", "--for", "90m", "--stock", "ubuntu-26-04-plain-20261030")
+	if d.VCPU == nil || d.VCPU.Value != 4 {
+		t.Errorf("vcpu = %+v, want 4", d.VCPU)
+	}
+	if n, err := domxml.Memory(d); err != nil || n != 3<<30 {
+		t.Errorf("memory = %d, %v; want 3 GiB", n, err)
+	}
+	for _, want := range []string{"2026-11-03T11:30:00Z", "ubuntu-26-04-plain-20261030"} {
+		if !strings.Contains(meta, want) {
+			t.Errorf("metadata = %q, want %q", meta, want)
+		}
+	}
+	d, meta = defined()
+	if d.VCPU == nil || d.VCPU.Value != 2 {
+		t.Errorf("control: vcpu = %+v, want the 2 of the stock definition", d.VCPU)
+	}
+	for _, want := range []string{"2026-11-03T14:00:00Z", "ubuntu-26-04-plain-20261102"} {
+		if !strings.Contains(meta, want) {
+			t.Errorf("control: metadata = %q, want %q", meta, want)
+		}
 	}
 }
