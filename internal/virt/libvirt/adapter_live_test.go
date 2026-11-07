@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -203,6 +204,19 @@ func checkVolumes(t *testing.T, h virt.Hypervisor, g *livetest.Guest, data strin
 	}
 	_, err = h.VolumeInfo(livetest.Pool, "werft-test-fnd-absent.raw")
 	mustKind(t, err, failure.NotFound, "missing volume")
+
+	base, err := h.VolumePath(livetest.Pool, filepath.Base(livetest.Image(t)))
+	livetest.Must(t, err, "base volume path")
+	backing, err := h.VolumeBacking(livetest.Pool, g.DiskVolume())
+	livetest.Must(t, err, "backing of the overlay")
+	if backing != base {
+		t.Errorf("backing of the overlay = %q, want the base volume path %q", backing, base)
+	}
+	backing, err = h.VolumeBacking(livetest.Pool, data)
+	livetest.Must(t, err, "backing of a flat volume")
+	if backing != "" {
+		t.Errorf("backing of a flat volume = %q, want none", backing)
+	}
 }
 
 func checkRunningDomain(t *testing.T, h virt.Hypervisor, g *livetest.Guest) {
@@ -264,12 +278,29 @@ func checkDeviceAttachAndDetach(t *testing.T, h virt.Hypervisor, g *livetest.Gue
 	})
 }
 
+// checkShutdownAndUndefine also proves what seal relies on: a description
+// set while the domain runs (detect-guest) stays through the poweroff and
+// reaches the definition of a snapshot taken after it.
 func checkShutdownAndUndefine(t *testing.T, h virt.Hypervisor, g *livetest.Guest) {
 	t.Helper()
+	line := domxml.SystemdLine(255)
+	x, err := h.DomainXML(g.Name, true)
+	livetest.Must(t, err, "inactive XML")
+	if strings.Contains(x, line) {
+		t.Fatalf("the definition has the systemd line before the set:\n%s", x)
+	}
+	livetest.Must(t, h.SetDomainDescription(g.Name, line), "set description while running")
 	livetest.Must(t, h.ShutdownDomain(g.Name), "shutdown")
 	g.WaitShutOff(2 * time.Minute)
+	livetest.Must(t, h.CreateSnapshot(g.Name, "s2", ""), "snapshot after the poweroff")
+	x, err = h.SnapshotXML(g.Name, "s2")
+	livetest.Must(t, err, "snapshot XML")
+	if !strings.Contains(x, line) {
+		t.Errorf("the snapshot lacks the description set while the domain ran:\n%s", x)
+	}
+	livetest.Must(t, h.DeleteSnapshot(g.Name, "s2"), "delete snapshot")
 	mustKind(t, h.DestroyDomain(g.Name), failure.Conflict, "destroy of a shut-off domain")
 	livetest.Must(t, h.UndefineDomain(g.Name, virt.UndefineNVRAM), "undefine")
-	_, err := h.Domain(g.Name)
+	_, err = h.Domain(g.Name)
 	mustKind(t, err, failure.NotFound, "lookup after undefine")
 }

@@ -77,12 +77,18 @@ A stock image is a sealed copy of a build VM reset point. Leases start from it.
 werft seal ubuntu-26-04 provision-base       # reset to provision-base, seal a copy as the plain tier; asks first
 werft seal ubuntu-26-04-full clean           # reset to clean, seal a copy as the full tier of ubuntu-26-04; asks first
 werft images                                 # every stock version: image, tier, version, date
+werft images --prune                         # delete the old versions that no lease uses; asks first
 ```
 
-`seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
+`seal` needs a guest with systemd 256 or later: it logs in as root over vsock. It refuses an
+older guest at once, when the reset point records its systemd version (`werft prepare` and the
+`detect-guest` step write it). A reset point without that record seals as before; when the vsock
+login then times out, the error tells you to run `werft prepare <vm>` and take the reset point
+again.
 
 To refresh both tiers after a change to the base, run these in order. New leases take the newest
-version; old versions stay.
+version; old versions stay until `werft images --prune`. Prune keeps the newest version of each
+image and tier, and every version a lease uses.
 
 ```sh
 werft reset ubuntu-26-04 provision-base      # back to the base
@@ -96,15 +102,17 @@ werft seal ubuntu-26-04-full clean           # new full version
 
 ### Leases
 
-A lease is a disposable VM on a thin overlay of the newest stock version.
+A lease is a disposable VM on a thin overlay of a stock version, the newest by default.
 
 ```sh
 werft lease ubuntu-26-04                     # boot a plain lease; prints its id and ssh command when SSH answers
 werft lease ubuntu-26-04 --tier full         # boot a lease of the full tier
 werft lease ubuntu-26-04 --owner agent-7     # label the lease (default $WERFT_OWNER, else $USER)
+werft lease ubuntu-26-04 --memory 8192 --cpus 4 --for 2h   # memory in MiB, vCPUs, lifetime
+werft lease ubuntu-26-04 --stock ubuntu-26-04-plain-20261102   # an older stock version
 ssh -F ~/.local/state/werft/leases/<id>/ssh_config <id>
 werft release <id>                           # destroy the VM, its disk and its key; a second release exits 0
-werft leases                                 # id, owner, image, tier, address, expiry of each lease
+werft leases                                 # id, owner, image, tier, state, address, expiry of each lease
 werft extend <id> --for 1h                   # move the expiry by 1h (default 4h)
 werft reap                                   # release expired leases and orphans now
 werft guide                                  # how an agent leases, uses and releases a VM
@@ -113,12 +121,15 @@ werft guide                                  # how an agent leases, uses and rel
 Point an agent at `werft guide`. It prints the lease flow, the JSON fields, the exit codes and the
 rules for an agent, and it matches the installed version.
 
-A lease expires 4 hours after it starts. `lease`, `leases`, `extend` and `release` first release
-the expired leases; `reap` does only that.
+A lease gets the memory and vCPUs of its stock image unless `--memory` (MiB, at least 256) or
+`--cpus` names others. It expires 4 hours after it starts, or after `--for` (15m to 24h).
+`--stock` must name a version of the image of the lease; without `--tier`, the lease takes the
+tier of that version. `lease`, `leases`, `extend`, `release` and `images --prune` first release the
+expired leases; `reap` does only that.
 
 Leases run in parallel. `werft lease` exits 6 (`no_capacity`) when the host memory, less the memory
-of the running VMs and of every lease, less the new lease, is below `memory_budget_mib` in
-`~/.config/werft/config.toml` (default 4096).
+of the running VMs and of every lease, less the memory of the new lease, is below
+`memory_budget_mib` in `~/.config/werft/config.toml` (default 4096).
 
 A stock image sealed before `werft lease` existed has no domain definition for leases; seal it again.
 

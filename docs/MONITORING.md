@@ -46,14 +46,19 @@ Use `virsh -r` (read-only connection) for what `werft` does not show:
 
 ```
 virsh -r -c qemu:///system domstate <domain> --reason
-virsh -r -c qemu:///system dumpxml <domain>          # disks, NVRAM, vsock CID, description (LUKS marker)
+virsh -r -c qemu:///system dumpxml <domain>          # disks, NVRAM, vsock CID, description (LUKS marker, systemd line)
 virsh -r -c qemu:///system snapshot-list <domain>
+virsh -r -c qemu:///system snapshot-dumpxml <domain> <label>   # the definition a reset point holds
 virsh -r -c qemu:///system net-dhcp-leases default
 virsh -r -c qemu:///system vol-list <pool>
 ```
 
 `snapshot-list` shows libvirt metadata only. A reset point of `vm` has none; `werft snapshots`
 shows it.
+
+`seal` reads the systemd line (`werft: the guest has systemd <N>`) from the definition in the
+reset point, not from the live definition. When `seal` refuses a guest with `unsupported` because
+of its systemd version, read that line with `snapshot-dumpxml`.
 
 ## Live-test console logs
 

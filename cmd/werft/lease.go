@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/lease"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
@@ -33,16 +35,22 @@ var clock = time.Now
 func (c *cli) leaseEnv(h virt.Hypervisor, dir state.Dir) lease.Env {
 	return lease.Env{
 		Ctx: context.Background(), H: h, Dir: dir, Prefix: leasePrefix,
-		Shell:  func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
-		NewKey: guestEnsureKey,
-		Global: func() (func(), error) {
-			lock, err := dir.LockGlobal()
-			if err != nil {
-				return nil, err
-			}
-			return func() { _ = lock.Release() }, nil
-		},
-		Now: clock, Sleep: c.sleep, Out: c.stderr,
+		Shell:   func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
+		NewKey:  guestEnsureKey,
+		Secrets: secret.Pass{}, Terminal: prompter{c},
+		Global: globalLock(dir),
+		Now:    clock, Sleep: c.sleep, Out: c.stderr,
+	}
+}
+
+// globalLock takes the global lock of dir.
+func globalLock(dir state.Dir) func() (func(), error) {
+	return func() (func(), error) {
+		lock, err := dir.LockGlobal()
+		if err != nil {
+			return nil, err
+		}
+		return func() { _ = lock.Release() }, nil
 	}
 }
 
@@ -57,9 +65,13 @@ func (c *cli) reapFirst(e lease.Env) {
 
 func (c *cli) cmdLease(args []string) error {
 	fs := flag.NewFlagSet("lease", flag.ContinueOnError)
-	tier := fs.String("tier", image.Plain, "the tier of the stock image: plain or full")
+	tier := fs.String("tier", image.Plain, "the tier of the stock image: plain or full; with --stock, the tier of that version")
 	owner := fs.String("owner", "", "the owner werft leases shows (default $WERFT_OWNER, else $USER)")
 	view := fs.Bool("view", false, "also open a virt-viewer window")
+	stock := fs.String("stock", "", "the stock version, such as ubuntu-26-04-plain-20261102 (default the newest)")
+	memory := fs.Uint64("memory", 0, "the memory of the VM in MiB, at least 256 (default that of the stock image)")
+	cpus := fs.Uint("cpus", 0, "the vCPUs of the VM (default those of the stock image)")
+	lifetime := fs.Duration("for", lease.Lifetime, "the lifetime of the lease, from 15m to 24h")
 	if err := c.parseFlags(fs, "lease", args); err != nil {
 		return err
 	}
@@ -77,11 +89,25 @@ func (c *cli) cmdLease(args []string) error {
 	if *tier != image.Plain && *tier != image.Full {
 		return failure.New(failure.Usage, "--tier is plain or full, not %q", *tier)
 	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["memory"] && (*memory < lease.MinMemory>>20 || *memory > math.MaxUint64>>20) {
+		return failure.New(failure.Usage, "--memory is a size in MiB, at least %d, not %d", lease.MinMemory>>20, *memory)
+	}
+	if set["cpus"] && *cpus == 0 {
+		return failure.New(failure.Usage, "--cpus is at least 1")
+	}
+	if *lifetime < lease.MinLifetime || *lifetime > lease.MaxLifetime {
+		return failure.New(failure.Usage, "--for is a duration from 15m to 24h, such as 2h, not %v", *lifetime)
+	}
 	dir, err := state.Root()
 	if err != nil {
 		return err
 	}
-	rec, err := lease.Resolve(dir.Images(), img, *tier)
+	if *stock != "" && !set["tier"] {
+		*tier = ""
+	}
+	rec, err := lease.Resolve(dir.Images(), img, *tier, *stock)
 	if err != nil {
 		return err
 	}
@@ -107,7 +133,7 @@ func (c *cli) cmdLease(args []string) error {
 			}
 		}
 	}
-	l, err := lease.Start(env, rec, leaseOwner(*owner))
+	l, err := lease.Start(env, rec, lease.Options{Owner: leaseOwner(*owner), Memory: *memory << 20, CPUs: *cpus, Lifetime: *lifetime})
 	if err != nil {
 		return err
 	}
@@ -121,7 +147,7 @@ func writeLease(w io.Writer, l lease.Lease) {
 	const when = "2006-01-02 15:04"
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, row := range [][2]string{
-		{"lease", l.ID}, {"domain", l.Domain}, {"image", l.Image}, {"tier", l.Tier}, {"stock", l.Stock}, {"owner", l.Owner},
+		{"lease", l.ID}, {"domain", l.Domain}, {"image", l.Image}, {"tier", l.Tier}, {"stock", l.Stock}, {"owner", l.Owner}, {"state", l.State},
 		{"user", l.User}, {"address", l.Address}, {"key", l.Key}, {"ssh_config", l.SSHConfig},
 		{"created", l.Created.Local().Format(when)}, {"expiry", l.Expiry.Local().Format(when)},
 	} {
@@ -195,9 +221,9 @@ func (c *cli) cmdLeases(args []string) error {
 			return
 		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(tw, "ID\tOWNER\tIMAGE\tTIER\tADDRESS\tEXPIRY")
+		_, _ = fmt.Fprintln(tw, "ID\tOWNER\tIMAGE\tTIER\tSTATE\tADDRESS\tEXPIRY")
 		for _, l := range leases {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", l.ID, l.Owner, l.Image, l.Tier, l.Address, l.Expiry.Local().Format("2006-01-02 15:04"))
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", l.ID, l.Owner, l.Image, l.Tier, l.State, l.Address, l.Expiry.Local().Format("2006-01-02 15:04"))
 		}
 		_ = tw.Flush()
 	})

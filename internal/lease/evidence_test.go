@@ -25,7 +25,7 @@ func failBoot(t *testing.T, f *virttest.Fake, prepare func(e *lease.Env)) (strin
 	if prepare != nil {
 		prepare(&e)
 	}
-	_, err := lease.Start(e, record(), "agent")
+	_, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	return e.Dir.Evidence(), err
 }
 

@@ -9,6 +9,8 @@ Rules:
 - Use only werft images, lease, leases, extend, release, reap, guide and
   help. Never run werft start, stop, reset, snapshot, seal, provision,
   prepare or migrate: they change the user's build VMs.
+- Use werft images only to list the stock versions. Never run
+  werft images --prune: it deletes the user's old stock versions.
 - Never touch a VM that is not your lease. The one exception is reap: it
   removes only expired leases and orphans, the same pass that every lease
   command runs first.
@@ -23,22 +25,38 @@ Rules:
 
   Each entry has "image" and "tier". Tier "plain" is the vendor install
   with SSH and nothing more. Tier "full" is the user's full setup, with the
-  user's secrets; use it only when the task needs that setup.
+  user's secrets; use it only when the task needs that setup. An entry with
+  "luks": true has an encrypted disk: its lease reads the disk password
+  from pass, so it needs the user's GPG agent unlocked.
 
 2. Lease a VM
 
     werft --json lease ubuntu-26-04 --tier plain --owner <your-name>
 
-  The command returns when the VM accepts SSH. It waits up to 5 minutes
-  for an address and then up to 5 minutes for SSH, plus the time of each
-  attempt and the wait for the lock of other lease calls. Give the call a
-  timeout of at least 15 minutes, or run it in the background and wait for
-  it. The id comes only in the JSON document at the end.
+  The command returns when the VM accepts SSH. An encrypted image first
+  waits up to 2 minutes for its disk password prompt. Then it waits up to
+  5 minutes for an address and then up to 5 minutes for SSH, plus the time
+  of each attempt and the wait for the lock of other lease calls. Give the
+  call a timeout of at least 15 minutes, or run it in the background and
+  wait for it. The id comes only in the JSON document at the end.
 
   If the call was killed or its output is lost, find your lease by its
   owner in the output of werft --json leases and release it.
 
-  The default tier is plain. The JSON document has these fields:
+  The default tier is plain. The VM gets the memory, the vCPUs and the
+  stock version of the newest stock image, and lives 4 hours. Change them
+  with these flags:
+
+    werft --json lease ubuntu-26-04 --owner <your-name> --memory 8192 --cpus 4 --for 2h
+    werft --json lease ubuntu-26-04 --owner <your-name> --stock ubuntu-26-04-plain-20261102
+
+  --memory is in MiB, at least 256. --cpus is at least 1. --for is from
+  15m to 24h. --stock takes a "name" of werft --json images; it must be of
+  the image you lease. Without --tier, the lease takes the tier of that
+  version; with --tier, the version must be of that tier. More memory can
+  fail with no_capacity.
+
+  The JSON document has these fields:
 
     id          the lease id; every other command takes it
     domain      the VM name
@@ -46,8 +64,9 @@ Rules:
     tier        plain or full
     stock       the stock image version
     owner       the --owner flag, else $WERFT_OWNER, else $USER
+    state       running, or a libvirt state such as shut off or paused
     user        the login user in the VM
-    address     the SSH address, such as vsock/3
+    address     the SSH address, such as vsock/3; empty when not running
     key         the path of the private key of the lease
     ssh_config  the path of the ssh_config of the lease
     ssh         the ssh command, such as: ssh -F <ssh_config> <id>
@@ -111,19 +130,22 @@ Rules:
   lease can get a new address that its ssh command does not know. Release
   it and take a new lease.
 
+  werft --json leases shows the state of each lease. A lease that is not
+  in state running has no address: release it and take a new lease.
+
 6. Watch the time
 
-  A lease lives 4 hours. No timer destroys it: the first werft lease,
-  leases, extend, release or reap after the expiry does. Add time before
-  the expiry:
+  A lease lives 4 hours, or the --for of the lease call. No timer
+  destroys it: the first werft lease, leases, extend, release, reap or
+  images --prune after the expiry does. Add time before the expiry:
 
     werft --json extend <id> --for 2h
     werft --json leases
 
   The leases command lists the leases of this user's state directory:
   yours and those of other agents that share it, with id, owner, image,
-  tier, address and expiry. An expired lease is gone: extend fails with
-  not_found.
+  tier, state, address and expiry. An expired lease is gone: extend fails
+  with not_found.
 
 7. Release the lease
 
@@ -146,7 +168,12 @@ Exit codes:
                           after a release, run the release again
   8   checks_failed       the provision checks failed
   9   unsupported         the image cannot be leased; take another image
-  10  secret_unavailable  a secret is not available without a terminal
+  10  secret_unavailable  a secret is not available without a terminal; an
+                          encrypted image needs its disk password from pass:
+                          ask the user to unlock the password store, for
+                          example by running pass show <entry> once (the
+                          error names the entry), then lease again; never
+                          print the password or ask for it yourself
 
 On error, the --json document is:
   {"error": {"kind": "<kind>", "message": "<text>"}}

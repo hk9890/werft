@@ -70,3 +70,64 @@ func TestLeaseDropsFileConsole(t *testing.T) {
 		t.Errorf("the console is no pty:\n%s", text)
 	}
 }
+
+// TestResize: memory and vCPUs reach the definition, current memory and
+// the CPU topology included; the placement stays. Zero keeps a value.
+func TestResize(t *testing.T) {
+	const stock = `<domain type='kvm'><name>s</name><memory unit='KiB'>2097152</memory><currentMemory unit='KiB'>2097152</currentMemory>
+<vcpu placement='static'>2</vcpu><cpu mode='host-passthrough'><topology sockets='1' dies='1' cores='2' threads='1'/></cpu></domain>`
+	d, err := domxml.Parse(stock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := domxml.Resize(d, 8<<30, 6); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := domxml.Memory(d); err != nil || n != 8<<30 {
+		t.Errorf("memory = %d, %v; want 8 GiB", n, err)
+	}
+	if c := d.CurrentMemory; c == nil || c.Value != 8<<20 || c.Unit != "KiB" {
+		t.Errorf("current memory = %+v, want 8 GiB", c)
+	}
+	if v := d.VCPU; v.Value != 6 || v.Placement != "static" {
+		t.Errorf("vcpu = %+v, want 6 with static placement", v)
+	}
+	if top := d.CPU.Topology; top.Sockets != 1 || top.Cores != 6 || top.Threads != 1 || top.Dies != 0 {
+		t.Errorf("topology = %+v, want one socket with 6 cores", top)
+	}
+
+	d, _ = domxml.Parse(stock)
+	if err := domxml.Resize(d, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := domxml.Memory(d); n != 2<<30 || d.VCPU.Value != 2 || d.CPU.Topology.Cores != 2 {
+		t.Errorf("Resize with zeros changed the definition: memory %d, %+v, %+v", n, d.VCPU, d.CPU.Topology)
+	}
+}
+
+func TestResizeRefuses(t *testing.T) {
+	for name, xml := range map[string]string{
+		"NUMA cells": `<domain><name>s</name><memory>1048576</memory><cpu><numa><cell id='0' cpus='0-1' memory='1048576'/></numa></cpu></domain>`,
+		"maxMemory":  `<domain><name>s</name><maxMemory slots='16'>16777216</maxMemory><memory>1048576</memory></domain>`,
+	} {
+		d, err := domxml.Parse(xml)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := domxml.Resize(d, 2<<30, 0); err == nil {
+			t.Errorf("%s: Resize succeeded", name)
+		}
+	}
+	const pinned = `<domain><name>s</name><memory>1048576</memory><vcpu>4</vcpu><cputune><vcpupin vcpu='3' cpuset='3'/></cputune></domain>`
+	d, err := domxml.Parse(pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := domxml.Resize(d, 0, 2); err == nil {
+		t.Error("vcpupin: Resize of the vCPUs succeeded")
+	}
+	d, _ = domxml.Parse(pinned)
+	if err := domxml.Resize(d, 2<<30, 0); err != nil {
+		t.Errorf("control: vcpupin: Resize of the memory alone = %v", err)
+	}
+}

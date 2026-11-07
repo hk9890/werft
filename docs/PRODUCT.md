@@ -53,7 +53,8 @@ Humans come second. They use the same commands and get readable output.
   returns the build VM to exactly that state. If werft cannot save or restore both halves, the
   command fails. Only build VMs have reset points.
 - **Stock image.** A sealed, immutable copy of one build VM reset point. werft never changes it.
-  Leases start from it. A new seal makes a new version.
+  Leases start from it. A new seal makes a new version. `werft images --prune` deletes the old
+  versions that no lease uses.
 - **Tier.** The state a stock image comes from. `plain` is the vendor install, prepared for SSH
   access. `full` is the state after the full bootstrap and its checks.
 - **Lease.** A disposable VM that one user gets from a stock image and tier. The lease has an
@@ -101,11 +102,14 @@ Requirements:
 - No command asks a question when stdin is not a TTY. A command that needs confirmation fails and
   names the flag that gives it.
 - Secrets never appear on a command line, in a process list, or in JSON output.
-- A lease lives 4 hours by default. `werft extend <lease-id>` adds time. werft destroys an expired
-  lease at the next werft run that reads leases with the same state directory; no timer runs
-  ([DESIGN.md, "Lease lifecycle"](DESIGN.md#lease-lifecycle) names those commands). The VM of an
-  agent that crashes stays until then.
-- `werft leases --json` lists active leases with owner, image, tier, address, and expiry.
+- A lease lives 4 hours by default; `werft lease --for` sets another lifetime. `werft extend
+  <lease-id>` adds time. werft destroys an expired lease at the next werft run that reads leases
+  with the same state directory; no timer runs ([DESIGN.md, "Lease lifecycle"](DESIGN.md#lease-lifecycle)
+  names those commands). The VM of an agent that crashes stays until then.
+- `werft leases --json` lists active leases with owner, image, tier, state, address, and expiry.
+  A lease that does not run, such as one the guest powered off, lists its state and no address.
+- A lease gets the memory and vCPUs of its stock image by default; `--memory` and `--cpus` set
+  others. `--stock` picks an older stock version of the image and tier, for example to bisect.
 - More than one lease can run at the same time. werft refuses a new lease ("no capacity") when the
   host memory that no VM and no lease holds would drop below a configured budget.
 - A lease runs headless: the guest desktop runs, but no viewer window opens on the host. `--view`
@@ -114,7 +118,8 @@ Requirements:
   commands, the lease JSON fields, the exit codes and the rules. `werft help` lists it. It is part
   of the binary, so it matches the installed version.
 - A lease of an encrypted image (Omarchy) boots like any other: werft types the disk password. The
-  agent never sees it.
+  agent never sees it. werft reads it from `pass`, so the GPG agent of the user must be unlocked;
+  else the lease fails with `secret_unavailable`. `seal` types the password in the same way.
 
 ## What carries over from `vm`
 
@@ -143,8 +148,9 @@ repo owns. werft only runs it.
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
    `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: `seal`,
-   `images`, `lease`, `release`, `leases`, `extend`, `reap` and parallel leases with a memory
-   budget, of the `plain` and `full` tiers, in code.
+   `images`, `lease`, `release`, `leases`, `extend`, `reap`, parallel leases with a memory
+   budget, and stock garbage collection (`images --prune`), of the `plain` and `full` tiers and of
+   encrypted images, in code.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it. Status:
    `werft guide` in code.

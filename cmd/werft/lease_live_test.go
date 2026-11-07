@@ -56,7 +56,7 @@ func TestLeaseLive(t *testing.T) {
 		livetest.DeleteVolumes(h, stock+".qcow2", stock+"_VARS.qcow2")
 	})
 
-	rec, err := lease.Resolve(dir.Images(), src.Name, "plain")
+	rec, err := lease.Resolve(dir.Images(), src.Name, "plain", "")
 	livetest.Must(t, err, "resolve the stock image")
 	if !strings.Contains(rec.Domain, src.ConsoleVolume()) {
 		t.Fatalf("the stock definition writes the console to no file:\n%s", rec.Domain)

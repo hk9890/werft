@@ -10,6 +10,7 @@ import (
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/state"
+	"github.com/hk9890/werft/internal/virt"
 	"github.com/hk9890/werft/internal/virttest"
 )
 
@@ -17,7 +18,7 @@ import (
 func startAt(t *testing.T, e lease.Env, now time.Time) lease.Lease {
 	t.Helper()
 	e.Now = func() time.Time { return now }
-	l, err := lease.Start(e, record(), "agent")
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
 	return l
 }
@@ -161,8 +162,60 @@ func TestList(t *testing.T) {
 	l := leases[0]
 	if l.ID != want.ID || l.Domain != want.Domain || l.Image != "vm" || l.Tier != "plain" || l.Stock != want.Stock ||
 		l.Owner != "agent" || l.User != "hans" || l.Address != "vsock/3" || l.Key != want.Key ||
-		l.SSHConfig != want.SSHConfig || l.SSH != want.SSH || !l.Created.Equal(want.Created) || !l.Expiry.Equal(want.Expiry) {
+		l.SSHConfig != want.SSHConfig || l.SSH != want.SSH || !l.Created.Equal(want.Created) || !l.Expiry.Equal(want.Expiry) ||
+		l.State != "running" || want.State != "running" {
 		t.Errorf("List = %+v\nwant %+v", l, want)
+	}
+}
+
+// TestListShutOff: a lease the guest powered off lists as shut off and
+// without the address of its last boot.
+func TestListShutOff(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l := startAt(t, e, e.Now())
+	f.SetState(l.Domain, virt.StateShutOff)
+	leases, err := lease.List(e)
+	must(t, err)
+	if len(leases) != 1 || leases[0].State != "shut off" || leases[0].Address != "" {
+		t.Errorf("List = %+v, want one lease in state shut off without an address", leases)
+	}
+}
+
+// TestListSkipsAGoneDomain: a lease domain that is gone between the scan
+// and its state read is not listed, and the other leases are.
+func TestListSkipsAGoneDomain(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	vanished := startAt(t, e, e.Now())
+	stays := startAt(t, e, e.Now())
+	f.FailOn("DomainState "+vanished.Domain, failure.New(failure.NotFound, "injected"))
+	leases, err := lease.List(e)
+	must(t, err)
+	if len(leases) != 1 || leases[0].ID != stays.ID {
+		t.Errorf("List = %+v, want %s alone", leases, stays.ID)
+	}
+}
+
+// TestReapIgnoresTheDomainState: libvirt that cannot give the state of a
+// lease domain fails List and Extend with its kind, and does not stop a
+// reap.
+func TestReapIgnoresTheDomainState(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l := startAt(t, e, e.Now().Add(-lease.Lifetime))
+	stays := startAt(t, e, e.Now())
+	f.FailOn("DomainState", failure.New(failure.Failed, "injected"))
+	if _, err := lease.List(e); !failure.Is(err, failure.Failed) {
+		t.Errorf("List = %v, want failed", err)
+	}
+	if _, err := lease.Extend(e, stays.ID, time.Hour); !failure.Is(err, failure.Failed) {
+		t.Errorf("Extend = %v, want failed", err)
+	}
+	r, err := lease.Reap(e)
+	must(t, err)
+	if len(r.Expired) != 1 || r.Expired[0].ID != l.ID {
+		t.Errorf("Reap = %+v, want %s released", r, l.ID)
 	}
 }
 
@@ -172,7 +225,7 @@ func TestExtend(t *testing.T) {
 	l := startAt(t, e, e.Now())
 	got, err := lease.Extend(e, l.ID, time.Hour)
 	must(t, err)
-	if !got.Expiry.Equal(l.Expiry.Add(time.Hour)) || !got.Created.Equal(l.Created) {
+	if !got.Expiry.Equal(l.Expiry.Add(time.Hour)) || !got.Created.Equal(l.Created) || got.State != "running" {
 		t.Errorf("Extend = %+v, want expiry %v", got, l.Expiry.Add(time.Hour))
 	}
 	meta, err := f.DomainMetadata(l.Domain, lease.Namespace)

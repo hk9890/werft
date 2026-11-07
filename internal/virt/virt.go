@@ -29,7 +29,7 @@ type Hypervisor interface {
 	DomainState(name string) (State, error)
 	DomainXML(name string, inactive bool) (string, error)
 	// DomainMetadata is the metadata element in namespace uri; failure.NotFound
-	// when the domain has none.
+	// when the domain has none or is transient.
 	DomainMetadata(name, uri string) (string, error)
 	// SetDomainMetadata with an empty xml removes the element.
 	SetDomainMetadata(name, uri, key, xml string) error
@@ -68,6 +68,9 @@ type Hypervisor interface {
 	VolumeInfo(pool, name string) (VolumeInfo, error)
 	// VolumeByPath is the pool and name of the volume at path.
 	VolumeByPath(path string) (pool, name string, err error)
+	// VolumeBacking is the path of the backing file of the volume; empty
+	// when it has none.
+	VolumeBacking(pool, name string) (string, error)
 
 	DHCPLeases(network, mac string) ([]DHCPLease, error)
 
