@@ -117,8 +117,9 @@ rules for an agent, and it matches the installed version.
 
 A lease gets the memory and vCPUs of its stock image unless `--memory` (MiB, at least 256) or
 `--cpus` names others. It expires 4 hours after it starts, or after `--for` (15m to 24h).
-`--stock` must name a version of the image and tier of the lease. `lease`, `leases`, `extend` and
-`release` first release the expired leases; `reap` does only that.
+`--stock` must name a version of the image of the lease; without `--tier`, the lease takes the
+tier of that version. `lease`, `leases`, `extend` and `release` first release the expired leases;
+`reap` does only that.
 
 Leases run in parallel. `werft lease` exits 6 (`no_capacity`) when the host memory, less the memory
 of the running VMs and of every lease, less the memory of the new lease, is below

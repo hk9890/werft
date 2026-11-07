@@ -47,7 +47,9 @@ Rules:
 
   --memory is in MiB, at least 256. --cpus is at least 1. --for is from
   15m to 24h. --stock takes a "name" of werft --json images; it must be of
-  the image and tier you lease. More memory can fail with no_capacity.
+  the image you lease. Without --tier, the lease takes the tier of that
+  version; with --tier, the version must be of that tier. More memory can
+  fail with no_capacity.
 
   The JSON document has these fields:
 

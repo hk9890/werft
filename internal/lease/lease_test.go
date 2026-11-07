@@ -385,6 +385,10 @@ name = "vm-plain-20261102"
 image = "vm"
 tier = "plain"
 [[image]]
+name = "vm-full-20261102"
+image = "vm"
+tier = "full"
+[[image]]
 name = "other-plain-20261103"
 image = "other"
 tier = "plain"
@@ -392,7 +396,7 @@ tier = "plain"
 	if r, err := lease.Resolve(catalog, "vm", "plain", ""); err != nil || r.Name != "vm-plain-20261102" {
 		t.Errorf("Resolve = %s, %v, want the newest version", r.Name, err)
 	}
-	if _, err := lease.Resolve(catalog, "vm", "full", ""); !failure.Is(err, failure.NotFound) {
+	if _, err := lease.Resolve(catalog, "other", "full", ""); !failure.Is(err, failure.NotFound) {
 		t.Errorf("Resolve of a missing tier = %v, want not_found", err)
 	}
 	if r, err := lease.Resolve(catalog, "vm", "plain", "vm-plain-20261101"); err != nil || r.Name != "vm-plain-20261101" {
@@ -406,6 +410,12 @@ tier = "plain"
 	}
 	if _, err := lease.Resolve(catalog, "vm", "full", "vm-plain-20261102"); !failure.Is(err, failure.Usage) {
 		t.Errorf("Resolve of a stock version of another tier = %v, want usage", err)
+	}
+	if r, err := lease.Resolve(catalog, "vm", "", "vm-full-20261102"); err != nil || r.Tier != "full" {
+		t.Errorf("Resolve of a stock version without a tier = %+v, %v, want the full version", r, err)
+	}
+	if _, err := lease.Resolve(catalog, "vm", "", "other-plain-20261103"); !failure.Is(err, failure.Usage) {
+		t.Errorf("Resolve without a tier of a stock version of another image = %v, want usage", err)
 	}
 }
 

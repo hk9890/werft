@@ -109,7 +109,8 @@ type Options struct {
 }
 
 // Resolve is the stock version stock of image and tier in the images.toml
-// at catalog; with stock empty, the newest one.
+// at catalog; with stock empty, the newest one. With tier empty, the stock
+// version gives the tier.
 func Resolve(catalog, img, tier, stock string) (image.Record, error) {
 	records, err := image.Load(catalog)
 	if err != nil {
@@ -120,8 +121,11 @@ func Resolve(catalog, img, tier, stock string) (image.Record, error) {
 			if r.Name != stock {
 				continue
 			}
-			if r.Image != img || r.Tier != tier {
-				return image.Record{}, failure.New(failure.Usage, "stock version %s is of image %s and tier %s, not of image %s and tier %s", stock, r.Image, r.Tier, img, tier)
+			if r.Image != img {
+				return image.Record{}, failure.New(failure.Usage, "stock version %s is of image %s, not of image %s", stock, r.Image, img)
+			}
+			if tier != "" && r.Tier != tier {
+				return image.Record{}, failure.New(failure.Usage, "stock version %s is of tier %s, not of tier %s", stock, r.Tier, tier)
 			}
 			return r, nil
 		}

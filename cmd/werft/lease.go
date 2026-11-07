@@ -58,7 +58,7 @@ func (c *cli) reapFirst(e lease.Env) {
 
 func (c *cli) cmdLease(args []string) error {
 	fs := flag.NewFlagSet("lease", flag.ContinueOnError)
-	tier := fs.String("tier", image.Plain, "the tier of the stock image: plain or full")
+	tier := fs.String("tier", image.Plain, "the tier of the stock image: plain or full; with --stock, the tier of that version")
 	owner := fs.String("owner", "", "the owner werft leases shows (default $WERFT_OWNER, else $USER)")
 	view := fs.Bool("view", false, "also open a virt-viewer window")
 	stock := fs.String("stock", "", "the stock version, such as ubuntu-26-04-plain-20261102 (default the newest)")
@@ -96,6 +96,9 @@ func (c *cli) cmdLease(args []string) error {
 	dir, err := state.Root()
 	if err != nil {
 		return err
+	}
+	if *stock != "" && !set["tier"] {
+		*tier = ""
 	}
 	rec, err := lease.Resolve(dir.Images(), img, *tier, *stock)
 	if err != nil {

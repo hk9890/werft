@@ -153,7 +153,8 @@ and fails with `usage` outside these bounds:
 
 1. **Resolve.** Image and tier give the newest stock version in `images.toml`. `--stock` gives the
    version of that name: `not_found` when `images.toml` has none, `usage` when it is of another
-   image or tier. A record without a domain definition (sealed before leases existed) fails with
+   image. Without `--tier`, the lease takes the tier of that version; an explicit `--tier` of
+   another tier fails with `usage`. A record without a domain definition (sealed before leases existed) fails with
    `unsupported` and names the seal. `--memory` and `--cpus` change the `<memory>`,
    `<currentMemory>` and `<vcpu>` of the domain definition (`domxml.Resize`); a CPU topology
    becomes one socket with that many cores. A definition with NUMA cells or a `<maxMemory>` fails

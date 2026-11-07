@@ -365,7 +365,8 @@ func TestLeaseMemoryReachesAdmission(t *testing.T) {
 
 // TestLeaseOptionArguments: a flag out of its bounds exits 2 before werft
 // reads images.toml or calls libvirt; a --stock that does not exist exits
-// 3, and one of another tier exits 2.
+// 3, and one of another image, or of another tier than an explicit --tier,
+// exits 2.
 func TestLeaseOptionArguments(t *testing.T) {
 	lh := stockHost(t, 0)
 	before := len(lh.fake.Calls())
@@ -374,18 +375,19 @@ func TestLeaseOptionArguments(t *testing.T) {
 		code int
 		want string
 	}{
-		{[]string{"--memory", "8"}, 2, "--memory is a size in MiB, at least 256"},
-		{[]string{"--memory", "0"}, 2, "--memory is a size in MiB"},
-		{[]string{"--memory", "8G"}, 2, "invalid value"},
-		{[]string{"--cpus", "0"}, 2, "--cpus is at least 1"},
-		{[]string{"--cpus", "-1"}, 2, "invalid value"},
-		{[]string{"--for", "10m"}, 2, "--for is a duration from 15m to 24h"},
-		{[]string{"--for", "25h"}, 2, "--for is a duration"},
-		{[]string{"--for", "soon"}, 2, "invalid value"},
-		{[]string{"--stock", "ubuntu-26-04-plain-20261030"}, 3, "no stock version ubuntu-26-04-plain-20261030"},
-		{[]string{"--tier", "full", "--stock", "ubuntu-26-04-plain-20261102"}, 2, "is of image ubuntu-26-04 and tier plain"},
+		{[]string{"ubuntu-26-04", "--memory", "8"}, 2, "--memory is a size in MiB, at least 256"},
+		{[]string{"ubuntu-26-04", "--memory", "0"}, 2, "--memory is a size in MiB"},
+		{[]string{"ubuntu-26-04", "--memory", "8G"}, 2, "invalid value"},
+		{[]string{"ubuntu-26-04", "--cpus", "0"}, 2, "--cpus is at least 1"},
+		{[]string{"ubuntu-26-04", "--cpus", "-1"}, 2, "invalid value"},
+		{[]string{"ubuntu-26-04", "--for", "10m"}, 2, "--for is a duration from 15m to 24h"},
+		{[]string{"ubuntu-26-04", "--for", "25h"}, 2, "--for is a duration"},
+		{[]string{"ubuntu-26-04", "--for", "soon"}, 2, "invalid value"},
+		{[]string{"ubuntu-26-04", "--stock", "ubuntu-26-04-plain-20261030"}, 3, "no stock version ubuntu-26-04-plain-20261030"},
+		{[]string{"ubuntu-26-04", "--tier", "full", "--stock", "ubuntu-26-04-plain-20261102"}, 2, "is of tier plain, not of tier full"},
+		{[]string{"debian-13", "--stock", "ubuntu-26-04-plain-20261102"}, 2, "is of image ubuntu-26-04, not of image debian-13"},
 	} {
-		args := append([]string{"--json", "lease", "ubuntu-26-04"}, tt.args...)
+		args := append([]string{"--json", "lease"}, tt.args...)
 		if r := lh.run(args...); r.code != tt.code || !strings.Contains(r.stdout, tt.want) {
 			t.Errorf("werft %q = %+v, want exit %d with %q", args, r, tt.code, tt.want)
 		}
@@ -393,6 +395,60 @@ func TestLeaseOptionArguments(t *testing.T) {
 	if calls := lh.fake.Calls()[before:]; len(calls) > 0 {
 		t.Errorf("a refused lease called libvirt: %v", calls)
 	}
+}
+
+// TestLeaseStockGivesTheTier: --stock of a full version without --tier
+// leases that version, in a domain of tier full. The start fails, and so
+// does the undefine, so the defined domain stays for the test to read.
+func TestLeaseStockGivesTheTier(t *testing.T) {
+	lh := stockHost(t, 0)
+	saved := guestEnsureKey
+	guestEnsureKey = func(path string) error { return os.WriteFile(path+".pub", []byte("ssh-ed25519 AAAA test"), 0o600) }
+	t.Cleanup(func() { guestEnsureKey = saved })
+	for _, v := range []string{"ubuntu-26-04-full-20261102.qcow2", "ubuntu-26-04-full-20261102_VARS.qcow2"} {
+		if _, err := lh.fake.CreateVolume("werft", "<volume><name>"+v+"</name><capacity unit='G'>20</capacity></volume>"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	disk, err := lh.fake.VolumePath("werft", "ubuntu-26-04-full-20261102.qcow2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := strings.ReplaceAll(imagesTOML, "plain", "full") + fmt.Sprintf("domain = \"<domain type='kvm'><name>ubuntu-26-04</name><memory unit='GiB'>2</memory><vcpu>2</vcpu>"+
+		"<os><type>hvm</type><loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE.fd</loader></os>"+
+		"<devices><disk type='file' device='disk'><source file='%s'/><target dev='vda' bus='virtio'/></disk></devices></domain>\"\n", disk)
+	catalog := filepath.Join(os.Getenv("XDG_STATE_HOME"), "werft", "images.toml")
+	plain, err := os.ReadFile(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalog, append(plain, full...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lh.fake.FailOn("StartDomain", failure.New(failure.Failed, "test: no start"))
+	lh.fake.FailOn("UndefineDomain", failure.New(failure.Failed, "test: keep the domain"))
+
+	if r := lh.run("--json", "lease", "ubuntu-26-04", "--stock", "ubuntu-26-04-full-20261102"); !strings.Contains(r.stdout, "test: no start") {
+		t.Fatalf("werft lease --stock of a full version = %+v, want it to fail at the start", r)
+	}
+	domains, err := lh.fake.Domains()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range domains {
+		if !strings.Contains(d.Name, "ubuntu-26-04-full-") {
+			continue
+		}
+		meta, err := lh.fake.DomainMetadata(d.Name, lease.Namespace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(meta, "ubuntu-26-04-full-20261102") {
+			t.Errorf("metadata = %q, want stock version ubuntu-26-04-full-20261102", meta)
+		}
+		return
+	}
+	t.Errorf("domains = %v, want a lease domain of tier full", domains)
 }
 
 // TestLeaseOptionsReachTheDomain: --cpus, --memory and --for reach the
