@@ -4,6 +4,8 @@ package steps
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -121,17 +123,25 @@ func boot(r *pipeline.Run) error {
 	if !r.LUKS {
 		return nil
 	}
-	r.Printf("Waiting for the disk password prompt of %s", r.Domain)
+	return TypeDiskPassword(r.Ctx, r.H, r.Domain, r.Secret(pipeline.GuestPassword), r.Sleep, r.Out)
+}
+
+// TypeDiskPassword waits for the disk password prompt at the console of the
+// started domain and types password once: keys sent before the prompt are
+// lost, and cryptsetup allows few tries. Seal and lease use it too. out
+// gets progress, never the password.
+func TypeDiskPassword(ctx context.Context, h virt.Hypervisor, domain, password string, sleep func(time.Duration), out io.Writer) error {
+	_, _ = fmt.Fprintf(out, "Waiting for the disk password prompt of %s\n", domain)
 	p := console.DefaultPrompt
-	p.Sleep = r.Sleep
-	if err := console.WaitForPrompt(r.Ctx, r.H, r.Domain, p); err != nil {
+	p.Sleep = sleep
+	if err := console.WaitForPrompt(ctx, h, domain, p); err != nil {
 		if !failure.Is(err, failure.Timeout) {
 			return err
 		}
-		return failure.Wrap(failure.Timeout, err, "look at its console: %s", ViewerCommand(r.Domain))
+		return failure.Wrap(failure.Timeout, err, "look at its console: %s", ViewerCommand(domain))
 	}
-	r.Printf("Typing the disk password of %s at its console", r.Domain)
-	return console.Type(r.H, r.Domain, r.Secret(pipeline.GuestPassword))
+	_, _ = fmt.Fprintf(out, "Typing the disk password of %s at its console\n", domain)
+	return console.Type(h, domain, password)
 }
 
 // WaitSSH waits until sshd in the guest answers and sets the address.

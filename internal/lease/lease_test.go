@@ -1,9 +1,14 @@
 package lease_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	stdimage "image"
+	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -405,5 +410,114 @@ func TestReleaseFinishesAHalfDoneRelease(t *testing.T) {
 	}
 	if _, err := f.Domain(l.Domain); !failure.Is(err, failure.NotFound) {
 		t.Errorf("%s is left: %v", l.Domain, err)
+	}
+}
+
+// screen is the fake whose every console shows a still prompt.
+type screen struct{ *virttest.Fake }
+
+func (s screen) Screenshot(domain string, w io.Writer) (string, error) {
+	if _, err := s.Fake.Screenshot(domain, io.Discard); err != nil {
+		return "", err
+	}
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, 4, 4))
+	img.Set(1, 1, color.White)
+	return "image/png", png.Encode(w, img)
+}
+
+// store is pass with one entry.
+type store map[string]string
+
+func (s store) Show(entry string) (string, error) {
+	if v, ok := s[entry]; ok {
+		return v, nil
+	}
+	return "", failure.New(failure.SecretUnavailable, "pass show %s failed", entry)
+}
+
+// noTerminal is stdin that is no terminal, as for an agent.
+type noTerminal struct{}
+
+func (noTerminal) ReadSecret(prompt string) (string, error) {
+	return "", failure.New(failure.SecretUnavailable, "%s: stdin is no terminal to ask on", prompt)
+}
+
+func luksRecord() image.Record {
+	rec := record()
+	rec.LUKS, rec.DiskPasswordPass = true, "vm/guest-password"
+	return rec
+}
+
+// keyShell is a guest that answers SSH only once keys were typed: an
+// encrypted guest takes no address before its disk is open.
+type keyShell struct {
+	shell
+	f *virttest.Fake
+}
+
+func (s *keyShell) Run(ctx context.Context, addr guest.Addr, cmd string, in io.Reader, stdout, stderr io.Writer) error {
+	s.up = slices.ContainsFunc(s.f.Calls(), func(c string) bool { return strings.HasPrefix(c, "SendKey ") })
+	return s.shell.Run(ctx, addr, cmd, in, stdout, stderr)
+}
+
+func TestStartTypesTheDiskPasswordOnce(t *testing.T) {
+	f := world(t)
+	sh := &keyShell{f: f}
+	e := env(t, f, &sh.shell)
+	e.Shell = func(string) guest.Shell { return sh }
+	e.H = screen{f}
+	var out bytes.Buffer
+	e.Out = &out
+	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
+	l, err := lease.Start(e, luksRecord(), "agent")
+	must(t, err)
+
+	// p, w, Enter: once.
+	if keys := f.SentKeys(l.Domain); len(keys) != 3 || keys[2][0] != 28 {
+		t.Errorf("keys = %v, want the password and Enter once", keys)
+	}
+	if len(sh.logins) != 1 {
+		t.Errorf("logins = %v, want one after the password", sh.logins)
+	}
+	doc, err := json.Marshal(l)
+	must(t, err)
+	if strings.Contains(string(doc), `"pw"`) || strings.Contains(out.String(), "pw\n") {
+		t.Errorf("the password shows in the JSON or the output:\n%s\n%s", doc, out.String())
+	}
+}
+
+func TestStartWithoutTheDiskPassword(t *testing.T) {
+	tests := map[string]image.Record{
+		"pass cannot give it":     luksRecord(),
+		"the record has no entry": func() image.Record { r := luksRecord(); r.DiskPasswordPass = ""; return r }(),
+	}
+	for name, rec := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := world(t)
+			e := env(t, f, &shell{up: true})
+			e.Secrets, e.Terminal = store{}, noTerminal{}
+			before := len(f.Calls())
+			if _, err := lease.Start(e, rec, "agent"); !failure.Is(err, failure.SecretUnavailable) {
+				t.Fatalf("Start = %v, want secret_unavailable", err)
+			}
+			for _, c := range f.Calls()[before:] {
+				t.Errorf("Start without the password called libvirt: %s", c)
+			}
+			if _, err := os.Stat(e.Dir.Leases()); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("Start without the password made %s: %v", e.Dir.Leases(), err)
+			}
+		})
+	}
+}
+
+// TestStartOfAPlainImageTypesNothing: an image without the LUKS marker
+// reads no secret.
+func TestStartOfAPlainImageTypesNothing(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l, err := lease.Start(e, record(), "agent")
+	must(t, err)
+	if keys := f.SentKeys(l.Domain); len(keys) != 0 {
+		t.Errorf("keys = %v, want none", keys)
 	}
 }

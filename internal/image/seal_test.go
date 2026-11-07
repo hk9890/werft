@@ -1,17 +1,24 @@
 package image_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	stdimage "image"
+	"image/color"
+	"image/png"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/virt"
 	"github.com/hk9890/werft/internal/virttest"
 )
@@ -98,7 +105,6 @@ func env(t *testing.T, f *virttest.Fake, sh guest.Shell) image.Env {
 func TestPlanRefuses(t *testing.T) {
 	secondDisk := strings.Replace(buildVM, "<disk type='file' device='cdrom'>",
 		"<disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/img/vm.qcow2'/><target dev='vdb'/></disk><disk type='file' device='cdrom'>", 1)
-	luks := strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>vm: the disk asks for the guest password at boot</description>", 1)
 	bios := strings.Replace(strings.Replace(buildVM, "<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>", "", 1),
 		"<nvram format='qcow2'>/nvram/vm_VARS.qcow2</nvram>", "", 1)
 	tests := []struct {
@@ -116,7 +122,6 @@ func TestPlanRefuses(t *testing.T) {
 		{"unknown VM", "none", "provision-base", buildVM, nil, failure.NotFound},
 		{"running", "vm", "provision-base", buildVM, func(f *virttest.Fake) { f.SetState("vm", virt.StateRunning) }, failure.Conflict},
 		{"no reset point", "vm", "provision-base", buildVM, func(f *virttest.Fake) { must(t, f.DeleteSnapshot("vm", "provision-base")) }, failure.NotFound},
-		{"LUKS", "vm", "provision-base", luks, nil, failure.Unsupported},
 		{"two writable disks", "vm", "provision-base", secondDisk, nil, failure.Unsupported},
 		{"no UEFI NVRAM", "vm", "provision-base", bios, nil, failure.Unsupported},
 		{"disk in no pool", "vm", "provision-base", strings.Replace(buildVM, "/img/vm.qcow2", "/elsewhere/vm.qcow2", 1), nil, failure.NotFound},
@@ -148,7 +153,6 @@ func TestPlanChecksTheResetPoint(t *testing.T) {
 	tests := map[string]string{
 		"two writable disks": strings.Replace(buildVM, "<disk type='file' device='cdrom'>",
 			"<disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/img/vm.qcow2'/><target dev='vdb'/></disk><disk type='file' device='cdrom'>", 1),
-		"LUKS": strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>vm: the disk asks for the guest password at boot</description>", 1),
 	}
 	for name, atResetPoint := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -338,4 +342,127 @@ func fmtRun(err error) string {
 		return "<nil>"
 	}
 	return err.Error()
+}
+
+// luksVM is buildVM with the LUKS marker vm and prepare set.
+var luksVM = strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>my notes\n"+domxml.LUKSMarker+"</description>", 1)
+
+// screen is the fake whose every console shows a still prompt.
+type screen struct{ *virttest.Fake }
+
+func (s screen) Screenshot(domain string, w io.Writer) (string, error) {
+	if _, err := s.Fake.Screenshot(domain, io.Discard); err != nil {
+		return "", err
+	}
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, 4, 4))
+	img.Set(1, 1, color.White)
+	return "image/png", png.Encode(w, img)
+}
+
+// store is pass with one entry.
+type store map[string]string
+
+func (s store) Show(entry string) (string, error) {
+	if v, ok := s[entry]; ok {
+		return v, nil
+	}
+	return "", failure.New(failure.SecretUnavailable, "pass show %s failed", entry)
+}
+
+// noTerminal is stdin that is no terminal.
+type noTerminal struct{}
+
+func (noTerminal) ReadSecret(prompt string) (string, error) {
+	return "", failure.New(failure.SecretUnavailable, "%s: stdin is no terminal to ask on", prompt)
+}
+
+// TestPlanReadsTheLUKSMarkerOfTheResetPoint: the revert brings back the
+// definition of the reset point, so its marker counts.
+func TestPlanReadsTheLUKSMarkerOfTheResetPoint(t *testing.T) {
+	f := worldOf(t, luksVM)
+	d, err := f.Domain("vm")
+	must(t, err)
+	_, err = f.DefineDomain(strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><uuid>"+d.UUID+"</uuid>", 1))
+	must(t, err)
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	if !s.LUKS {
+		t.Errorf("Plan of a reset point with the LUKS marker: LUKS = false")
+	}
+}
+
+func TestSealTypesTheDiskPassword(t *testing.T) {
+	f := worldOf(t, luksVM)
+	sh := &shell{f: f}
+	e := env(t, f, sh)
+	e.H = screen{f}
+	var out bytes.Buffer
+	e.Out = &out
+	e.DiskPassword = secret.Spec{Pass: "vm/guest-password", Prompt: "Disk password of vm"}
+	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	rec, err := s.Run(e)
+	must(t, err)
+
+	if !rec.LUKS || rec.DiskPasswordPass != "vm/guest-password" {
+		t.Errorf("record = %+v, want the LUKS marker and the pass entry", rec)
+	}
+	records, err := image.Load(e.Catalog)
+	must(t, err)
+	if len(records) != 1 || !records[0].LUKS || records[0].DiskPasswordPass != "vm/guest-password" {
+		t.Errorf("catalog = %+v", records)
+	}
+	// p, w, Enter: once, before the first login.
+	var keys []string
+	for _, c := range f.Calls() {
+		if strings.HasPrefix(c, "SendKey ") || strings.HasPrefix(c, "StartDomain ") {
+			keys = append(keys, c)
+		}
+	}
+	want := []string{"StartDomain vm-plain-20261102", "SendKey vm-plain-20261102", "SendKey vm-plain-20261102", "SendKey vm-plain-20261102"}
+	if !slices.Equal(keys, want) {
+		t.Errorf("start and keys = %q, want %q", keys, want)
+	}
+	if strings.Contains(out.String(), "pw\n") || strings.Contains(rec.Domain, "pw") {
+		t.Errorf("the password shows in the output or the record:\n%s", out.String())
+	}
+}
+
+func TestSealRefusesWithoutAPasswordSource(t *testing.T) {
+	tests := map[string]secret.Spec{
+		"no pass entry":       {Prompt: "Disk password of vm"},
+		"pass cannot give it": {Pass: "vm/missing", Prompt: "Disk password of vm"},
+	}
+	for name, spec := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := worldOf(t, luksVM)
+			e := env(t, f, &shell{f: f})
+			e.DiskPassword, e.Secrets, e.Terminal = spec, store{}, noTerminal{}
+			s, err := image.Plan(f, "vm", "provision-base")
+			must(t, err)
+			before := len(f.Calls())
+			if _, err := s.Run(e); !failure.Is(err, failure.SecretUnavailable) {
+				t.Fatalf("Run = %v, want secret_unavailable", err)
+			}
+			for _, c := range f.Calls()[before:] {
+				t.Errorf("Run without a password changed or read libvirt: %s", c)
+			}
+		})
+	}
+}
+
+func TestSealRefusesAnUntypeablePassword(t *testing.T) {
+	f := worldOf(t, luksVM)
+	e := env(t, f, &shell{f: f})
+	e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "vm/guest-password"}, store{"vm/guest-password": "pässword"}, noTerminal{}
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	before := len(f.Calls())
+	if _, err := s.Run(e); !failure.Is(err, failure.Usage) || strings.Contains(err.Error(), "pässword") {
+		t.Fatalf("Run = %v, want usage without the password", err)
+	}
+	if calls := f.Calls()[before:]; len(calls) != 0 {
+		t.Errorf("Run changed something: %q", calls)
+	}
 }

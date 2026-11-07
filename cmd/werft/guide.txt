@@ -144,7 +144,9 @@ Exit codes:
                           after a release, run the release again
   8   checks_failed       the provision checks failed
   9   unsupported         the image cannot be leased; take another image
-  10  secret_unavailable  a secret is not available without a terminal
+  10  secret_unavailable  a secret is not available without a terminal; an
+                          encrypted image needs its disk password from pass:
+                          ask the user to unlock the GPG agent
 
 On error, the --json document is:
   {"error": {"kind": "<kind>", "message": "<text>"}}

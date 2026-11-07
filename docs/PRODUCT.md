@@ -114,7 +114,8 @@ Requirements:
   commands, the lease JSON fields, the exit codes and the rules. `werft help` lists it. It is part
   of the binary, so it matches the installed version.
 - A lease of an encrypted image (Omarchy) boots like any other: werft types the disk password. The
-  agent never sees it.
+  agent never sees it. werft reads it from `pass`, so the GPG agent of the user must be unlocked;
+  else the lease fails with `secret_unavailable`. `seal` types the password in the same way.
 
 ## What carries over from `vm`
 
@@ -144,7 +145,7 @@ repo owns. werft only runs it.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
    `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: `seal`,
    `images`, `lease`, `release`, `leases`, `extend`, `reap` and parallel leases with a memory
-   budget, of the `plain` and `full` tiers, in code.
+   budget, of the `plain` and `full` tiers and of encrypted images, in code.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it. Status:
    `werft guide` in code.
