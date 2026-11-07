@@ -68,6 +68,9 @@ type Hypervisor interface {
 	VolumeInfo(pool, name string) (VolumeInfo, error)
 	// VolumeByPath is the pool and name of the volume at path.
 	VolumeByPath(path string) (pool, name string, err error)
+	// VolumeBacking is the path of the backing file of the volume; empty
+	// when it has none.
+	VolumeBacking(pool, name string) (string, error)
 
 	DHCPLeases(network, mac string) ([]DHCPLease, error)
 

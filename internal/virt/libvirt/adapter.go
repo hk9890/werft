@@ -503,6 +503,25 @@ func (a *Adapter) VolumeByPath(path string) (string, string, error) {
 	return v.Pool, v.Name, nil
 }
 
+func (a *Adapter) VolumeBacking(pool, name string) (string, error) {
+	v, err := a.vol(pool, name)
+	if err != nil {
+		return "", err
+	}
+	text, err := a.l.StorageVolGetXMLDesc(v, 0)
+	if err != nil {
+		return "", wrap(err, "XML of volume %s", name)
+	}
+	var x libvirtxml.StorageVolume
+	if err := x.Unmarshal(text); err != nil {
+		return "", failure.Wrap(failure.Failed, err, "XML of volume %s", name)
+	}
+	if x.BackingStore == nil {
+		return "", nil
+	}
+	return x.BackingStore.Path, nil
+}
+
 func (a *Adapter) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {
 	n, err := a.l.NetworkLookupByName(network)
 	if err != nil {

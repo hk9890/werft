@@ -76,10 +76,19 @@ func (s *shell) Run(_ context.Context, addr guest.Addr, _ string, _ io.Reader, _
 	return nil
 }
 
+// catalogTOML is the images.toml that holds record().
+const catalogTOML = `[[image]]
+name = "vm-plain-20261102"
+image = "vm"
+tier = "plain"
+`
+
 func env(t *testing.T, f *virttest.Fake, sh *shell) lease.Env {
 	t.Helper()
+	dir := state.Dir(t.TempDir())
+	must(t, os.WriteFile(dir.Images(), []byte(catalogTOML), 0o600))
 	return lease.Env{
-		Ctx: context.Background(), H: f, Dir: state.Dir(t.TempDir()), Prefix: "werft-",
+		Ctx: context.Background(), H: f, Dir: dir, Prefix: "werft-",
 		Shell: func(config string) guest.Shell { sh.config = config; return sh },
 		NewKey: func(path string) error {
 			if err := os.WriteFile(path, []byte("private"), 0o600); err != nil {
@@ -329,6 +338,33 @@ func TestStartRefusesARecordWithoutDomain(t *testing.T) {
 	rec.Domain = ""
 	if _, err := lease.Start(env(t, f, &shell{up: true}), rec, "agent"); !failure.Is(err, failure.Unsupported) {
 		t.Errorf("Start = %v, want unsupported", err)
+	}
+}
+
+// TestStartFindsTheRecordUnderTheLock: a version that werft images --prune
+// deleted after Resolve gets no overlay and no domain.
+func TestStartFindsTheRecordUnderTheLock(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	must(t, os.WriteFile(e.Dir.Images(), nil, 0o600))
+	if _, err := lease.Start(e, record(), "agent"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("Start = %v, want not_found", err)
+	}
+	if calls := strings.Join(f.Calls(), "\n"); strings.Contains(calls, "CreateVolume werft werft-") || strings.Contains(calls, "DefineDomain") {
+		t.Errorf("Start of a pruned version made an overlay or a domain:\n%s", calls)
+	}
+}
+
+func TestStocks(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l, err := lease.Start(e, record(), "agent")
+	must(t, err)
+	_, err = f.DefineDomain("<domain type='kvm'><name>vm</name><memory unit='MiB'>1024</memory></domain>")
+	must(t, err)
+	stocks, err := lease.Stocks(f)
+	if err != nil || len(stocks) != 1 || !stocks[l.Stock] {
+		t.Errorf("Stocks = %v, %v, want only %s", stocks, err, l.Stock)
 	}
 }
 
