@@ -36,6 +36,8 @@ The host is the user's workstation. Its build VMs are every domain not named `we
   ([Isolate config and state](#isolate-config-and-state)).
 - Run `start`, `stop`, `snapshot`, `reset`, `migrate`, `prepare` and `provision` only on a domain
   named `werft-test-*`.
+- Run `images --prune` only with an isolated state directory. With your real one it deletes the
+  user's old stock versions.
 - Run a write command on a build VM only when the user is present and asked for that run.
 
 ## Get a scratch domain

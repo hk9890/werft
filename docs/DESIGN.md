@@ -36,7 +36,7 @@ real adapters.
 - **`internal/virt`** — The hypervisor port: the interface and the types that cross it. Only the
   calls werft needs: domain lookup/list/define/start/shutdown/destroy/undefine, state, XML,
   metadata and description; snapshots, and the redefine of snapshot metadata; pools and volumes,
-  and the volume list of a pool; DHCP leases; screenshot, send-key,
+  the volume list of a pool, and the backing file of a volume; DHCP leases; screenshot, send-key,
   device attach/detach; libvirt version and total host memory. Objects are addressed by name.
   Metadata and description go to the persistent definition.
 - **`internal/virt/libvirt`** — The go-libvirt adapter. It opens `libvirt-sock` (monolithic daemon)
@@ -99,8 +99,8 @@ real adapters.
   (on `-full`).
 - **Stock image.** A flat qcow2 disk file plus a qcow2 NVRAM vars file, made from a build VM reset
   point by `seal`. Named `<image>-<tier>-<YYYYMMDD>[-n]`. Immutable: werft never attaches it to a
-  domain or writes it. A new seal makes a new version. werft has no stock garbage collection yet:
-  old versions stay ([Stock garbage collection](#stock-garbage-collection) is the design).
+  domain or writes it. A new seal makes a new version. `werft images --prune` deletes the old
+  versions that no lease uses ([Stock garbage collection](#stock-garbage-collection)).
 - **Tier.** `plain` comes from the `provision-base` reset point of the build VM. `full` comes from
   the `clean` reset point of the `-full` build VM.
 - **Lease.** A domain `werft-<image>-<tier>-<id>` with a thin overlay on one stock version, its own
@@ -116,7 +116,7 @@ real adapters.
 | Stock files, lease overlays, `clean-install` exports of `migrate` | storage pool `werft`, `/var/lib/libvirt/images/werft/` | libvirt |
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
 | LUKS marker | domain description line, same format as `vm` writes | libvirt |
-| Image records (user, guest family, systemd version, versions, the domain definition leases start from) | `~/.local/state/werft/images.toml`, written by `seal` | werft |
+| Image records (user, guest family, systemd version, versions, the domain definition leases start from), and the names of the pruned versions | `~/.local/state/werft/images.toml`, written by `seal` and `images --prune` | werft |
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/`: `id_ed25519`, `id_ed25519.pub`, `ssh_config` | werft, removed on release |
 | werft key for build VMs (installed by `prepare`), build VM `ssh_config` | `~/.local/state/werft/id_ed25519`, `~/.local/state/werft/ssh_config` | werft |
 | Provision logs | `~/.local/state/werft/logs/provision-<name>-<YYYYmmdd-HHMMSS>.log` | werft |
@@ -143,7 +143,9 @@ step 6 is not built yet.
 
 1. **Resolve.** Image and tier give the newest stock version in `images.toml`. A record without a
    domain definition (sealed before leases existed) fails with `unsupported` and names the seal.
-2. **Admit.** Take the global lock (`lease.admit`). Fail with `no_capacity` when host memory less
+2. **Admit.** Take the global lock. Find the stock record in `images.toml` again; a version that
+   `werft images --prune` deleted after step 1 fails with `not_found` (`lease.stillThere`). Fail
+   (`lease.admit`) with `no_capacity` when host memory less
    committed memory less the `<memory>` of the stock definition is below `memory_budget_mib` in
    `config.toml` (default 4096), or when `StoragePoolGetInfo` gives the stock pool less than 1 GiB
    free (`lease.MinPoolFree`).
@@ -364,8 +366,9 @@ Both tiers run the same steps:
    confirm: the revert loses what the build VM wrote since the label.
 2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
    from the checked definition fails the run before anything is copied.
-3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` that no
-   record, no volume of the pool and no domain has. Define a temporary domain under that name, so
+3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` past
+   every name of that day that `images.toml` holds or names as pruned, that no volume of the pool
+   and no domain has. So a pruned name never comes back with other content. Define a temporary domain under that name, so
    the name is reserved: the build VM XML on the stock volumes `<name>.qcow2` and
    `<name>_VARS.qcow2` in the `werft` pool (`pool` in `config.toml`), with a new UUID and MAC, a
    vsock device, and SMBIOS credentials that replace those of the build VM. The credentials are a
@@ -408,17 +411,33 @@ changes. Seal removes no secrets: a `full` lease holds them by design
 
 ### Stock garbage collection
 
-werft has no stock garbage collection yet; this is its design. Under the global lock, it deletes
-the disk, the NVRAM and the record of each stock version that matches all of these:
+`werft images --prune [--yes]` (`image.Prunable`, `image.Prune` in `internal/image/prune.go`)
+deletes the disk, the NVRAM and the record of each stock version that matches all of these:
 
 - It is not the newest version of its image and tier.
-- No lease domain names it in its metadata.
-- No volume of the pool has it as backing file. An overlay can stay without its lease domain when
-  a lease fails half-way.
+- No domain with werft lease metadata names it, whatever its name and its state directory
+  (`lease.Stocks`).
+- No volume of its pool has its disk as backing file. An overlay can stay without its lease domain
+  when a lease fails half-way.
 - No seal uses it: a version whose name a temporary seal domain reserves has no record yet.
 
+Steps:
+
+1. Find the versions without a lock, and change nothing. When there are none, stop.
+2. Confirm, and name each version; without a TTY it needs `--yes`.
+3. Under the global lock, find the versions again, and delete only those that were confirmed and
+   still match. Delete the disk, then the NVRAM; a volume that is gone counts as deleted.
+4. Remove the records of the deleted versions from `images.toml`, and add their names to
+   `removed` in it. Seal numbers past those names. A werft without prune reads the file and
+   ignores `removed`; its next seal writes the file without it.
+
+A failed volume delete keeps the record, so the next prune tries again. Prune goes on with the next
+version, names every failure, and fails with `failed`. `--json` gives `{"removed": [...]}` with the
+fields of `werft images --json`.
+
 Admission finds the stock record again under the global lock, before it creates the overlay, so a
-version that the lease chose before the lock cannot go in between.
+version that the lease chose before the lock cannot go in between
+([Lease lifecycle](#lease-lifecycle), step 2).
 
 ## Provision pipeline
 
@@ -553,7 +572,8 @@ line 1, guest password on line 2) goes away.
 - On error with `--json`, stdout holds `{"error": {"kind": "...", "message": "..."}}`, with the
   kind from the table below.
 - Without a TTY no command prompts; a missing confirmation fails and names the flag (`--yes`).
-  `-y` is short for `--yes` on `reset`, `prepare`, `provision`, `migrate` and `seal`, as in `vm`.
+  `-y` is short for `--yes` on `reset`, `prepare`, `provision`, `migrate`, `seal` and
+  `images --prune`, as in `vm`.
 - JSON holds no secret. It gives the path of the lease private key.
 - `werft guide` prints `cmd/werft/guide.txt`, embedded in the binary with `go:embed`; with
   `--json` it prints `{"guide": "<text>"}`. `cmd/werft/guide_test.go` checks against `commands`,

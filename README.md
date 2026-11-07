@@ -77,12 +77,14 @@ A stock image is a sealed copy of a build VM reset point. Leases start from it.
 werft seal ubuntu-26-04 provision-base       # reset to provision-base, seal a copy as the plain tier; asks first
 werft seal ubuntu-26-04-full clean           # reset to clean, seal a copy as the full tier of ubuntu-26-04; asks first
 werft images                                 # every stock version: image, tier, version, date
+werft images --prune                         # delete the old versions that no lease uses; asks first
 ```
 
 `seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
 
 To refresh both tiers after a change to the base, run these in order. New leases take the newest
-version; old versions stay.
+version; old versions stay until `werft images --prune`. Prune keeps the newest version of each
+image and tier, and every version a lease uses.
 
 ```sh
 werft reset ubuntu-26-04 provision-base      # back to the base
