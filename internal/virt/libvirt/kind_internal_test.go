@@ -39,6 +39,19 @@ func TestKindOfMapsLibvirtCodes(t *testing.T) {
 	}
 }
 
+func TestMetadataErrTreatsATransientDomainAsNoMetadata(t *testing.T) {
+	transient := golibvirt.Error{Code: uint32(golibvirt.ErrOperationInvalid), Message: "transient domains do not have any persistent config"}
+	if err := metadataErr(transient, "uri", "vm1"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("metadataErr(transient) = %v (%s), want not_found", err, failure.KindOf(err))
+	}
+	if err := metadataErr(golibvirt.Error{Code: uint32(golibvirt.ErrInternalError), Message: "x"}, "uri", "vm1"); !failure.Is(err, failure.Failed) {
+		t.Errorf("metadataErr(internal error) = %v (%s), want failed", err, failure.KindOf(err))
+	}
+	if metadataErr(nil, "uri", "vm1") != nil {
+		t.Error("metadataErr(nil) is not nil")
+	}
+}
+
 func TestWrapKeepsLibvirtMessage(t *testing.T) {
 	err := wrap(golibvirt.Error{Code: uint32(golibvirt.ErrNoDomain), Message: "Domain not found"}, "domain %s", "vm1")
 	if err.Error() != "domain vm1: Domain not found" || !failure.Is(err, failure.NotFound) {

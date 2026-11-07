@@ -13,17 +13,21 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"libvirt.org/go/libvirtxml"
 
+	"github.com/hk9890/werft/internal/console"
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
+	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
 
@@ -44,8 +48,6 @@ const (
 	BootTimeout = 5 * time.Minute
 	// Namespace is the namespace of the werft metadata of a lease domain.
 	Namespace = "https://github.com/hk9890/werft/lease"
-	// vsockSystemd is the first systemd version with SSH over AF_VSOCK.
-	vsockSystemd = 256
 	// MinPoolFree is the free space a pool must have for the overlay of a
 	// new lease, which grows as the guest writes.
 	MinPoolFree = 1 << 30
@@ -59,6 +61,7 @@ type Lease struct {
 	Tier      string    `json:"tier"`
 	Stock     string    `json:"stock"`
 	Owner     string    `json:"owner"`
+	State     string    `json:"state,omitempty"`
 	User      string    `json:"user"`
 	Address   string    `json:"address"`
 	Key       string    `json:"key"`
@@ -90,10 +93,13 @@ type Env struct {
 	// Global takes the global lock.
 	Global func() (release func(), err error)
 	// View opens a viewer on the domain; nil opens none.
-	View  func(domain string)
-	Now   func() time.Time
-	Sleep func(time.Duration)
-	Out   io.Writer
+	View func(domain string)
+	// Secrets and Terminal read the disk password of a LUKS stock image.
+	Secrets  secret.Store
+	Terminal secret.Terminal
+	Now      func() time.Time
+	Sleep    func(time.Duration)
+	Out      io.Writer
 }
 
 func (e Env) printf(format string, args ...any) { _, _ = fmt.Fprintf(e.Out, format+"\n", args...) }
@@ -156,6 +162,10 @@ func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 	if o.Lifetime == 0 {
 		o.Lifetime = Lifetime
 	}
+	password, err := diskPassword(e, rec)
+	if err != nil {
+		return Lease{}, err
+	}
 	l, err = reserve(e, rec, o, tmpl)
 	if err != nil {
 		return Lease{}, err
@@ -169,10 +179,16 @@ func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 	if err = e.H.StartDomain(l.Domain); err != nil {
 		return l, err
 	}
+	l.State = virt.StateRunning.String()
 	if e.View != nil {
 		e.View(l.Domain)
 	}
 	r := (&pipeline.Run{Ctx: e.Ctx, Sleep: e.Sleep}).Init()
+	if rec.LUKS {
+		if err = steps.TypeDiskPassword(r.Ctx, e.H, l.Domain, password, r.Sleep, e.Out); err != nil {
+			return l, err
+		}
+	}
 	if l.Address, err = address(e, r, l.Domain, rec.Systemd); err != nil {
 		return l, err
 	}
@@ -185,7 +201,31 @@ func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 	err = r.PollLogin(BootTimeout, "no SSH answer from "+l.Domain+" at "+l.Address, func() bool {
 		return shell.Run(r.Ctx, guest.Addr{User: l.User, Host: l.ID}, "true", nil, io.Discard, io.Discard) == nil
 	})
+	if rec.LUKS && failure.Is(err, failure.Timeout) {
+		err = failure.Wrap(failure.Timeout, err, "the disk can have refused the typed password, and nothing types it twice; check the disk password of %s", rec.Image)
+	}
 	return l, err
+}
+
+// diskPassword reads the disk password of a LUKS stock image before the
+// lease changes anything: from the pass entry of the record, else at the
+// terminal. An agent has no terminal, so its lease needs the pass entry and
+// an unlocked GPG agent; else it fails with secret_unavailable.
+func diskPassword(e Env, rec image.Record) (string, error) {
+	if !rec.LUKS {
+		return "", nil
+	}
+	spec := secret.Spec{Pass: rec.DiskPasswordPass, Prompt: "Disk password of " + rec.Name}
+	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
+		e.printf("The disk password of %s %s", rec.Name, note)
+	})
+	if err != nil && rec.DiskPasswordPass == "" {
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no pass entry, so only a terminal gives the password; seal it again with guest_password.pass in the recipe of %s", rec.Name, rec.Image)
+	}
+	if err != nil {
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and pass gives its password only when the GPG agent is unlocked; ask the user to unlock the password store, for example by running pass show %s once, then lease again; do not print or ask for the password yourself", rec.Name, rec.DiskPasswordPass)
+	}
+	return v, console.Typeable(v)
 }
 
 // reserve makes the lease directory with its key pair, the overlay, and the
@@ -208,6 +248,9 @@ func reserve(e Env, rec image.Record, o Options, tmpl *libvirtxml.Domain) (Lease
 		return Lease{}, err
 	}
 	defer release()
+	if err := stillThere(e.Dir.Images(), rec.Name); err != nil {
+		return Lease{}, err
+	}
 	if err := admit(e, tmpl, rec.Pool); err != nil {
 		return Lease{}, err
 	}
@@ -257,6 +300,20 @@ func reserve(e Env, rec image.Record, o Options, tmpl *libvirtxml.Domain) (Lease
 		return fail(err)
 	}
 	return l, nil
+}
+
+// stillThere fails with not_found when the images.toml at catalog has no
+// record name any more. The caller holds the global lock, so werft images
+// --prune cannot delete the version between this check and the overlay.
+func stillThere(catalog, name string) error {
+	records, err := image.Load(catalog)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(records, func(r image.Record) bool { return r.Name == name }) {
+		return failure.New(failure.NotFound, "the stock version %s is gone from %s; run werft lease again for the newest one", name, catalog)
+	}
+	return nil
 }
 
 // admit refuses a lease of tmpl with no_capacity when the host memory, less
@@ -341,7 +398,7 @@ func committed(h virt.Hypervisor) (uint64, error) {
 // address is vsock/<cid> when the guest has SSH over AF_VSOCK, else the IPv4
 // DHCP lease of its MAC.
 func address(e Env, r *pipeline.Run, domain string, systemd int) (string, error) {
-	if systemd >= vsockSystemd {
+	if systemd >= guest.VsockSystemd {
 		cid, _ := virt.DomainAddresses(e.H, domain)
 		if cid == "" {
 			return "", failure.New(failure.Failed, "the running %s has no vsock CID", domain)

@@ -195,7 +195,17 @@ func (a *Adapter) DomainMetadata(name, uri string) (string, error) {
 		return "", err
 	}
 	m, err := a.l.DomainGetMetadata(d, int32(golibvirt.DomainMetadataElement), golibvirt.OptString{uri}, golibvirt.DomainAffectConfig)
-	return m, wrap(err, "metadata %s of %s", uri, name)
+	return m, metadataErr(err, uri, name)
+}
+
+// metadataErr is the error of a metadata read. A transient domain has no
+// persistent config, so libvirt fails with OPERATION_INVALID; it has no
+// metadata, so the read fails with failure.NotFound.
+func metadataErr(err error, uri, name string) error {
+	if kindOf(err) == failure.Conflict {
+		return failure.Wrap(failure.NotFound, err, "metadata %s of %s", uri, name)
+	}
+	return wrap(err, "metadata %s of %s", uri, name)
 }
 
 func (a *Adapter) SetDomainMetadata(name, uri, key, xml string) error {
@@ -501,6 +511,25 @@ func (a *Adapter) VolumeByPath(path string) (string, string, error) {
 		return "", "", wrap(err, "volume at %s", path)
 	}
 	return v.Pool, v.Name, nil
+}
+
+func (a *Adapter) VolumeBacking(pool, name string) (string, error) {
+	v, err := a.vol(pool, name)
+	if err != nil {
+		return "", err
+	}
+	text, err := a.l.StorageVolGetXMLDesc(v, 0)
+	if err != nil {
+		return "", wrap(err, "XML of volume %s", name)
+	}
+	var x libvirtxml.StorageVolume
+	if err := x.Unmarshal(text); err != nil {
+		return "", failure.Wrap(failure.Failed, err, "XML of volume %s", name)
+	}
+	if x.BackingStore == nil {
+		return "", nil
+	}
+	return x.BackingStore.Path, nil
 }
 
 func (a *Adapter) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {

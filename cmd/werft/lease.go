@@ -16,6 +16,7 @@ import (
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/lease"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
@@ -34,16 +35,22 @@ var clock = time.Now
 func (c *cli) leaseEnv(h virt.Hypervisor, dir state.Dir) lease.Env {
 	return lease.Env{
 		Ctx: context.Background(), H: h, Dir: dir, Prefix: leasePrefix,
-		Shell:  func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
-		NewKey: guestEnsureKey,
-		Global: func() (func(), error) {
-			lock, err := dir.LockGlobal()
-			if err != nil {
-				return nil, err
-			}
-			return func() { _ = lock.Release() }, nil
-		},
-		Now: clock, Sleep: c.sleep, Out: c.stderr,
+		Shell:   func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
+		NewKey:  guestEnsureKey,
+		Secrets: secret.Pass{}, Terminal: prompter{c},
+		Global: globalLock(dir),
+		Now:    clock, Sleep: c.sleep, Out: c.stderr,
+	}
+}
+
+// globalLock takes the global lock of dir.
+func globalLock(dir state.Dir) func() (func(), error) {
+	return func() (func(), error) {
+		lock, err := dir.LockGlobal()
+		if err != nil {
+			return nil, err
+		}
+		return func() { _ = lock.Release() }, nil
 	}
 }
 
@@ -140,7 +147,7 @@ func writeLease(w io.Writer, l lease.Lease) {
 	const when = "2006-01-02 15:04"
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, row := range [][2]string{
-		{"lease", l.ID}, {"domain", l.Domain}, {"image", l.Image}, {"tier", l.Tier}, {"stock", l.Stock}, {"owner", l.Owner},
+		{"lease", l.ID}, {"domain", l.Domain}, {"image", l.Image}, {"tier", l.Tier}, {"stock", l.Stock}, {"owner", l.Owner}, {"state", l.State},
 		{"user", l.User}, {"address", l.Address}, {"key", l.Key}, {"ssh_config", l.SSHConfig},
 		{"created", l.Created.Local().Format(when)}, {"expiry", l.Expiry.Local().Format(when)},
 	} {
@@ -214,9 +221,9 @@ func (c *cli) cmdLeases(args []string) error {
 			return
 		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(tw, "ID\tOWNER\tIMAGE\tTIER\tADDRESS\tEXPIRY")
+		_, _ = fmt.Fprintln(tw, "ID\tOWNER\tIMAGE\tTIER\tSTATE\tADDRESS\tEXPIRY")
 		for _, l := range leases {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", l.ID, l.Owner, l.Image, l.Tier, l.Address, l.Expiry.Local().Format("2006-01-02 15:04"))
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", l.ID, l.Owner, l.Image, l.Tier, l.State, l.Address, l.Expiry.Local().Format("2006-01-02 15:04"))
 		}
 		_ = tw.Flush()
 	})

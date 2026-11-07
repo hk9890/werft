@@ -13,8 +13,12 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/hk9890/werft/internal/config"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/image"
+	"github.com/hk9890/werft/internal/lease"
+	"github.com/hk9890/werft/internal/recipe"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 )
 
@@ -47,6 +51,12 @@ func (c *cli) cmdSeal(args []string) error {
 	if err != nil {
 		return err
 	}
+	var spec secret.Spec
+	if s.LUKS {
+		if spec, err = diskPasswordSpec(cfg, s); err != nil {
+			return err
+		}
+	}
 	if err := c.confirm(yes, fmt.Sprintf("Seal resets %s to '%s'. Everything written since is lost. Seal it?", name, label)); err != nil {
 		return err
 	}
@@ -65,13 +75,8 @@ func (c *cli) cmdSeal(args []string) error {
 		Ctx: ctx, H: h, Shell: shell, Key: key,
 		Pool: cfg.Pool, PoolPath: cfg.PoolPath(), Catalog: dir.Images(),
 		User: u.Username, WerftKey: publicKey(dir.SSHKey() + ".pub"),
-		Global: func() (func(), error) {
-			lock, err := dir.LockGlobal()
-			if err != nil {
-				return nil, err
-			}
-			return func() { _ = lock.Release() }, nil
-		},
+		Global:       globalLock(dir),
+		DiskPassword: spec, Secrets: secret.Pass{}, Terminal: prompter{c},
 		Now: time.Now, Out: c.stderr,
 	})
 	if err != nil {
@@ -81,6 +86,23 @@ func (c *cli) cmdSeal(args []string) error {
 		_, _ = fmt.Fprintf(w, "%s sealed: image %s, tier %s, version %s\n", rec.Name, rec.Image, rec.Tier, rec.Version)
 	})
 	return nil
+}
+
+// diskPasswordSpec says where the disk password of the LUKS build VM of s
+// comes from: guest_password of the recipe of its image, as provision reads
+// it, else the terminal.
+func diskPasswordSpec(cfg config.Config, s *image.Seal) (secret.Spec, error) {
+	var spec secret.Spec
+	if path := cfg.RecipeFor(s.Image); path != "" {
+		var err error
+		if spec, err = recipe.GuestPassword(path); err != nil {
+			return secret.Spec{}, err
+		}
+	}
+	if spec.Prompt == "" {
+		spec.Prompt = "Disk password of " + s.BuildVM
+	}
+	return spec, nil
 }
 
 // publicKey is the type and base64 of the public key at path, without the
@@ -99,15 +121,25 @@ func publicKey(path string) string {
 
 func (c *cli) cmdImages(args []string) error {
 	fs := flag.NewFlagSet("images", flag.ContinueOnError)
+	prune := fs.Bool("prune", false, "delete the old stock versions that no lease uses")
+	var yes bool
+	fs.BoolVar(&yes, "yes", false, "prune without asking")
+	fs.BoolVar(&yes, "y", false, "short for --yes")
 	if err := c.parseFlags(fs, "images", args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return failure.New(failure.Usage, "images takes no arguments")
 	}
+	if yes && !*prune {
+		return failure.New(failure.Usage, "--yes needs --prune")
+	}
 	dir, err := state.Root()
 	if err != nil {
 		return err
+	}
+	if *prune {
+		return c.pruneImages(dir, yes)
 	}
 	records, err := image.Load(dir.Images())
 	if err != nil {
@@ -127,6 +159,51 @@ func (c *cli) cmdImages(args []string) error {
 			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.Image, r.Tier, r.Version, r.Date.Local().Format("2006-01-02 15:04"), r.User)
 		}
 		_ = tw.Flush()
+	})
+	return nil
+}
+
+// pruneImages runs the reap pass, then deletes the old stock versions that
+// no lease uses, after the confirmation. The reap pass first frees the
+// versions of expired leases.
+func (c *cli) pruneImages(dir state.Dir, yes bool) error {
+	h, err := c.hypervisor()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = h.Close() }()
+	c.reapFirst(c.leaseEnv(h, dir))
+	e := image.PruneEnv{
+		H: h, Catalog: dir.Images(),
+		Leased: func() (map[string]bool, error) { return lease.Stocks(h) },
+		Global: globalLock(dir),
+		Out:    c.stderr,
+	}
+	planned, err := image.Prunable(e)
+	if err != nil {
+		return err
+	}
+	removed := []image.Record{}
+	if len(planned) > 0 {
+		names := make([]string, len(planned))
+		for i, r := range planned {
+			names[i] = r.Name
+		}
+		if err := c.confirm(yes, fmt.Sprintf("Prune deletes the disk, NVRAM and record of %s. Delete them?", strings.Join(names, ", "))); err != nil {
+			return err
+		}
+		if removed, err = image.Prune(e, planned); err != nil {
+			return err
+		}
+	}
+	c.output(map[string][]image.Record{"removed": removed}, func(w io.Writer) {
+		if len(removed) == 0 {
+			_, _ = fmt.Fprintln(w, "nothing to prune: each old stock version is the newest of its image and tier, or a lease uses it")
+			return
+		}
+		for _, r := range removed {
+			_, _ = fmt.Fprintf(w, "%s removed\n", r.Name)
+		}
 	})
 	return nil
 }

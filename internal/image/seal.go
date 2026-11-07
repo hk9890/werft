@@ -13,12 +13,15 @@ import (
 
 	"libvirt.org/go/libvirtxml"
 
+	"github.com/hk9890/werft/internal/console"
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/guest/assets"
 	"github.com/hk9890/werft/internal/pipeline"
 	"github.com/hk9890/werft/internal/resetpoint"
+	"github.com/hk9890/werft/internal/secret"
+	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
 
@@ -48,12 +51,18 @@ type Seal struct {
 	Label   string
 	Image   string
 	Tier    string
+	// LUKS is set when the disk of the reset point asks for a password at
+	// boot: the seal types it in the temporary domain.
+	LUKS bool
 
 	domain    *libvirtxml.Domain
 	disk      domxml.Disk
 	nvramPool string
 	nvram     string
 	nvramPath string
+	// systemdRecorded tells whether the reset point records the systemd
+	// version of the guest, so Plan could check it.
+	systemdRecorded bool
 }
 
 // Plan checks that the build VM can be sealed from label now, and changes
@@ -116,14 +125,20 @@ func (s *Seal) reread(h virt.Hypervisor) error {
 		(planned.nvramPool != "" && s.nvramPool != planned.nvramPool) {
 		return failure.New(failure.Failed, "%s after the revert to '%s' has another disk or NVRAM than the reset point; nothing is copied", s.BuildVM, s.Label)
 	}
+	if s.LUKS != planned.LUKS {
+		return failure.New(failure.Failed, "%s after the revert to '%s' differs from the reset point in its LUKS marker; nothing is copied", s.BuildVM, s.Label)
+	}
 	return nil
 }
 
 // inspect reads the one writable disk and the NVRAM of the definition d of
 // the build VM, and changes nothing.
 func (s *Seal) inspect(h virt.Hypervisor, d *libvirtxml.Domain) error {
-	if domxml.HasLUKSMarker(domxml.Description(d)) {
-		return failure.New(failure.Unsupported, "the disk of %s asks for a password at boot; seal cannot type it yet", s.BuildVM)
+	v, ok := domxml.SystemdOf(domxml.Description(d))
+	s.systemdRecorded = ok
+	if ok && v < guest.VsockSystemd {
+		return failure.New(failure.Unsupported, "the guest of %s at '%s' has systemd %d; seal logs in over vsock, which needs systemd %d or later",
+			s.BuildVM, s.Label, v, guest.VsockSystemd)
 	}
 	disk, err := onlyDisk(h, d)
 	if err != nil {
@@ -138,6 +153,7 @@ func (s *Seal) inspect(h virt.Hypervisor, d *libvirtxml.Domain) error {
 		return failure.Wrap(failure.KindOf(err), err, "NVRAM %s of %s is in no storage pool", nv.Path, s.BuildVM)
 	}
 	s.domain, s.disk, s.nvramPath, s.nvramPool, s.nvram = d, disk, nv.Path, pool, vol
+	s.LUKS = domxml.HasLUKSMarker(domxml.Description(d))
 	return nil
 }
 
@@ -182,9 +198,14 @@ type Env struct {
 	WerftKey string
 	// Global takes the global lock.
 	Global func() (release func(), err error)
-	Now    func() time.Time
-	Sleep  func(time.Duration)
-	Out    io.Writer
+	// DiskPassword says where the disk password of a LUKS build VM comes
+	// from; Secrets and Terminal read it.
+	DiskPassword secret.Spec
+	Secrets      secret.Store
+	Terminal     secret.Terminal
+	Now          func() time.Time
+	Sleep        func(time.Duration)
+	Out          io.Writer
 }
 
 func (e Env) printf(format string, args ...any) { _, _ = fmt.Fprintf(e.Out, format+"\n", args...) }
@@ -195,6 +216,10 @@ func (e Env) printf(format string, args ...any) { _, _ = fmt.Fprintf(e.Out, form
 // removes the temporary domain and the volumes, and names what it could not
 // remove.
 func (s *Seal) Run(e Env) (rec Record, err error) {
+	password, err := s.diskPassword(e)
+	if err != nil {
+		return Record{}, err
+	}
 	e.printf("Resetting %s to '%s'", s.BuildVM, s.Label)
 	if err := resetpoint.Revert(e.H, s.BuildVM, s.Label); err != nil {
 		return Record{}, err
@@ -222,7 +247,7 @@ func (s *Seal) Run(e Env) (rec Record, err error) {
 	if err = s.copyVolumes(e, rec); err != nil {
 		return rec, err
 	}
-	if err = s.seal(e, &rec); err != nil {
+	if err = s.seal(e, &rec, password); err != nil {
 		return rec, err
 	}
 	if err = e.H.UndefineDomain(rec.Name, virt.UndefineKeepNVRAM); err != nil {
@@ -237,6 +262,22 @@ func (s *Seal) Run(e Env) (rec Record, err error) {
 		return rec, failure.Wrap(failure.Failed, err, "write %s", e.Catalog)
 	}
 	return rec, nil
+}
+
+// diskPassword reads the disk password of a LUKS build VM, before anything
+// changes; empty when the disk asks for none. Without a pass entry and
+// without a terminal, it fails with secret_unavailable.
+func (s *Seal) diskPassword(e Env) (string, error) {
+	if !s.LUKS {
+		return "", nil
+	}
+	v, err := secret.Read(e.DiskPassword, e.Secrets, e.Terminal, func(note string) {
+		e.printf("The disk password of %s %s", s.BuildVM, note)
+	})
+	if err != nil {
+		return "", failure.Wrap(failure.KindOf(err), err, "the disk of %s asks for a password at boot; seal reads it from the pass entry guest_password.pass of its recipe, else at a terminal", s.BuildVM)
+	}
+	return v, console.Typeable(v)
 }
 
 // remove undoes a failed run: the temporary domain and the stock volumes.
@@ -269,7 +310,7 @@ func (s *Seal) reserve(e Env) (Record, error) {
 		return Record{}, err
 	}
 	defer release()
-	records, err := Load(e.Catalog)
+	c, err := load(e.Catalog)
 	if err != nil {
 		return Record{}, err
 	}
@@ -282,14 +323,16 @@ func (s *Seal) reserve(e Env) (Record, error) {
 		return Record{}, err
 	}
 	now := e.Now()
-	name, version := nextName(s.Image, s.Tier, now, func(name string) bool {
+	name, version := nextName(s.Image, s.Tier, now, c.held(), func(name string) bool {
 		_, err := e.H.Domain(name)
-		return err == nil || hasName(records, name) ||
-			slices.Contains(volumes, name+".qcow2") || slices.Contains(volumes, name+"_VARS.qcow2")
+		return err == nil || slices.Contains(volumes, name+".qcow2") || slices.Contains(volumes, name+"_VARS.qcow2")
 	})
 	rec := Record{
 		Name: name, Image: s.Image, Tier: s.Tier, Version: version, Date: now.UTC().Truncate(time.Second),
 		Source: s.BuildVM, Label: s.Label, Pool: e.Pool, Disk: name + ".qcow2", NVRAM: name + "_VARS.qcow2", User: e.User,
+	}
+	if s.LUKS {
+		rec.LUKS, rec.DiskPasswordPass = true, e.DiskPassword.Pass
 	}
 	if rec.Domain, err = s.defineTemporary(e, rec, dir); err != nil {
 		return Record{}, err
@@ -354,11 +397,16 @@ func (s *Seal) defineTemporary(e Env, rec Record, dir string) (template string, 
 // a new SSH login would start an sshd whose drop-in makes new host keys, and
 // every lease of the image would share them. It fills in the guest facts of
 // rec.
-func (s *Seal) seal(e Env, rec *Record) error {
+func (s *Seal) seal(e Env, rec *Record, password string) error {
 	r := (&pipeline.Run{Ctx: e.Ctx, Sleep: e.Sleep}).Init()
 	e.printf("Booting %s to seal it (headless, no window)", rec.Name)
 	if err := e.H.StartDomain(rec.Name); err != nil {
 		return err
+	}
+	if s.LUKS {
+		if err := steps.TypeDiskPassword(r.Ctx, e.H, rec.Name, password, r.Sleep, e.Out); err != nil {
+			return err
+		}
 	}
 	cid, err := vsockCID(e.H, rec.Name)
 	if err != nil {
@@ -368,6 +416,13 @@ func (s *Seal) seal(e Env, rec *Record) error {
 	err = r.PollLogin(bootTimeout, "no SSH answer from "+rec.Name+" at "+addr.Host, func() bool {
 		return e.Shell.Run(r.Ctx, addr, "true", nil, io.Discard, io.Discard) == nil
 	})
+	if failure.Is(err, failure.Timeout) && !s.systemdRecorded {
+		err = failure.Wrap(failure.Timeout, err, "the reset point '%s' of %s records no systemd version; run werft prepare %s and take the reset point again, so seal can check it before the copy",
+			s.Label, s.BuildVM, s.BuildVM)
+	}
+	if s.LUKS && failure.Is(err, failure.Timeout) {
+		err = failure.Wrap(failure.Timeout, err, "the disk can have refused the typed password, and nothing types it twice; check the disk password of %s", s.BuildVM)
+	}
 	if err != nil {
 		return err
 	}
