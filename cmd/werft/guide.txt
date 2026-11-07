@@ -149,7 +149,10 @@ Exit codes:
   9   unsupported         the image cannot be leased; take another image
   10  secret_unavailable  a secret is not available without a terminal; an
                           encrypted image needs its disk password from pass:
-                          ask the user to unlock the GPG agent
+                          ask the user to unlock the password store, for
+                          example by running pass show <entry> once (the
+                          error names the entry), then lease again; never
+                          print the password or ask for it yourself
 
 On error, the --json document is:
   {"error": {"kind": "<kind>", "message": "<text>"}}

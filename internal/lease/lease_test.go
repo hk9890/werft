@@ -510,6 +510,21 @@ func TestStartWithoutTheDiskPassword(t *testing.T) {
 	}
 }
 
+func TestStartWithALockedPasswordStoreTellsWhatToDo(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	e.Secrets, e.Terminal = store{}, noTerminal{}
+	_, err := lease.Start(e, luksRecord(), "agent")
+	if !failure.Is(err, failure.SecretUnavailable) {
+		t.Fatalf("Start = %v, want secret_unavailable", err)
+	}
+	for _, want := range []string{"ask the user to unlock the password store", "pass show vm/guest-password once", "then lease again", "do not print or ask for the password yourself"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to say %q", err, want)
+		}
+	}
+}
+
 func TestStartRefusesAnUntypeablePassword(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})

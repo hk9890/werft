@@ -181,7 +181,7 @@ func diskPassword(e Env, rec image.Record) (string, error) {
 		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no pass entry, so only a terminal gives the password; seal it again with guest_password.pass in the recipe of %s", rec.Name, rec.Image)
 	}
 	if err != nil {
-		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk; pass gives its password only when the GPG agent is unlocked, and without pass werft asks at a terminal", rec.Name)
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and pass gives its password only when the GPG agent is unlocked; ask the user to unlock the password store, for example by running pass show %s once, then lease again; do not print or ask for the password yourself", rec.Name, rec.DiskPasswordPass)
 	}
 	return v, console.Typeable(v)
 }
