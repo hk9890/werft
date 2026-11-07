@@ -96,12 +96,14 @@ werft seal ubuntu-26-04-full clean           # new full version
 
 ### Leases
 
-A lease is a disposable VM on a thin overlay of the newest stock version.
+A lease is a disposable VM on a thin overlay of a stock version, the newest by default.
 
 ```sh
 werft lease ubuntu-26-04                     # boot a plain lease; prints its id and ssh command when SSH answers
 werft lease ubuntu-26-04 --tier full         # boot a lease of the full tier
 werft lease ubuntu-26-04 --owner agent-7     # label the lease (default $WERFT_OWNER, else $USER)
+werft lease ubuntu-26-04 --memory 8192 --cpus 4 --for 2h   # memory in MiB, vCPUs, lifetime
+werft lease ubuntu-26-04 --stock ubuntu-26-04-plain-20261102   # an older stock version
 ssh -F ~/.local/state/werft/leases/<id>/ssh_config <id>
 werft release <id>                           # destroy the VM, its disk and its key; a second release exits 0
 werft leases                                 # id, owner, image, tier, address, expiry of each lease
@@ -113,12 +115,14 @@ werft guide                                  # how an agent leases, uses and rel
 Point an agent at `werft guide`. It prints the lease flow, the JSON fields, the exit codes and the
 rules for an agent, and it matches the installed version.
 
-A lease expires 4 hours after it starts. `lease`, `leases`, `extend` and `release` first release
-the expired leases; `reap` does only that.
+A lease gets the memory and vCPUs of its stock image unless `--memory` (MiB, at least 256) or
+`--cpus` names others. It expires 4 hours after it starts, or after `--for` (15m to 24h).
+`--stock` must name a version of the image and tier of the lease. `lease`, `leases`, `extend` and
+`release` first release the expired leases; `reap` does only that.
 
 Leases run in parallel. `werft lease` exits 6 (`no_capacity`) when the host memory, less the memory
-of the running VMs and of every lease, less the new lease, is below `memory_budget_mib` in
-`~/.config/werft/config.toml` (default 4096).
+of the running VMs and of every lease, less the memory of the new lease, is below
+`memory_budget_mib` in `~/.config/werft/config.toml` (default 4096).
 
 A stock image sealed before `werft lease` existed has no domain definition for leases; seal it again.
 

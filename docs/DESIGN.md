@@ -137,14 +137,29 @@ the questions: a check and the plans of `migrate` and `seal` change nothing (`vi
 
 ## Lease lifecycle
 
-`werft lease <image> [--tier plain|full] [--owner o] [--view]` runs these steps (`lease.Start` in
-`internal/lease/lease.go`). The flags can stand before or after the image. The disk password of
-step 6 is not built yet.
+`werft lease <image> [--tier plain|full] [--stock name] [--memory mib] [--cpus n] [--for duration]
+[--owner o] [--view]` runs these steps (`lease.Start` in `internal/lease/lease.go`). The flags can
+stand before or after the image. The disk password of step 6 is not built yet.
 
-1. **Resolve.** Image and tier give the newest stock version in `images.toml`. A record without a
-   domain definition (sealed before leases existed) fails with `unsupported` and names the seal.
+`cmdLease` in `cmd/werft/lease.go` checks the flags before it reads `images.toml` or calls libvirt,
+and fails with `usage` outside these bounds:
+
+- `--memory` is in MiB, at least 256 (`lease.MinMemory`). It catches a size in GiB where MiB is
+  meant. The host memory is the upper bound, through admission.
+- `--cpus` is at least 1. libvirt checks the upper bound when it defines or starts the domain.
+- `--for` is from 15 minutes (`lease.MinLifetime`) to 24 hours (`lease.MaxLifetime`). The address
+  and SSH waits of steps 7 and 8 take up to 10 minutes, and the reap pass of another werft run must
+  not release a lease that still boots. `werft extend` adds time past 24 hours.
+
+1. **Resolve.** Image and tier give the newest stock version in `images.toml`. `--stock` gives the
+   version of that name: `not_found` when `images.toml` has none, `usage` when it is of another
+   image or tier. A record without a domain definition (sealed before leases existed) fails with
+   `unsupported` and names the seal. `--memory` and `--cpus` change the `<memory>`,
+   `<currentMemory>` and `<vcpu>` of the domain definition (`domxml.Resize`); a CPU topology
+   becomes one socket with that many cores. A definition with NUMA cells or a `<maxMemory>` fails
+   with `unsupported`.
 2. **Admit.** Take the global lock (`lease.admit`). Fail with `no_capacity` when host memory less
-   committed memory less the `<memory>` of the stock definition is below `memory_budget_mib` in
+   committed memory less the `<memory>` of the lease definition is below `memory_budget_mib` in
    `config.toml` (default 4096), or when `StoragePoolGetInfo` gives the stock pool less than 1 GiB
    free (`lease.MinPoolFree`).
    - Host memory is the total of `NodeGetInfo`.
@@ -181,7 +196,7 @@ step 6 is not built yet.
      the key in an older guest (seal needs systemd 256 too, so no such image exists today); the key
      line is appended again at each boot; the home directory is assumed to be `/home/<user>`;
    - werft metadata in namespace `https://github.com/hk9890/werft/lease`: owner, created, expiry
-     (created plus 4 hours), stock version, and the state directory of the werft run.
+     (created plus `--for`, default 4 hours), stock version, and the state directory of the werft run.
 
    Then release the global lock. Steps 2 to 5 take seconds and do not include the boot.
 6. **Boot.** `DomainCreateWithFlags`. The domain keeps its graphics device, but no viewer opens
