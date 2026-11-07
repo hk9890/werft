@@ -80,7 +80,11 @@ werft images                                 # every stock version: image, tier,
 werft images --prune                         # delete the old versions that no lease uses; asks first
 ```
 
-`seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
+`seal` needs a guest with systemd 256 or later: it logs in as root over vsock. It refuses an
+older guest at once, when the reset point records its systemd version (`werft prepare` and the
+`detect-guest` step write it). A reset point without that record seals as before; when the vsock
+login then times out, the error tells you to run `werft prepare <vm>` and take the reset point
+again.
 
 To refresh both tiers after a change to the base, run these in order. New leases take the newest
 version; old versions stay until `werft images --prune`. Prune keeps the newest version of each

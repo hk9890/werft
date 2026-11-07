@@ -26,14 +26,35 @@ func TestPrepare(t *testing.T) {
 		t.Fatalf("prepare: %v\n%s", err, w.out.String())
 	}
 	w.assertSequence("the guest is checked, named, powered off from inside, then snapshotted",
-		"^secret Password of tester", "^StartDomain testvm$", "^ssh true$", "^ssh \\[ -d /usr/share/omarchy \\]$",
+		"^secret Password of tester", "^StartDomain testvm$", "^ssh true$", "^ssh \\[ -d /usr/share/omarchy \\]$", "^ssh systemctl --version",
 		"AutomaticLoginEnable", "^ssh sudo -k -S -p '' sh -c 'true' sh$", "grep -qx crypt$",
 		"hostnamectl set-hostname.* sh 'testvm'$", "systemctl poweroff", "^CreateSnapshot testvm provision-base$")
 	if w.index("^ssh-copy-id") >= 0 || w.index("^viewer open") >= 0 {
 		t.Error("a ready guest got the key again, or a window")
 	}
-	if w.index("^SetDomainDescription") >= 0 {
-		t.Error("a root without LUKS changed the description")
+	if desc, _ := w.fake.DomainDescription(vm); desc != "my notes\n"+systemd259 {
+		t.Errorf("description = %q, want the notes and the systemd version, and no LUKS marker", desc)
+	}
+}
+
+// systemd259 is the description line of the systemd version of the guest.
+var systemd259 = domxml.SystemdLine(259)
+
+// A new systemd version replaces the old line, so a reset point taken next
+// holds the version of its guest.
+func TestPrepareReplacesTheSystemdVersion(t *testing.T) {
+	w := freshWorld(t)
+	must(t, w.fake.SetDomainDescription(vm, domxml.SystemdLine(255)+"\nmy notes"))
+	if _, err := w.run(steps.Prepare(), false); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if desc, _ := w.fake.DomainDescription(vm); desc != "my notes\n"+systemd259 {
+		t.Errorf("description = %q", desc)
+	}
+	text, err := w.fake.SnapshotXML(vm, resetpoint.ProvisionBase)
+	must(t, err)
+	if !strings.Contains(text, systemd259) {
+		t.Error("the reset point holds no systemd version")
 	}
 }
 
@@ -211,7 +232,7 @@ func TestPrepareOmarchyMarksTheDisk(t *testing.T) {
 		t.Error("an Omarchy guest was asked about GDM")
 	}
 	desc, _ := w.fake.DomainDescription(vm)
-	if desc != "my notes\n"+domxml.LUKSMarker {
+	if desc != "my notes\n"+systemd259+"\n"+domxml.LUKSMarker {
 		t.Errorf("description = %q", desc)
 	}
 	if w.index("^SendKey") >= 0 {
@@ -225,7 +246,7 @@ func TestPrepareClearsAStaleMarker(t *testing.T) {
 	if _, err := w.run(steps.Prepare(), false); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if desc, _ := w.fake.DomainDescription(vm); desc != "my notes" {
+	if desc, _ := w.fake.DomainDescription(vm); desc != "my notes\n"+systemd259 {
 		t.Errorf("description = %q", desc)
 	}
 }
@@ -277,11 +298,36 @@ func TestPrepareDroppedLUKSProbeKeepsTheMarker(t *testing.T) {
 	if _, err := w.run(steps.Prepare(), false); err == nil || !strings.Contains(err.Error(), "could not probe the root disk of testvm for LUKS") {
 		t.Fatalf("err = %v", err)
 	}
-	if desc, _ := w.fake.DomainDescription(vm); desc != "my notes\n"+domxml.LUKSMarker {
+	if desc, _ := w.fake.DomainDescription(vm); desc != "my notes\n"+domxml.LUKSMarker+"\n"+systemd259 {
 		t.Errorf("description = %q, want the marker kept", desc)
 	}
 	if w.index("^CreateSnapshot") >= 0 {
 		t.Error("a base was taken")
+	}
+}
+
+// A guest whose systemd version werft cannot read fails detect-guest; the
+// description stays and no base is taken.
+func TestPrepareUnreadableSystemdVersionFails(t *testing.T) {
+	tests := []struct {
+		name, want string
+		guest      func(*shell)
+	}{
+		{"command fails", "could not read the systemd version of testvm", func(s *shell) { s.fail["^systemctl --version"] = true }},
+		{"no number", `testvm printed "", not a systemd version`, func(s *shell) { s.systemd = 0 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := freshWorld(t)
+			tt.guest(w.shell)
+			_, err := w.run(steps.Prepare(), false)
+			if !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want failed with %q", err, tt.want)
+			}
+			if w.index("^SetDomainDescription") >= 0 || w.index("^CreateSnapshot") >= 0 {
+				t.Error("the description changed, or a base was taken")
+			}
+		})
 	}
 }
 
@@ -319,8 +365,8 @@ func TestPrepareWaitsForALeaseNotAVsockCID(t *testing.T) {
 	}
 }
 
-// LUKSMark changes only the marker line; the user's text, blank lines too,
-// stays as it is.
+// LUKSMark and DetectGuest change only their own lines; the user's text,
+// blank lines too, stays as it is.
 func TestPrepareKeepsTheBlankLinesOfTheDescription(t *testing.T) {
 	const notes = "my notes\n\nmore"
 	tests := []struct {
@@ -328,10 +374,10 @@ func TestPrepareKeepsTheBlankLinesOfTheDescription(t *testing.T) {
 		desc, want string
 		luks       bool
 	}{
-		{"no LUKS", notes, notes, false},
-		{"LUKS", notes, notes + "\n" + domxml.LUKSMarker, true},
-		{"LUKS gone", notes + "\n" + domxml.LUKSMarker, notes, false},
-		{"empty, LUKS", "", domxml.LUKSMarker, true},
+		{"no LUKS", notes + "\n" + systemd259, notes + "\n" + systemd259, false},
+		{"LUKS", notes, notes + "\n" + systemd259 + "\n" + domxml.LUKSMarker, true},
+		{"LUKS gone", notes + "\n" + domxml.LUKSMarker, notes + "\n" + systemd259, false},
+		{"empty, LUKS", "", systemd259 + "\n" + domxml.LUKSMarker, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

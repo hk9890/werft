@@ -6,6 +6,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/hk9890/werft/internal/domxml"
@@ -47,7 +48,12 @@ func exited(err error) bool {
 	return errors.As(err, &exit)
 }
 
-// DetectGuest tells Omarchy (Arch, Hyprland, SDDM) from Ubuntu with GNOME.
+// systemdVersion prints the major systemd version of the guest.
+const systemdVersion = `systemctl --version | sed -n '1s/^systemd \([0-9]*\).*/\1/p'`
+
+// DetectGuest tells Omarchy (Arch, Hyprland, SDDM) from Ubuntu with GNOME,
+// and writes the systemd version of the guest into the domain description,
+// so a reset point taken later holds it for seal.
 type DetectGuest struct{}
 
 func (DetectGuest) Check(*pipeline.Run) error { return nil }
@@ -57,7 +63,41 @@ func (DetectGuest) Run(r *pipeline.Run) error {
 	if r.Probe("[ -d /usr/share/omarchy ]") {
 		r.Family, r.SessionProcess = "omarchy", "Hyprland"
 	}
-	r.Printf("%s is a %s guest", r.Domain, r.Family)
+	out, err := r.Output(systemdVersion, nil)
+	if err != nil {
+		return failure.Wrap(failure.Failed, err, "could not read the systemd version of %s", r.Domain)
+	}
+	version, err := strconv.Atoi(out)
+	if err != nil {
+		return failure.New(failure.Failed, "%s printed %q, not a systemd version", r.Domain, out)
+	}
+	r.Printf("%s is a %s guest with systemd %d", r.Domain, r.Family, version)
+	return setDescriptionLine(r, domxml.IsSystemdLine, domxml.SystemdLine(version))
+}
+
+// setDescriptionLine replaces the lines of the domain description that
+// match old with line, or only removes them when line is empty. The rest of
+// the description, blank lines too, stays.
+func setDescriptionLine(r *pipeline.Run, old func(string) bool, line string) error {
+	desc, err := r.H.DomainDescription(r.Domain)
+	if err != nil {
+		return err
+	}
+	desc = strings.TrimRight(desc, "\n")
+	var kept []string
+	if desc != "" {
+		for _, l := range strings.Split(desc, "\n") {
+			if !old(l) {
+				kept = append(kept, l)
+			}
+		}
+	}
+	if line != "" {
+		kept = append(kept, line)
+	}
+	if next := strings.Join(kept, "\n"); next != desc {
+		return r.H.SetDomainDescription(r.Domain, next)
+	}
 	return nil
 }
 
@@ -94,28 +134,12 @@ func (LUKSMark) Run(r *pipeline.Run) error {
 	if err != nil && !exited(err) {
 		return failure.Wrap(failure.Failed, err, "could not probe the root disk of %s for LUKS", r.Domain)
 	}
-	luks := err == nil
-	desc, err := r.H.DomainDescription(r.Domain)
-	if err != nil {
-		return err
-	}
-	desc = strings.TrimRight(desc, "\n")
-	var kept []string
-	if desc != "" {
-		for _, line := range strings.Split(desc, "\n") {
-			if line != domxml.LUKSMarker {
-				kept = append(kept, line)
-			}
-		}
-	}
-	if luks {
+	marker := ""
+	if err == nil {
 		r.Printf("The disk of %s asks for a password at boot; werft types the guest password there", r.Domain)
-		kept = append(kept, domxml.LUKSMarker)
+		marker = domxml.LUKSMarker
 	}
-	if next := strings.Join(kept, "\n"); next != desc {
-		return r.H.SetDomainDescription(r.Domain, next)
-	}
-	return nil
+	return setDescriptionLine(r, func(l string) bool { return l == domxml.LUKSMarker }, marker)
 }
 
 const gdmConf = "/etc/gdm3/custom.conf"
