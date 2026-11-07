@@ -306,6 +306,31 @@ func TestPrepareDroppedLUKSProbeKeepsTheMarker(t *testing.T) {
 	}
 }
 
+// A guest whose systemd version werft cannot read fails detect-guest; the
+// description stays and no base is taken.
+func TestPrepareUnreadableSystemdVersionFails(t *testing.T) {
+	tests := []struct {
+		name, want string
+		guest      func(*shell)
+	}{
+		{"command fails", "could not read the systemd version of testvm", func(s *shell) { s.fail["^systemctl --version"] = true }},
+		{"no number", `testvm printed "", not a systemd version`, func(s *shell) { s.systemd = 0 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := freshWorld(t)
+			tt.guest(w.shell)
+			_, err := w.run(steps.Prepare(), false)
+			if !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want failed with %q", err, tt.want)
+			}
+			if w.index("^SetDomainDescription") >= 0 || w.index("^CreateSnapshot") >= 0 {
+				t.Error("the description changed, or a base was taken")
+			}
+		})
+	}
+}
+
 func TestPrepareInterruptedInTheSSHWaitGivesNoAdvice(t *testing.T) {
 	w := freshWorld(t)
 	var cancel context.CancelFunc

@@ -290,7 +290,7 @@ type shell struct {
 	w       *world
 	omarchy bool
 	luks    bool
-	// systemd is the version systemctl --version prints.
+	// systemd is the version systemctl --version prints; 0 prints nothing.
 	systemd int
 	// keyRejected makes sshd refuse every key until ssh-copy-id ran.
 	keyRejected bool
@@ -352,7 +352,9 @@ func (s *shell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.R
 	case strings.Contains(cmd, "grep -qx crypt"):
 		return exit(s.luks)
 	case strings.HasPrefix(cmd, "systemctl --version"):
-		_, _ = fmt.Fprintln(stdout, s.systemd)
+		if s.systemd != 0 {
+			_, _ = fmt.Fprintln(stdout, s.systemd)
+		}
 	case strings.Contains(cmd, "systemctl poweroff"):
 		for _, d := range s.running() {
 			if s.address(d) == addr.Host {
