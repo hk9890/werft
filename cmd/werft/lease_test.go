@@ -214,6 +214,30 @@ func TestReapRemovesOrphans(t *testing.T) {
 	}
 }
 
+// TestReapListsNoState: werft reap does not read the domain state, so an
+// expired lease in its JSON has no state key.
+func TestReapListsNoState(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	lh := newLifecycleHost(t)
+	t0 := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	addLease(t, lh, "abc123", t0)
+	setClock(t, t0.Add(lease.Lifetime))
+
+	r := lh.run("--json", "reap")
+	var doc struct {
+		Expired []map[string]any `json:"expired"`
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &doc); r.code != 0 || err != nil {
+		t.Fatalf("reap = %+v, %v", r, err)
+	}
+	if len(doc.Expired) != 1 || doc.Expired[0]["id"] != "abc123" {
+		t.Fatalf("expired = %v, want abc123", doc.Expired)
+	}
+	if s, ok := doc.Expired[0]["state"]; ok {
+		t.Errorf("expired lease has state %q, want no state key", s)
+	}
+}
+
 // TestReapFails: a release that fails makes werft reap fail, with the kind
 // failed, and the other commands only warn.
 func TestReapFails(t *testing.T) {

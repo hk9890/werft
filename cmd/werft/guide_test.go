@@ -95,7 +95,9 @@ func TestGuideListsTheLeaseFields(t *testing.T) {
 	for _, line := range strings.Split(block, "\n") {
 		got = append(got, strings.Fields(line)[0])
 	}
-	doc, err := json.Marshal(lease.Lease{})
+	// State is empty only in the expired leases of werft reap, which the
+	// field list does not cover.
+	doc, err := json.Marshal(lease.Lease{State: "running"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -50,7 +50,7 @@ type Lease struct {
 	Tier      string    `json:"tier"`
 	Stock     string    `json:"stock"`
 	Owner     string    `json:"owner"`
-	State     string    `json:"state"`
+	State     string    `json:"state,omitempty"`
 	User      string    `json:"user"`
 	Address   string    `json:"address"`
 	Key       string    `json:"key"`
