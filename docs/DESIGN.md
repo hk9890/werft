@@ -99,7 +99,8 @@ real adapters.
   (on `-full`).
 - **Stock image.** A flat qcow2 disk file plus a qcow2 NVRAM vars file, made from a build VM reset
   point by `seal`. Named `<image>-<tier>-<YYYYMMDD>[-n]`. Immutable: werft never attaches it to a
-  domain or writes it. A new seal makes a new version. Old versions stay: no command deletes a stock version yet.
+  domain or writes it. A new seal makes a new version. An old version is deleted only when no lease
+  domain names it in its metadata (stock garbage collection, not built yet: old versions stay).
 - **Tier.** `plain` comes from the `provision-base` reset point of the build VM. `full` comes from
   the `clean` reset point of the `-full` build VM.
 - **Lease.** A domain `werft-<image>-<tier>-<id>` with a thin overlay on one stock version, its own
@@ -214,7 +215,8 @@ half-done release.
 Every command that reads leases first releases the expired ones and the orphans (a lease domain
 without a lease directory, or the reverse). `werft reap` does only that (`lease.Reap` in
 `internal/lease/reap.go`). The commands with this reap pass are `lease`, `leases`, `extend` and
-`release`. `list` has none: it changes nothing. Reap rules:
+`release`. `list` has none: it changes nothing. No timer runs `werft reap`, so an expired lease
+stays until the next of these commands. Reap rules:
 
 - It takes the global lock, so it never sees a lease directory whose domain is not yet defined.
 - A lease domain is a domain named `<prefix><image>-<plain|full>-<id>` with werft lease metadata
@@ -570,8 +572,8 @@ Exit codes are part of the contract:
 
 - libvirt is the arbiter. A unique domain name reserves a lease. QEMU image locks prevent two
   writers on one disk. Stock files are opened read-only as backing files.
-- `locks/global.lock` (`flock`) serializes admission, seal, reap, extend, and the creation of the
-  werft key by `prepare`, between runs with the same state directory: each state directory has its
+- `locks/global.lock` (`flock`) serializes admission, seal, reap, extend, stock garbage collection
+  (not built yet), and the creation of the werft key by `prepare`, between runs with the same state directory: each state directory has its
   own lock. `release` holds it only for its reap pass, not while it releases the lease.
   Admission holds it from the capacity check until the lease domain is defined, so the next
   admission counts the memory of that domain before it starts. Seal holds it while
@@ -618,7 +620,6 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 ## Open questions
 
-- **Reaping without a command.** Also a systemd user timer that runs `werft reap`?
 - **SSH library.** OpenSSH child processes (proposed), or `golang.org/x/crypto/ssh` with an AF_VSOCK
   dialer: no process per call, but a different path from the one the agent uses.
 - **Recipe location.** Where in the setup repo the recipe lives. TOML with a `family` key per step
