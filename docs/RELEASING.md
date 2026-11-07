@@ -99,8 +99,8 @@ the source. List features, changed behavior and fixes, never a commit list. An e
 place by telling the reader what they must do, what they will see that they did not see before, or
 what was wrong that is now fixed. State the symptom; the cause belongs in the commit message.
 
-- Open each entry with a bold sentence that says what is true now. For a change to existing
-  behavior, then say what it was before.
+- Open each entry with a bold sentence that says what is true now. For changed behavior or a fix,
+  then say what it was before. A new feature needs no "before".
 - Never name an internal symbol, a Go package, a third-party library, or a test.
 - A change with no visible effect gets no entry: a refactor, added tests, a doc fix, a dependency
   bump nobody has to act on, a fix of the release workflow.
