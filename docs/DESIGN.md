@@ -364,8 +364,8 @@ Both tiers run the same steps:
    (`SnapshotXML`): one writable disk in a storage pool, a UEFI NVRAM, and no LUKS marker. When
    its description records a systemd version below 256, refuse with `unsupported`: the login of
    step 5 cannot work, so seal stops before the revert and before any copy. A reset point without
-   that line (taken before `detect-guest` recorded it) is not checked. Then confirm: the revert
-   loses what the build VM wrote since the label.
+   that line (taken before `detect-guest` recorded it) is not checked, and seal runs. Then
+   confirm: the revert loses what the build VM wrote since the label.
 2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
    from the checked definition fails the run before anything is copied.
 3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` that no
@@ -378,7 +378,9 @@ Both tiers run the same steps:
 4. Without the global lock, copy disk and NVRAM to the stock volumes with
    `StorageVolCreateXMLFrom`; the copy is flat, with no internal snapshots.
 5. Boot the temporary domain and log in as root over vsock with the key of the run. This needs no
-   guest password, and needs systemd 256 or later.
+   guest password, and needs systemd 256 or later. When the login times out and the reset point
+   has no systemd line, the `timeout` error adds a hint: run `werft prepare <vm>` and take the
+   reset point again, so seal can check the version before the copy.
 6. Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
    systemd version; empty `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
    werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest

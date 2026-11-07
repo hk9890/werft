@@ -60,6 +60,7 @@ func must(t *testing.T, err error) {
 type shell struct {
 	f        *virttest.Fake
 	sealErr  error
+	loginErr error
 	commands []string
 	// xml is the inactive XML of the temporary domain at the seal script.
 	xml string
@@ -74,7 +75,7 @@ func (s *shell) Run(_ context.Context, addr guest.Addr, cmd string, _ io.Reader,
 		}
 	}
 	if !strings.HasPrefix(cmd, "sh -c") {
-		return nil
+		return s.loginErr
 	}
 	s.xml, _ = s.f.DomainXML(name, true)
 	if s.sealErr != nil {
@@ -195,6 +196,35 @@ func TestSealRefusesSystemdBelow256(t *testing.T) {
 	must(t, err)
 	if _, err := s.Run(env(t, f, &shell{f: f})); err != nil {
 		t.Fatalf("seal of a systemd 256 guest: %v", err)
+	}
+}
+
+// TestSealTimeoutHintsAtMissingSystemdLine: a reset point without the
+// systemd line is sealed as before. When the vsock login then times out, the
+// error tells how to let seal check the version before the copy. With the
+// line recorded, the hint stays away.
+func TestSealTimeoutHintsAtMissingSystemdLine(t *testing.T) {
+	const hint = "records no systemd version; run werft prepare vm and take the reset point again"
+	tests := map[string]struct {
+		xml      string
+		wantHint bool
+	}{
+		"no systemd line": {buildVM, true},
+		"systemd 256":     {strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>"+domxml.SystemdLine(256)+"</description>", 1), false},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := worldOf(t, tt.xml)
+			s, err := image.Plan(f, "vm", "provision-base")
+			must(t, err)
+			_, err = s.Run(env(t, f, &shell{f: f, loginErr: errors.New("connection refused")}))
+			if !failure.Is(err, failure.Timeout) {
+				t.Fatalf("Run = %v, want timeout", err)
+			}
+			if got := strings.Contains(err.Error(), hint); got != tt.wantHint {
+				t.Errorf("Run = %v, hint shown %v, want %v", err, got, tt.wantHint)
+			}
+		})
 	}
 }
 
