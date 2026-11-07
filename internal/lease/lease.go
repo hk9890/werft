@@ -19,12 +19,15 @@ import (
 
 	"libvirt.org/go/libvirtxml"
 
+	"github.com/hk9890/werft/internal/console"
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/pipeline"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
+	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
 
@@ -80,10 +83,13 @@ type Env struct {
 	// Global takes the global lock.
 	Global func() (release func(), err error)
 	// View opens a viewer on the domain; nil opens none.
-	View  func(domain string)
-	Now   func() time.Time
-	Sleep func(time.Duration)
-	Out   io.Writer
+	View func(domain string)
+	// Secrets and Terminal read the disk password of a LUKS stock image.
+	Secrets  secret.Store
+	Terminal secret.Terminal
+	Now      func() time.Time
+	Sleep    func(time.Duration)
+	Out      io.Writer
 }
 
 func (e Env) printf(format string, args ...any) { _, _ = fmt.Fprintf(e.Out, format+"\n", args...) }
@@ -114,6 +120,10 @@ func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
 	if err != nil {
 		return Lease{}, failure.Wrap(failure.Failed, err, "the domain definition of %s", rec.Name)
 	}
+	password, err := diskPassword(e, rec)
+	if err != nil {
+		return Lease{}, err
+	}
 	l, err = reserve(e, rec, owner, tmpl)
 	if err != nil {
 		return Lease{}, err
@@ -131,6 +141,11 @@ func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
 		e.View(l.Domain)
 	}
 	r := (&pipeline.Run{Ctx: e.Ctx, Sleep: e.Sleep}).Init()
+	if rec.LUKS {
+		if err = steps.TypeDiskPassword(r.Ctx, e.H, l.Domain, password, r.Sleep, e.Out); err != nil {
+			return l, err
+		}
+	}
 	if l.Address, err = address(e, r, l.Domain, rec.Systemd); err != nil {
 		return l, err
 	}
@@ -143,7 +158,31 @@ func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
 	err = r.PollLogin(BootTimeout, "no SSH answer from "+l.Domain+" at "+l.Address, func() bool {
 		return shell.Run(r.Ctx, guest.Addr{User: l.User, Host: l.ID}, "true", nil, io.Discard, io.Discard) == nil
 	})
+	if rec.LUKS && failure.Is(err, failure.Timeout) {
+		err = failure.Wrap(failure.Timeout, err, "the disk can have refused the typed password, and nothing types it twice; check the disk password of %s", rec.Image)
+	}
 	return l, err
+}
+
+// diskPassword reads the disk password of a LUKS stock image before the
+// lease changes anything: from the pass entry of the record, else at the
+// terminal. An agent has no terminal, so its lease needs the pass entry and
+// an unlocked GPG agent; else it fails with secret_unavailable.
+func diskPassword(e Env, rec image.Record) (string, error) {
+	if !rec.LUKS {
+		return "", nil
+	}
+	spec := secret.Spec{Pass: rec.DiskPasswordPass, Prompt: "Disk password of " + rec.Name}
+	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
+		e.printf("The disk password of %s %s", rec.Name, note)
+	})
+	if err != nil && rec.DiskPasswordPass == "" {
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no pass entry, so only a terminal gives the password; seal it again with guest_password.pass in the recipe of %s", rec.Name, rec.Image)
+	}
+	if err != nil {
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and pass gives its password only when the GPG agent is unlocked; ask the user to unlock the password store, for example by running pass show %s once, then lease again; do not print or ask for the password yourself", rec.Name, rec.DiskPasswordPass)
+	}
+	return v, console.Typeable(v)
 }
 
 // reserve makes the lease directory with its key pair, the overlay, and the

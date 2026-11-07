@@ -13,9 +13,12 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/hk9890/werft/internal/config"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/lease"
+	"github.com/hk9890/werft/internal/recipe"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 )
 
@@ -48,6 +51,12 @@ func (c *cli) cmdSeal(args []string) error {
 	if err != nil {
 		return err
 	}
+	var spec secret.Spec
+	if s.LUKS {
+		if spec, err = diskPasswordSpec(cfg, s); err != nil {
+			return err
+		}
+	}
 	if err := c.confirm(yes, fmt.Sprintf("Seal resets %s to '%s'. Everything written since is lost. Seal it?", name, label)); err != nil {
 		return err
 	}
@@ -66,8 +75,9 @@ func (c *cli) cmdSeal(args []string) error {
 		Ctx: ctx, H: h, Shell: shell, Key: key,
 		Pool: cfg.Pool, PoolPath: cfg.PoolPath(), Catalog: dir.Images(),
 		User: u.Username, WerftKey: publicKey(dir.SSHKey() + ".pub"),
-		Global: globalLock(dir),
-		Now:    time.Now, Out: c.stderr,
+		Global:       globalLock(dir),
+		DiskPassword: spec, Secrets: secret.Pass{}, Terminal: prompter{c},
+		Now: time.Now, Out: c.stderr,
 	})
 	if err != nil {
 		return err
@@ -76,6 +86,23 @@ func (c *cli) cmdSeal(args []string) error {
 		_, _ = fmt.Fprintf(w, "%s sealed: image %s, tier %s, version %s\n", rec.Name, rec.Image, rec.Tier, rec.Version)
 	})
 	return nil
+}
+
+// diskPasswordSpec says where the disk password of the LUKS build VM of s
+// comes from: guest_password of the recipe of its image, as provision reads
+// it, else the terminal.
+func diskPasswordSpec(cfg config.Config, s *image.Seal) (secret.Spec, error) {
+	var spec secret.Spec
+	if path := cfg.RecipeFor(s.Image); path != "" {
+		var err error
+		if spec, err = recipe.GuestPassword(path); err != nil {
+			return secret.Spec{}, err
+		}
+	}
+	if spec.Prompt == "" {
+		spec.Prompt = "Disk password of " + s.BuildVM
+	}
+	return spec, nil
 }
 
 // publicKey is the type and base64 of the public key at path, without the

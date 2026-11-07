@@ -117,7 +117,7 @@ real adapters.
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
 | LUKS marker | domain description line, same format as `vm` writes | libvirt |
 | Guest systemd version of a build VM | domain description line `werft: the guest has systemd <N>`, written by `detect-guest`; a reset point holds the line of its time | libvirt |
-| Image records (user, guest family, systemd version, versions, the domain definition leases start from), and the names of the pruned versions | `~/.local/state/werft/images.toml`, written by `seal` and `images --prune` | werft |
+| Image records (user, guest family, systemd version, versions, the domain definition leases start from, the LUKS marker and the `pass` entry of the disk password), and the names of the pruned versions | `~/.local/state/werft/images.toml`, written by `seal` and `images --prune` | werft |
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/`: `id_ed25519`, `id_ed25519.pub`, `ssh_config` | werft, removed on release |
 | werft key for build VMs (installed by `prepare`), build VM `ssh_config` | `~/.local/state/werft/id_ed25519`, `~/.local/state/werft/ssh_config` | werft |
 | Provision logs | `~/.local/state/werft/logs/provision-<name>-<YYYYmmdd-HHMMSS>.log` | werft |
@@ -139,11 +139,13 @@ the questions: a check and the plans of `migrate` and `seal` change nothing (`vi
 ## Lease lifecycle
 
 `werft lease <image> [--tier plain|full] [--owner o] [--view]` runs these steps (`lease.Start` in
-`internal/lease/lease.go`). The flags can stand before or after the image. The disk password of
-step 6 is not built yet.
+`internal/lease/lease.go`). The flags can stand before or after the image.
 
 1. **Resolve.** Image and tier give the newest stock version in `images.toml`. A record without a
    domain definition (sealed before leases existed) fails with `unsupported` and names the seal.
+   When the record carries the LUKS marker, read the disk password now, before any change: from
+   the `pass` entry the record names, else at a TTY. An agent has no TTY, so its lease needs that
+   entry and an unlocked GPG agent. Without both, the lease fails with `secret_unavailable`.
 2. **Admit.** Take the global lock. Find the stock record in `images.toml` again; a version that
    `werft images --prune` deleted after step 1 fails with `not_found` (`lease.stillThere`). Fail
    (`lease.admit`) with `no_capacity` when host memory less committed memory less the `<memory>`
@@ -187,8 +189,9 @@ step 6 is not built yet.
 
    Then release the global lock. Steps 2 to 5 take seconds and do not include the boot.
 6. **Boot.** `DomainCreateWithFlags`. The domain keeps its graphics device, but no viewer opens
-   unless `--view`. When the stock image carries the LUKS marker, type the disk password as the
-   `boot` step does; it comes from `pass`, so a lease without a TTY needs the GPG agent unlocked.
+   unless `--view`. When the record carries the LUKS marker, type the disk password of step 1
+   once, as the `boot` step does (`steps.TypeDiskPassword`). The password is never in JSON, in an
+   argument or in a log.
 7. **Address.** vsock CID from the live XML when the image record says the guest has systemd 256
    or later. Else the DHCP lease for the MAC (`NetworkGetDhcpLeases`), within the boot timeout.
    Write the lease `ssh_config`: `Host <id>` with that address, the image's user and the lease key.
@@ -362,11 +365,14 @@ Both tiers run the same steps:
 
 1. Check before any change: the label exists, and the build VM is shut off and passes the
    raw-NVRAM guard. The revert brings back the definition the reset point holds, so check that one
-   (`SnapshotXML`): one writable disk in a storage pool, a UEFI NVRAM, and no LUKS marker. When
-   its description records a systemd version below 256, refuse with `unsupported`: the login of
-   step 5 cannot work, so seal stops before the revert and before any copy. A reset point without
-   that line (taken before `detect-guest` recorded it) is not checked, and seal runs. Then
-   confirm: the revert loses what the build VM wrote since the label.
+   (`SnapshotXML`): one writable disk in a storage pool and a UEFI NVRAM. Read its LUKS marker
+   too. When its description records a systemd version below 256, refuse with `unsupported`: the
+   login of step 5 cannot work, so seal stops before the revert and before any copy. A reset point
+   without that line (taken before `detect-guest` recorded it) is not checked, and seal runs. Then
+   confirm: the revert loses what the build VM wrote since the label. With the LUKS marker, read
+   the disk password before the revert, as `provision` reads the guest password: from the `pass`
+   entry of `guest_password` in the recipe that `config.toml` gives the image, else at a TTY.
+   Without both, seal fails with `secret_unavailable` and changes nothing.
 2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
    from the checked definition fails the run before anything is copied.
 3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` past
@@ -379,10 +385,12 @@ Both tiers run the same steps:
    `sshd-vsock@` drop-in that runs `ssh-keygen -A`, because a cloud image has no host keys.
 4. Without the global lock, copy disk and NVRAM to the stock volumes with
    `StorageVolCreateXMLFrom`; the copy is flat, with no internal snapshots.
-5. Boot the temporary domain and log in as root over vsock with the key of the run. This needs no
-   guest password, and needs systemd 256 or later. When the login times out and the reset point
-   has no systemd line, the `timeout` error adds a hint: run `werft prepare <vm>` and take the
-   reset point again, so seal can check the version before the copy.
+5. Boot the temporary domain. With the LUKS marker, type the disk password once, as the `boot`
+   step does. Log in as root over vsock with the key of the run. This needs no guest password, and
+   needs systemd 256 or later. When the login times out, the `timeout` error adds a hint. When
+   the reset point has no systemd line, the hint says: run `werft prepare <vm>` and take the reset
+   point again, so seal can check the version before the copy. With the LUKS marker, the hint
+   says that the disk can have refused the typed password.
 6. Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
    systemd version; empty `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
    werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest
@@ -395,14 +403,16 @@ Both tiers run the same steps:
    instance whose drop-in makes new host keys, and every lease of the image would share them.
    Undefine the temporary domain, keep the volumes under the stock name, and append the record to
    `images.toml` under the global lock. The record keeps the definition of the temporary domain
-   without its credentials; leases start from it, so they do not depend on the build VM.
+   without its credentials; leases start from it, so they do not depend on the build VM. With the
+   LUKS marker, the record also keeps the marker and the name of the `pass` entry of the disk
+   password, never the password.
 
 A failed run removes the temporary domain and both volumes. When that removal fails, the error
 names what is left.
 
 `werft images --json` gives every field of each record but the domain definition: name, image,
-tier, version, date, source build VM and label, pool, volumes, user, guest family and systemd
-version. The text table shows name, image, tier, version, date and user.
+tier, version, date, source build VM and label, pool, volumes, user, guest family, systemd
+version, the LUKS marker and the `pass` entry of the disk password. The text table shows name, image, tier, version, date and user.
 
 `TestSealLive` in `cmd/werft/image_live_test.go` proves the result. It reads the stock disk with
 `debugfs` and finds no host keys, no hostname and an empty machine-id. It boots two overlays of the
