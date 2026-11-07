@@ -13,6 +13,7 @@ import (
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/state"
+	"github.com/hk9890/werft/internal/virt"
 )
 
 // namePattern matches the domain name of a lease with prefix:
@@ -50,7 +51,8 @@ type found struct {
 // scan is every domain with the lease name pattern of e.Prefix and werft
 // lease metadata, whatever state directory it names. The address and user
 // come from the lease ssh_config, which a lease that still boots does not
-// have yet.
+// have yet. A lease that does not run has no address: a start can give it
+// a new one.
 func scan(e Env) ([]found, error) {
 	domains, err := e.H.Domains()
 	if err != nil {
@@ -74,13 +76,23 @@ func scan(e Env) ([]found, error) {
 		if err := xml.Unmarshal([]byte(text), &r); err != nil {
 			return nil, failure.Wrap(failure.Failed, err, "the lease metadata of %s", d.Name)
 		}
-		f := found{Lease: Lease{ID: m[3], Domain: d.Name, Image: m[1], Tier: m[2], Stock: r.Stock, Owner: r.Owner, state: r.State}, owner: ownership(r.State, e.Dir)}
+		st, err := e.H.DomainState(d.Name)
+		if failure.Is(err, failure.NotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		f := found{Lease: Lease{ID: m[3], Domain: d.Name, Image: m[1], Tier: m[2], Stock: r.Stock, Owner: r.Owner, State: st.String(), state: r.State}, owner: ownership(r.State, e.Dir)}
 		f.Created, _ = time.Parse(time.RFC3339, r.Created)
 		f.Expiry, _ = time.Parse(time.RFC3339, r.Expiry)
 		dir := e.Dir.Lease(f.ID)
 		f.Key, f.SSHConfig = filepath.Join(dir, "id_ed25519"), filepath.Join(dir, "ssh_config")
 		f.SSH = "ssh -F " + f.SSHConfig + " " + f.ID
 		f.Address, f.User = readHostConfig(f.SSHConfig)
+		if st != virt.StateRunning {
+			f.Address = ""
+		}
 		all = append(all, f)
 	}
 	return all, nil

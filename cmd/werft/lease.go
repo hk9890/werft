@@ -195,9 +195,9 @@ func (c *cli) cmdLeases(args []string) error {
 			return
 		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(tw, "ID\tOWNER\tIMAGE\tTIER\tADDRESS\tEXPIRY")
+		_, _ = fmt.Fprintln(tw, "ID\tOWNER\tIMAGE\tTIER\tSTATE\tADDRESS\tEXPIRY")
 		for _, l := range leases {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", l.ID, l.Owner, l.Image, l.Tier, l.Address, l.Expiry.Local().Format("2006-01-02 15:04"))
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", l.ID, l.Owner, l.Image, l.Tier, l.State, l.Address, l.Expiry.Local().Format("2006-01-02 15:04"))
 		}
 		_ = tw.Flush()
 	})

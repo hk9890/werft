@@ -50,6 +50,7 @@ type Lease struct {
 	Tier      string    `json:"tier"`
 	Stock     string    `json:"stock"`
 	Owner     string    `json:"owner"`
+	State     string    `json:"state"`
 	User      string    `json:"user"`
 	Address   string    `json:"address"`
 	Key       string    `json:"key"`
@@ -128,6 +129,7 @@ func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
 	if err = e.H.StartDomain(l.Domain); err != nil {
 		return l, err
 	}
+	l.State = virt.StateRunning.String()
 	if e.View != nil {
 		e.View(l.Domain)
 	}

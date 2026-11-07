@@ -10,6 +10,7 @@ import (
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/state"
+	"github.com/hk9890/werft/internal/virt"
 	"github.com/hk9890/werft/internal/virttest"
 )
 
@@ -161,8 +162,23 @@ func TestList(t *testing.T) {
 	l := leases[0]
 	if l.ID != want.ID || l.Domain != want.Domain || l.Image != "vm" || l.Tier != "plain" || l.Stock != want.Stock ||
 		l.Owner != "agent" || l.User != "hans" || l.Address != "vsock/3" || l.Key != want.Key ||
-		l.SSHConfig != want.SSHConfig || l.SSH != want.SSH || !l.Created.Equal(want.Created) || !l.Expiry.Equal(want.Expiry) {
+		l.SSHConfig != want.SSHConfig || l.SSH != want.SSH || !l.Created.Equal(want.Created) || !l.Expiry.Equal(want.Expiry) ||
+		l.State != "running" || want.State != "running" {
 		t.Errorf("List = %+v\nwant %+v", l, want)
+	}
+}
+
+// TestListShutOff: a lease the guest powered off lists as shut off and
+// without the address of its last boot.
+func TestListShutOff(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l := startAt(t, e, e.Now())
+	f.SetState(l.Domain, virt.StateShutOff)
+	leases, err := lease.List(e)
+	must(t, err)
+	if len(leases) != 1 || leases[0].State != "shut off" || leases[0].Address != "" {
+		t.Errorf("List = %+v, want one lease in state shut off without an address", leases)
 	}
 }
 
