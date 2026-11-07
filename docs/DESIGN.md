@@ -198,15 +198,16 @@ step 6 is not built yet.
    creation time and the expiry.
 
 A lease that fails after step 3, SIGINT included, is released before werft exits; the error keeps
-the kind of the failure. When the domain started (step 6), werft first saves its screen
-(`virt.Hypervisor.Screenshot`) to `evidence/<YYYYmmdd-HHMMSS>-<domain>.png` in the state directory
-(`.ppm` when QEMU gives PPM, `.bin` for an unknown type), and the error names the file
-(`lease.saveScreen`). The time is UTC, so the names sort by age also when the local clock goes
-back. werft then deletes all but the `lease.KeepEvidence` (10) newest files there, so the directory
-does not grow. It never deletes the file it just wrote. The
-screen and not the serial console: the lease console is a pty with no log file (step 5), and the
-screen shows also a guest whose console is graphical. A screenshot that fails does not stop the
-release; the error says so. When an overlay delete fails and no domain was defined, `werft release`
+the kind of the failure. When the domain started (step 6) and the lease failed by itself, werft
+first saves its screen (`virt.Hypervisor.Screenshot`) to `evidence/<YYYYmmdd-HHMMSS>-<domain>.png`
+in the state directory (`.ppm` when QEMU gives PPM, `.bin` for an unknown type), and the error
+names the file (`lease.saveScreen`). The time is UTC, so the names sort by age also when the local
+clock goes back. werft then deletes all but the `lease.KeepEvidence` (10) newest files there, so the
+directory does not grow. It never deletes the file it just wrote. The screen and not the serial
+console: the lease console is a pty with no log file (step 5), and the screen shows also a guest
+whose console is graphical. A screenshot that fails does not stop the release; the error says so.
+After SIGINT werft saves no screen, and the error names no file: the user stopped the boot, so the
+screen shows no failure. When an overlay delete fails and no domain was defined, `werft release`
 cannot find the overlay, so the error names the `virsh vol-delete` command that removes it.
 
 The owner is the `--owner` flag, else `$WERFT_OWNER`, else `$USER`. It is a label for `werft

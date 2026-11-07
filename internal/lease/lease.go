@@ -123,7 +123,7 @@ func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
 	defer func() {
 		if err != nil {
 			note := ""
-			if booted {
+			if booted && e.Ctx.Err() == nil {
 				note = evidence(e, l.Domain)
 			}
 			err = abandon(e, l, note, err)

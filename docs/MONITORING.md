@@ -77,8 +77,8 @@ or console device with a file source gets a pty, and every `<log>` goes. Watch t
 ## Lease boot evidence
 
 A lease that started but did not boot (no address, no SSH answer, SIGINT) is released at once.
-Before the release, werft saves the screen of the domain (`lease.saveScreen` in
-`internal/lease/evidence.go`).
+When the lease failed by itself, werft saves the screen of the domain before the release
+(`lease.saveScreen` in `internal/lease/evidence.go`).
 
 - Get the path from the error: `its last screen is in <path>` (`error.message` under `--json`).
   When the screenshot failed, the error says `no last screen saved:` and why.
@@ -87,6 +87,7 @@ Before the release, werft saves the screen of the domain (`lease.saveScreen` in
 - werft keeps the 10 newest files (`lease.KeepEvidence`) and deletes the older ones at each save.
   Copy a file elsewhere to keep it.
 - A lease that failed before its domain started has no screen, and its error names none.
+- A lease stopped by SIGINT (Ctrl-C) has no screen, and its error names none.
 
 ## libvirt domain logs
 

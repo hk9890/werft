@@ -1,6 +1,7 @@
 package lease_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -146,5 +147,28 @@ func TestStartSavesAnUnknownImageAsBin(t *testing.T) {
 	})
 	if _, err := os.Stat(filepath.Join(dir, "20261103-100000-werft-vm-plain-abc123.bin")); err != nil {
 		t.Errorf("no .bin screen: %v", err)
+	}
+}
+
+// TestStartSavesNoScreenAfterACancel: a lease stopped by a cancel, as by
+// Ctrl-C, saves no screen, and the error names none.
+func TestStartSavesNoScreenAfterACancel(t *testing.T) {
+	f := world(t)
+	dir, err := failBoot(t, f, func(e *lease.Env) {
+		ctx, cancel := context.WithCancel(context.Background())
+		e.Ctx = ctx
+		e.Sleep = func(time.Duration) {
+			f.SetScreenshot("werft-vm-plain-abc123", "image/png", []byte("\x89PNG screen"))
+			cancel()
+		}
+	})
+	if err == nil || strings.Contains(err.Error(), "screen") {
+		t.Errorf("Start = %v, want an error without a screen", err)
+	}
+	if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
+		t.Errorf("evidence directory exists: %v", serr)
+	}
+	if domains, _ := f.Domains(); len(domains) != 0 {
+		t.Errorf("domains left: %v", domains)
 	}
 }

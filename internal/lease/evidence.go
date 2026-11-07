@@ -12,9 +12,9 @@ import (
 // keeps: the newest.
 const KeepEvidence = 10
 
-// evidence saves the last screen of a lease that did not boot, before the
-// release destroys it, and is the note the error gets: where the screen is,
-// or why it is not there.
+// evidence saves the last screen of a lease that did not boot by itself,
+// before the release destroys it, and is the note the error gets: where the
+// screen is, or why it is not there. A cancelled lease gets no screen.
 func evidence(e Env, domain string) string {
 	path, err := saveScreen(e, domain)
 	if err != nil {
