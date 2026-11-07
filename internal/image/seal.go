@@ -408,8 +408,8 @@ func (s *Seal) seal(e Env, rec *Record, password string) error {
 	err = r.PollLogin(bootTimeout, "no SSH answer from "+rec.Name+" at "+addr.Host, func() bool {
 		return e.Shell.Run(r.Ctx, addr, "true", nil, io.Discard, io.Discard) == nil
 	})
-	if err != nil && s.LUKS {
-		return failure.Wrap(failure.KindOf(err), err, "if its console asks for the disk password again, the disk refused it; nothing types it twice (%s)", steps.ViewerCommand(rec.Name))
+	if s.LUKS && failure.Is(err, failure.Timeout) {
+		return failure.Wrap(failure.Timeout, err, "the disk can have refused the typed password, and nothing types it twice; check the disk password of %s", s.BuildVM)
 	}
 	if err != nil {
 		return err

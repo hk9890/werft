@@ -123,22 +123,24 @@ func boot(r *pipeline.Run) error {
 	if !r.LUKS {
 		return nil
 	}
-	return TypeDiskPassword(r.Ctx, r.H, r.Domain, r.Secret(pipeline.GuestPassword), r.Sleep, r.Out)
+	err := TypeDiskPassword(r.Ctx, r.H, r.Domain, r.Secret(pipeline.GuestPassword), r.Sleep, r.Out)
+	if failure.Is(err, failure.Timeout) {
+		return failure.Wrap(failure.Timeout, err, "look at its console: %s", ViewerCommand(r.Domain))
+	}
+	return err
 }
 
 // TypeDiskPassword waits for the disk password prompt at the console of the
 // started domain and types password once: keys sent before the prompt are
 // lost, and cryptsetup allows few tries. Seal and lease use it too. out
-// gets progress, never the password.
+// gets progress, never the password. The error names no viewer: seal and
+// lease remove the domain after a failure.
 func TypeDiskPassword(ctx context.Context, h virt.Hypervisor, domain, password string, sleep func(time.Duration), out io.Writer) error {
 	_, _ = fmt.Fprintf(out, "Waiting for the disk password prompt of %s\n", domain)
 	p := console.DefaultPrompt
 	p.Sleep = sleep
 	if err := console.WaitForPrompt(ctx, h, domain, p); err != nil {
-		if !failure.Is(err, failure.Timeout) {
-			return err
-		}
-		return failure.Wrap(failure.Timeout, err, "look at its console: %s", ViewerCommand(domain))
+		return err
 	}
 	_, _ = fmt.Fprintf(out, "Typing the disk password of %s at its console\n", domain)
 	return console.Type(h, domain, password)

@@ -159,8 +159,8 @@ func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
 	err = r.PollLogin(BootTimeout, "no SSH answer from "+l.Domain+" at "+l.Address, func() bool {
 		return shell.Run(r.Ctx, guest.Addr{User: l.User, Host: l.ID}, "true", nil, io.Discard, io.Discard) == nil
 	})
-	if err != nil && rec.LUKS {
-		err = failure.Wrap(failure.KindOf(err), err, "if its console asks for the disk password again, the disk refused it; nothing types it twice")
+	if rec.LUKS && failure.Is(err, failure.Timeout) {
+		err = failure.Wrap(failure.Timeout, err, "the disk can have refused the typed password, and nothing types it twice; check the disk password of %s", rec.Image)
 	}
 	return l, err
 }
@@ -178,7 +178,7 @@ func diskPassword(e Env, rec image.Record) (string, error) {
 		e.printf("The disk password of %s %s", rec.Name, note)
 	})
 	if err != nil && rec.DiskPasswordPass == "" {
-		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no pass entry, so only a terminal gives the password; seal it again with guest_password.pass in the recipe of %s", rec.Name, rec.Source)
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no pass entry, so only a terminal gives the password; seal it again with guest_password.pass in the recipe of %s", rec.Name, rec.Image)
 	}
 	if err != nil {
 		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk; pass gives its password only when the GPG agent is unlocked, and without pass werft asks at a terminal", rec.Name)

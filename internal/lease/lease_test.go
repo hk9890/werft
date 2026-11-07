@@ -510,6 +510,38 @@ func TestStartWithoutTheDiskPassword(t *testing.T) {
 	}
 }
 
+func TestStartRefusesAnUntypeablePassword(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	e.Secrets, e.Terminal = store{"vm/guest-password": "pässword"}, noTerminal{}
+	before := len(f.Calls())
+	if _, err := lease.Start(e, luksRecord(), "agent"); !failure.Is(err, failure.Usage) || strings.Contains(err.Error(), "pässword") {
+		t.Fatalf("Start = %v, want usage without the password", err)
+	}
+	for _, c := range f.Calls()[before:] {
+		t.Errorf("Start with an untypeable password called libvirt: %s", c)
+	}
+	if _, err := os.Stat(e.Dir.Leases()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Start with an untypeable password made %s: %v", e.Dir.Leases(), err)
+	}
+}
+
+// TestStartOfARefusedPasswordNamesNoRemovedDomain: the failed start removes
+// the lease domain, so the error must not send the user to its console.
+func TestStartOfARefusedPasswordNamesNoRemovedDomain(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{})
+	e.H = screen{f}
+	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
+	_, err := lease.Start(e, luksRecord(), "agent")
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "refused the typed password") {
+		t.Fatalf("Start = %v, want a timeout that names the password", err)
+	}
+	if strings.Contains(err.Error(), "virt-viewer") {
+		t.Errorf("Start names the console of the removed domain: %v", err)
+	}
+}
+
 // TestStartOfAPlainImageTypesNothing: an image without the LUKS marker
 // reads no secret.
 func TestStartOfAPlainImageTypesNothing(t *testing.T) {

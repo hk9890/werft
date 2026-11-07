@@ -7,8 +7,42 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hk9890/werft/internal/config"
+	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/virt"
 )
+
+// TestDiskPasswordSpecReadsTheRecipeOfTheImage: both tiers read the
+// recipe config.toml gives the image, so the record of a sealed LUKS image
+// names its pass entry, and an agent lease can read the password.
+func TestDiskPasswordSpecReadsTheRecipeOfTheImage(t *testing.T) {
+	dir := t.TempDir()
+	withEntry := filepath.Join(dir, "omarchy.toml")
+	if err := os.WriteFile(withEntry, []byte("[guest_password]\npass = \"x/y\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(dir, "global.toml")
+	if err := os.WriteFile(global, []byte("[guest_password]\npass = \"global\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Recipe: global, Recipes: map[string]string{"omarchy-4-0": withEntry}}
+	for _, s := range []*image.Seal{
+		{BuildVM: "omarchy-4-0", Image: "omarchy-4-0", Tier: "plain"},
+		{BuildVM: "omarchy-4-0-full", Image: "omarchy-4-0", Tier: "full"},
+	} {
+		spec, err := diskPasswordSpec(cfg, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Pass != "x/y" || !strings.Contains(spec.Prompt, s.BuildVM) {
+			t.Errorf("spec of %s = %+v, want pass x/y and a prompt that names it", s.BuildVM, spec)
+		}
+	}
+	spec, err := diskPasswordSpec(config.Config{}, &image.Seal{BuildVM: "vm", Image: "vm", Tier: "plain"})
+	if err != nil || spec.Pass != "" || spec.Prompt == "" {
+		t.Errorf("spec without a recipe = %+v, %v, want a prompt only", spec, err)
+	}
+}
 
 const imagesTOML = `[[image]]
 name = "ubuntu-26-04-plain-20261102"

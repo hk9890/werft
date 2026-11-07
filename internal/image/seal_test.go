@@ -466,3 +466,75 @@ func TestSealRefusesAnUntypeablePassword(t *testing.T) {
 		t.Errorf("Run changed something: %q", calls)
 	}
 }
+
+// redefine is the fake whose revert leaves the build VM with the
+// definition xml, not the one of the reset point.
+type redefine struct {
+	*virttest.Fake
+	xml string
+}
+
+func (r redefine) RevertSnapshot(domain, name string) error {
+	if err := r.Fake.RevertSnapshot(domain, name); err != nil {
+		return err
+	}
+	d, err := r.Domain(domain)
+	if err != nil {
+		return err
+	}
+	_, err = r.DefineDomain(strings.Replace(r.xml, "<name>vm</name>", "<name>vm</name><uuid>"+d.UUID+"</uuid>", 1))
+	return err
+}
+
+// TestSealRefusesALUKSMarkerTheRevertChanged: the password is read for the
+// marker of the reset point; a definition after the revert with another
+// marker would boot without the password or type it at no prompt.
+func TestSealRefusesALUKSMarkerTheRevertChanged(t *testing.T) {
+	tests := map[string]struct{ atResetPoint, afterRevert string }{
+		"marker lost":   {luksVM, buildVM},
+		"marker gained": {buildVM, luksVM},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := worldOf(t, tt.atResetPoint)
+			e := env(t, f, &shell{f: f})
+			e.H = redefine{f, tt.afterRevert}
+			e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "vm/guest-password"}, store{"vm/guest-password": "pw"}, noTerminal{}
+			s, err := image.Plan(f, "vm", "provision-base")
+			must(t, err)
+			if _, err := s.Run(e); !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), "LUKS marker") {
+				t.Fatalf("Run = %v, want failed for the LUKS marker", err)
+			}
+			for _, c := range f.Calls() {
+				if strings.HasPrefix(c, "CreateVolumeFrom ") || strings.HasPrefix(c, "DefineDomain vm-") || strings.HasPrefix(c, "StartDomain ") {
+					t.Errorf("Run went on after the changed marker: %s", c)
+				}
+			}
+		})
+	}
+}
+
+// silent is a guest that never answers SSH, as after a refused password.
+type silent struct{}
+
+func (silent) Run(context.Context, guest.Addr, string, io.Reader, io.Writer, io.Writer) error {
+	return errors.New("connection refused")
+}
+
+// TestSealOfARefusedPasswordNamesNoRemovedDomain: the failed seal removes
+// the temporary domain, so the error must not send the user to its console.
+func TestSealOfARefusedPasswordNamesNoRemovedDomain(t *testing.T) {
+	f := worldOf(t, luksVM)
+	e := env(t, f, silent{})
+	e.H = screen{f}
+	e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "vm/guest-password"}, store{"vm/guest-password": "pw"}, noTerminal{}
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	_, err = s.Run(e)
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "refused the typed password") {
+		t.Fatalf("Run = %v, want a timeout that names the password", err)
+	}
+	if strings.Contains(err.Error(), "virt-viewer") {
+		t.Errorf("Run names the console of the removed domain: %v", err)
+	}
+}
