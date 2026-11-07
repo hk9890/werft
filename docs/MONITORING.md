@@ -30,6 +30,8 @@ writes no log: its output is stderr only.
   `another werft run works on <name>`. Find the holder with `lsof ~/.local/state/werft/locks/<name>.lock`.
 - `images.toml` exists after the first `seal`; `werft images --json` reads it. `leases/<id>/`
   exists from `werft lease` until the release or the reap of the lease.
+- `evidence/` holds the last screen of each lease that did not boot; see
+  [Lease boot evidence](#lease-boot-evidence).
 
 ## Domain state, reset points, addresses
 
@@ -76,6 +78,21 @@ Use these only on pool `werft-test` and domains named `werft-test-*`.
 A lease writes its console to no file, also when its stock image does: in `domxml.Lease`, a serial
 or console device with a file source gets a pty, and every `<log>` goes. Watch the console of a running lease with
 `virsh -c qemu:///system console <lease domain>`; type nothing into it.
+
+## Lease boot evidence
+
+A lease that started but did not boot (no address, no SSH answer, SIGINT) is released at once.
+When the lease failed by itself, werft saves the screen of the domain before the release
+(`lease.saveScreen` in `internal/lease/evidence.go`).
+
+- Get the path from the error: `its last screen is in <path>` (`error.message` under `--json`).
+  When the screenshot failed, the error says `no last screen saved:` and why.
+- The file is `~/.local/state/werft/evidence/<YYYYmmdd-HHMMSS>-<domain>.png`, `.ppm` when QEMU
+  gives PPM, `.bin` for an unknown image type. The time is UTC. List them, newest first: `ls -r ~/.local/state/werft/evidence/`.
+- werft keeps the 10 newest files (`lease.KeepEvidence`) and deletes the older ones at each save.
+  Copy a file elsewhere to keep it.
+- A lease that failed before its domain started has no screen, and its error names none.
+- A lease stopped by SIGINT (Ctrl-C) has no screen, and its error names none.
 
 ## libvirt domain logs
 

@@ -121,6 +121,7 @@ real adapters.
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/`: `id_ed25519`, `id_ed25519.pub`, `ssh_config` | werft, removed on release |
 | werft key for build VMs (installed by `prepare`), build VM `ssh_config` | `~/.local/state/werft/id_ed25519`, `~/.local/state/werft/ssh_config` | werft |
 | Provision logs | `~/.local/state/werft/logs/provision-<name>-<YYYYmmdd-HHMMSS>.log` | werft |
+| Last screen of a lease that did not boot | `~/.local/state/werft/evidence/<YYYYmmdd-HHMMSS>-<domain>.png` (UTC), the 10 newest | werft |
 | Locks | `~/.local/state/werft/locks/` | werft |
 | Config | `~/.config/werft/config.toml` | user |
 | Recipes | setup repo; until then `examples/setup/` in werft | setup repo |
@@ -221,7 +222,16 @@ and fails with `usage` outside these bounds:
    creation time and the expiry.
 
 A lease that fails after step 3, SIGINT included, is released before werft exits; the error keeps
-the kind of the failure. When an overlay delete fails and no domain was defined, `werft release`
+the kind of the failure. When the domain started (step 6) and the lease failed by itself, werft
+first saves its screen (`virt.Hypervisor.Screenshot`) to `evidence/<YYYYmmdd-HHMMSS>-<domain>.png`
+in the state directory (`.ppm` when QEMU gives PPM, `.bin` for an unknown type), and the error
+names the file (`lease.saveScreen`). The time is UTC, so the names sort by age also when the local
+clock goes back. werft then deletes all but the `lease.KeepEvidence` (10) newest files there, so the
+directory does not grow. It never deletes the file it just wrote. The screen and not the serial
+console: the lease console is a pty with no log file (step 5), and the screen shows also a guest
+whose console is graphical. A screenshot that fails does not stop the release; the error says so.
+After SIGINT werft saves no screen, and the error names no file: the user stopped the boot, so the
+screen shows no failure. When an overlay delete fails and no domain was defined, `werft release`
 cannot find the overlay, so the error names the `virsh vol-delete` command that removes it.
 
 The owner is the `--owner` flag, else `$WERFT_OWNER`, else `$USER`. It is a label for `werft
