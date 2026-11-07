@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"syscall"
@@ -60,6 +61,10 @@ func (c *cli) cmdLease(args []string) error {
 	tier := fs.String("tier", image.Plain, "the tier of the stock image: plain or full")
 	owner := fs.String("owner", "", "the owner werft leases shows (default $WERFT_OWNER, else $USER)")
 	view := fs.Bool("view", false, "also open a virt-viewer window")
+	stock := fs.String("stock", "", "the stock version, such as ubuntu-26-04-plain-20261102 (default the newest)")
+	memory := fs.Uint64("memory", 0, "the memory of the VM in MiB, at least 256 (default that of the stock image)")
+	cpus := fs.Uint("cpus", 0, "the vCPUs of the VM (default those of the stock image)")
+	lifetime := fs.Duration("for", lease.Lifetime, "the lifetime of the lease, from 15m to 24h")
 	if err := c.parseFlags(fs, "lease", args); err != nil {
 		return err
 	}
@@ -77,11 +82,22 @@ func (c *cli) cmdLease(args []string) error {
 	if *tier != image.Plain && *tier != image.Full {
 		return failure.New(failure.Usage, "--tier is plain or full, not %q", *tier)
 	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["memory"] && (*memory < lease.MinMemory>>20 || *memory > math.MaxUint64>>20) {
+		return failure.New(failure.Usage, "--memory is a size in MiB, at least %d, not %d", lease.MinMemory>>20, *memory)
+	}
+	if set["cpus"] && *cpus == 0 {
+		return failure.New(failure.Usage, "--cpus is at least 1")
+	}
+	if *lifetime < lease.MinLifetime || *lifetime > lease.MaxLifetime {
+		return failure.New(failure.Usage, "--for is a duration from 15m to 24h, such as 2h, not %v", *lifetime)
+	}
 	dir, err := state.Root()
 	if err != nil {
 		return err
 	}
-	rec, err := lease.Resolve(dir.Images(), img, *tier)
+	rec, err := lease.Resolve(dir.Images(), img, *tier, *stock)
 	if err != nil {
 		return err
 	}
@@ -107,7 +123,7 @@ func (c *cli) cmdLease(args []string) error {
 			}
 		}
 	}
-	l, err := lease.Start(env, rec, leaseOwner(*owner))
+	l, err := lease.Start(env, rec, lease.Options{Owner: leaseOwner(*owner), Memory: *memory << 20, CPUs: *cpus, Lifetime: *lifetime})
 	if err != nil {
 		return err
 	}

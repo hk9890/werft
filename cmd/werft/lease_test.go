@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -278,10 +279,11 @@ func TestLeaseCommandArguments(t *testing.T) {
 	}
 }
 
-// TestLeaseOverTheBudget: memory_budget_mib in config.toml reaches the
-// admission of werft lease, and a lease over it exits 6 with kind
-// no_capacity, before it makes a volume or a domain.
-func TestLeaseOverTheBudget(t *testing.T) {
+// stockHost is a lifecycle host with 8 GiB of memory, memory_budget_mib
+// budget in config.toml, and the stock image of imagesTOML with a domain
+// definition of 2 GiB.
+func stockHost(t *testing.T, budget int) *lifecycleHost {
+	t.Helper()
 	state, config := t.TempDir(), t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("XDG_CONFIG_HOME", config)
@@ -297,7 +299,7 @@ func TestLeaseOverTheBudget(t *testing.T) {
 	}
 	for path, content := range map[string]string{
 		filepath.Join(state, "werft", "images.toml"):  imagesTOML + "domain = \"<domain type='kvm'><name>ubuntu-26-04</name><memory unit='GiB'>2</memory></domain>\"\n",
-		filepath.Join(config, "werft", "config.toml"): "memory_budget_mib = 7168\n",
+		filepath.Join(config, "werft", "config.toml"): fmt.Sprintf("memory_budget_mib = %d\n", budget),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -306,18 +308,86 @@ func TestLeaseOverTheBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	return lh
+}
+
+// noCapacity runs werft --json args on lh and wants exit 6 with kind
+// no_capacity and every one of want in the message, before the lease makes
+// a volume or a domain.
+func noCapacity(t *testing.T, lh *lifecycleHost, args []string, want ...string) {
+	t.Helper()
 	before := len(lh.fake.Calls())
-	r := lh.run("--json", "lease", "ubuntu-26-04")
+	r := lh.run(append([]string{"--json"}, args...)...)
 	var doc struct {
 		Error struct{ Kind, Message string } `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil || r.code != 6 || doc.Error.Kind != string(failure.NoCapacity) ||
-		!strings.Contains(doc.Error.Message, "the lease needs 2048 MiB") || !strings.Contains(doc.Error.Message, "keeps 7168 MiB") {
-		t.Fatalf("lease over the budget = %+v, %v; want exit 6 with kind no_capacity", r, err)
+	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil || r.code != 6 || doc.Error.Kind != string(failure.NoCapacity) {
+		t.Fatalf("werft %q = %+v, %v; want exit 6 with kind no_capacity", args, r, err)
+	}
+	for _, w := range want {
+		if !strings.Contains(doc.Error.Message, w) {
+			t.Errorf("werft %q: message %q lacks %q", args, doc.Error.Message, w)
+		}
 	}
 	if calls := lh.fake.Calls()[before:]; slices.ContainsFunc(calls, func(c string) bool {
 		return strings.HasPrefix(c, "CreateVolume") || strings.HasPrefix(c, "DefineDomain")
 	}) {
 		t.Errorf("a refused lease made a volume or a domain: %v", calls)
+	}
+}
+
+// TestLeaseOverTheBudget: memory_budget_mib in config.toml reaches the
+// admission of werft lease, and a lease over it exits 6 with kind
+// no_capacity, before it makes a volume or a domain.
+func TestLeaseOverTheBudget(t *testing.T) {
+	lh := stockHost(t, 7168)
+	noCapacity(t, lh, []string{"lease", "ubuntu-26-04"}, "the lease needs 2048 MiB", "keeps 7168 MiB")
+}
+
+// TestLeaseMemoryReachesAdmission: with --memory, admission counts the
+// requested memory, also for a stock version that --stock names. Control:
+// the 2 GiB of the stock definition fit the same budget, so the refusal
+// comes from the flag.
+func TestLeaseMemoryReachesAdmission(t *testing.T) {
+	lh := stockHost(t, 5120)
+	noCapacity(t, lh, []string{"lease", "ubuntu-26-04", "--memory", "4096"}, "the lease needs 4096 MiB", "keeps 5120 MiB")
+	noCapacity(t, lh, []string{"lease", "--stock", "ubuntu-26-04-plain-20261102", "--memory", "4096", "ubuntu-26-04"}, "the lease needs 4096 MiB")
+	lh = stockHost(t, 6144)
+	noCapacity(t, lh, []string{"lease", "ubuntu-26-04", "--memory", "4096"}, "the lease needs 4096 MiB")
+	lh.fake.FailOn("CreateVolume", failure.New(failure.Failed, "control: past admission"))
+	if r := lh.run("--json", "lease", "ubuntu-26-04"); !strings.Contains(r.stdout, "control: past admission") {
+		t.Errorf("control: a lease with the stock memory = %+v, want it past admission", r)
+	}
+}
+
+// TestLeaseOptionArguments: a flag out of its bounds exits 2 before werft
+// reads images.toml or calls libvirt; a --stock that does not exist exits
+// 3, and one of another tier exits 2.
+func TestLeaseOptionArguments(t *testing.T) {
+	lh := stockHost(t, 0)
+	before := len(lh.fake.Calls())
+	for _, tt := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"--memory", "8"}, 2, "--memory is a size in MiB, at least 256"},
+		{[]string{"--memory", "0"}, 2, "--memory is a size in MiB"},
+		{[]string{"--memory", "8G"}, 2, "invalid value"},
+		{[]string{"--cpus", "0"}, 2, "--cpus is at least 1"},
+		{[]string{"--cpus", "-1"}, 2, "invalid value"},
+		{[]string{"--for", "10m"}, 2, "--for is a duration from 15m to 24h"},
+		{[]string{"--for", "25h"}, 2, "--for is a duration"},
+		{[]string{"--for", "soon"}, 2, "invalid value"},
+		{[]string{"--stock", "ubuntu-26-04-plain-20261030"}, 3, "no stock version ubuntu-26-04-plain-20261030"},
+		{[]string{"--tier", "full", "--stock", "ubuntu-26-04-plain-20261102"}, 2, "is of image ubuntu-26-04 and tier plain"},
+	} {
+		args := append([]string{"--json", "lease", "ubuntu-26-04"}, tt.args...)
+		if r := lh.run(args...); r.code != tt.code || !strings.Contains(r.stdout, tt.want) {
+			t.Errorf("werft %q = %+v, want exit %d with %q", args, r, tt.code, tt.want)
+		}
+	}
+	if calls := lh.fake.Calls()[before:]; len(calls) > 0 {
+		t.Errorf("a refused lease called libvirt: %v", calls)
 	}
 }

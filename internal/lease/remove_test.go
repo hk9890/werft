@@ -16,7 +16,7 @@ import (
 func TestReleaseKeepsTheDomainWhenTheOverlayStays(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
-	l, err := lease.Start(e, record(), "agent")
+	l, err := lease.Start(e, record(), lease.Options{Owner: "agent"})
 	must(t, err)
 	f.FailOn("DeleteVolume", failure.New(failure.Failed, "injected"))
 	if _, err := lease.Release(f, e.Dir, "werft-", l.ID); err == nil {
@@ -47,7 +47,7 @@ func TestStartNamesALeftOverlay(t *testing.T) {
 	f := world(t)
 	f.FailOn("DefineDomain", failure.New(failure.Failed, "injected"))
 	f.FailOn("DeleteVolume", failure.New(failure.Failed, "injected"))
-	_, err := lease.Start(env(t, f, &shell{up: true}), record(), "agent")
+	_, err := lease.Start(env(t, f, &shell{up: true}), record(), lease.Options{Owner: "agent"})
 	if !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), "virsh -c qemu:///system vol-delete --pool werft werft-vm-plain-") ||
 		strings.Contains(err.Error(), "werft release") {
 		t.Errorf("Start = %v, want the vol-delete command of the overlay", err)
@@ -60,7 +60,7 @@ func TestStartWithoutVsockCID(t *testing.T) {
 	f := world(t)
 	f.FailOn("DomainXML", failure.New(failure.Failed, "injected"))
 	e := env(t, f, &shell{up: true})
-	if _, err := lease.Start(e, record(), "agent"); !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), "no vsock CID") {
+	if _, err := lease.Start(e, record(), lease.Options{Owner: "agent"}); !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), "no vsock CID") {
 		t.Fatalf("Start = %v, want failed for the missing vsock CID", err)
 	}
 	if domains, _ := f.Domains(); len(domains) != 0 {
@@ -82,7 +82,7 @@ func TestStartRefusesATakenLeaseDirectory(t *testing.T) {
 	e := env(t, f, &shell{up: true})
 	must(t, os.MkdirAll(e.Dir.Lease("abc123"), 0o700))
 	before := len(f.Calls())
-	if _, err := lease.Start(e, record(), "agent"); !failure.Is(err, failure.Conflict) {
+	if _, err := lease.Start(e, record(), lease.Options{Owner: "agent"}); !failure.Is(err, failure.Conflict) {
 		t.Fatalf("Start = %v, want conflict", err)
 	}
 	for _, c := range f.Calls()[before:] {

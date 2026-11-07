@@ -38,7 +38,18 @@ Rules:
   If the call was killed or its output is lost, find your lease by its
   owner in the output of werft --json leases and release it.
 
-  The default tier is plain. The JSON document has these fields:
+  The default tier is plain. The VM gets the memory, the vCPUs and the
+  stock version of the newest stock image, and lives 4 hours. Change them
+  with these flags:
+
+    werft --json lease ubuntu-26-04 --owner <your-name> --memory 8192 --cpus 4 --for 2h
+    werft --json lease ubuntu-26-04 --owner <your-name> --stock ubuntu-26-04-plain-20261102
+
+  --memory is in MiB, at least 256. --cpus is at least 1. --for is from
+  15m to 24h. --stock takes a "name" of werft --json images; it must be of
+  the image and tier you lease. More memory can fail with no_capacity.
+
+  The JSON document has these fields:
 
     id          the lease id; every other command takes it
     domain      the VM name
@@ -111,9 +122,9 @@ Rules:
 
 6. Watch the time
 
-  A lease lives 4 hours. No timer destroys it: the first werft lease,
-  leases, extend, release or reap after the expiry does. Add time before
-  the expiry:
+  A lease lives 4 hours, or the --for of the lease call. No timer
+  destroys it: the first werft lease, leases, extend, release or reap
+  after the expiry does. Add time before the expiry:
 
     werft --json extend <id> --for 2h
     werft --json leases
