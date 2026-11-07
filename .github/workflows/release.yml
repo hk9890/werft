@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       # Fails in seconds on a tag without a CHANGELOG.md section.
       - run: scripts/release-notes "$GITHUB_REF_NAME" > /dev/null
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
       # TestZshCompletes drives the completion script in zsh.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh
       - run: mise run quality
@@ -41,7 +41,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Go and GoReleaser at the versions .mise.toml pins; nothing else.
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           install_args: go goreleaser
       - name: Release notes from CHANGELOG.md
