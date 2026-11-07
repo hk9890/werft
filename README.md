@@ -79,7 +79,9 @@ werft seal ubuntu-26-04-full clean           # reset to clean, seal a copy as th
 werft images                                 # every stock version: image, tier, version, date
 ```
 
-`seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
+`seal` needs a guest with systemd 256 or later: it logs in as root over vsock. It refuses an
+older guest at once, when the reset point records its systemd version (`werft prepare` and the
+`detect-guest` step write it).
 
 To refresh both tiers after a change to the base, run these in order. New leases take the newest
 version; old versions stay.

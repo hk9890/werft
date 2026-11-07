@@ -79,7 +79,7 @@ func TestProvisionUbuntu(t *testing.T) {
 		t.Error("the stick is still attached")
 	}
 	desc, _ := w.fake.DomainDescription("testvm-full")
-	if desc != "my notes" {
+	if desc != "my notes\n"+systemd259 {
 		t.Errorf("the clone description is %q", desc)
 	}
 }

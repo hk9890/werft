@@ -125,6 +125,10 @@ func (s *Seal) inspect(h virt.Hypervisor, d *libvirtxml.Domain) error {
 	if domxml.HasLUKSMarker(domxml.Description(d)) {
 		return failure.New(failure.Unsupported, "the disk of %s asks for a password at boot; seal cannot type it yet", s.BuildVM)
 	}
+	if v, ok := domxml.SystemdOf(domxml.Description(d)); ok && v < guest.VsockSystemd {
+		return failure.New(failure.Unsupported, "the guest of %s at '%s' has systemd %d; seal logs in over vsock, which needs systemd %d or later",
+			s.BuildVM, s.Label, v, guest.VsockSystemd)
+	}
 	disk, err := onlyDisk(h, d)
 	if err != nil {
 		return err

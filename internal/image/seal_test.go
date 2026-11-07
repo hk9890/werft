@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
@@ -167,6 +168,33 @@ func TestPlanChecksTheResetPoint(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSealRefusesSystemdBelow256: seal logs in over vsock, which needs
+// systemd 256. A reset point that records systemd 255 is refused at once,
+// before the revert and any volume copy, and not after a boot and a wait.
+func TestSealRefusesSystemdBelow256(t *testing.T) {
+	withSystemd := func(v int) string {
+		return strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>my notes\n"+domxml.SystemdLine(v)+"</description>", 1)
+	}
+	f := worldOf(t, withSystemd(255))
+	before := len(f.Calls())
+	_, err := image.Plan(f, "vm", "provision-base")
+	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "has systemd 255") {
+		t.Fatalf("Plan = %v, want unsupported for systemd 255", err)
+	}
+	for _, c := range f.Calls()[before:] {
+		if !readOnly(c) {
+			t.Errorf("seal of a systemd 255 guest changed something: %s", c)
+		}
+	}
+
+	f = worldOf(t, withSystemd(256))
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	if _, err := s.Run(env(t, f, &shell{f: f})); err != nil {
+		t.Fatalf("seal of a systemd 256 guest: %v", err)
 	}
 }
 

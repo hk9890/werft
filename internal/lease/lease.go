@@ -35,8 +35,6 @@ const (
 	BootTimeout = 5 * time.Minute
 	// Namespace is the namespace of the werft metadata of a lease domain.
 	Namespace = "https://github.com/hk9890/werft/lease"
-	// vsockSystemd is the first systemd version with SSH over AF_VSOCK.
-	vsockSystemd = 256
 	// MinPoolFree is the free space a pool must have for the overlay of a
 	// new lease, which grows as the guest writes.
 	MinPoolFree = 1 << 30
@@ -300,7 +298,7 @@ func committed(h virt.Hypervisor) (uint64, error) {
 // address is vsock/<cid> when the guest has SSH over AF_VSOCK, else the IPv4
 // DHCP lease of its MAC.
 func address(e Env, r *pipeline.Run, domain string, systemd int) (string, error) {
-	if systemd >= vsockSystemd {
+	if systemd >= guest.VsockSystemd {
 		cid, _ := virt.DomainAddresses(e.H, domain)
 		if cid == "" {
 			return "", failure.New(failure.Failed, "the running %s has no vsock CID", domain)

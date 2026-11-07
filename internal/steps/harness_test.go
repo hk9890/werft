@@ -106,7 +106,7 @@ func newWorld(t *testing.T) *world {
 	must(t, os.WriteFile(w.key+".pub", []byte(werftPubKey+"\n"), 0o644))
 	must(t, os.WriteFile(w.userKey+".pub", []byte(userPubKey+"\n"), 0o644))
 	w.h = &recorder{Fake: w.fake, w: w}
-	w.shell = &shell{w: w, fail: map[string]bool{}, drop: map[string]bool{}}
+	w.shell = &shell{w: w, systemd: 259, fail: map[string]bool{}, drop: map[string]bool{}}
 	w.host = &host{w: w, display: true}
 	w.term = &terminal{w: w, tty: true, answer: true, secrets: map[string]string{
 		"GPG passphrase for the key on MASTER-KEY":          passphrase,
@@ -290,6 +290,8 @@ type shell struct {
 	w       *world
 	omarchy bool
 	luks    bool
+	// systemd is the version systemctl --version prints.
+	systemd int
 	// keyRejected makes sshd refuse every key until ssh-copy-id ran.
 	keyRejected bool
 	// userKeyOnly makes sshd accept the user's own key, and the werft key
@@ -349,6 +351,8 @@ func (s *shell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.R
 		return exit(s.omarchy)
 	case strings.Contains(cmd, "grep -qx crypt"):
 		return exit(s.luks)
+	case strings.HasPrefix(cmd, "systemctl --version"):
+		_, _ = fmt.Fprintln(stdout, s.systemd)
 	case strings.Contains(cmd, "systemctl poweroff"):
 		for _, d := range s.running() {
 			if s.address(d) == addr.Host {
