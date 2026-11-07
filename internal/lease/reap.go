@@ -131,7 +131,9 @@ func ownership(named string, dir state.Dir) int {
 }
 
 // List is every lease of e.Prefix that this state directory may list and
-// extend: those that name it, and those that name no state directory.
+// extend: those that name it, and those that name no state directory. Each
+// has its domain state; a lease whose domain is gone meanwhile is not
+// listed.
 func List(e Env) ([]Lease, error) {
 	all, err := scan(e)
 	if err != nil {
@@ -139,11 +141,35 @@ func List(e Env) ([]Lease, error) {
 	}
 	leases := []Lease{}
 	for _, f := range all {
-		if f.owner != foreign {
-			leases = append(leases, f.Lease)
+		if f.owner == foreign {
+			continue
 		}
+		l, err := withState(e, f.Lease)
+		if failure.Is(err, failure.NotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		leases = append(leases, l)
 	}
 	return leases, nil
+}
+
+// withState is l with the state of its domain. A lease that does not run
+// has no address: the address of its last boot is stale, and a start can
+// give it a new one. Reap does not read the state, so a domain whose state
+// libvirt cannot give does not stop a reap.
+func withState(e Env, l Lease) (Lease, error) {
+	st, err := e.H.DomainState(l.Domain)
+	if err != nil {
+		return l, err
+	}
+	l.State = st.String()
+	if st != virt.StateRunning {
+		l.Address = ""
+	}
+	return l, nil
 }
 
 // expired is true from the expiry on. A lease without a readable expiry
@@ -285,19 +311,24 @@ func Extend(e Env, id string, d time.Duration) (Lease, error) {
 		return Lease{}, err
 	}
 	defer release()
-	leases, err := List(e)
+	all, err := scan(e)
 	if err != nil {
 		return Lease{}, err
 	}
-	for _, l := range leases {
-		if l.ID != id {
+	for _, f := range all {
+		if f.owner == foreign || f.ID != id {
 			continue
 		}
+		l := f.Lease
 		if l.Expiry.IsZero() {
 			return Lease{}, failure.New(failure.Failed, "%s has no readable expiry in its lease metadata", l.Domain)
 		}
 		if l.expired(e.Now()) {
 			return Lease{}, failure.New(failure.NotFound, "lease %s expired at %s; werft lease makes a new one", id, l.Expiry.Format(time.RFC3339))
+		}
+		l, err := withState(e, l)
+		if err != nil {
+			return Lease{}, err
 		}
 		l.Expiry = l.Expiry.Add(d)
 		if err := e.H.SetDomainMetadata(l.Domain, Namespace, "werft", metadata(l, "")); err != nil {

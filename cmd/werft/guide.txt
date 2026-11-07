@@ -51,8 +51,9 @@ Rules:
     tier        plain or full
     stock       the stock image version
     owner       the --owner flag, else $WERFT_OWNER, else $USER
+    state       running, or a libvirt state such as shut off or paused
     user        the login user in the VM
-    address     the SSH address, such as vsock/3
+    address     the SSH address, such as vsock/3; empty when not running
     key         the path of the private key of the lease
     ssh_config  the path of the ssh_config of the lease
     ssh         the ssh command, such as: ssh -F <ssh_config> <id>
@@ -114,6 +115,9 @@ Rules:
   lease can get a new address that its ssh command does not know. Release
   it and take a new lease.
 
+  werft --json leases shows the state of each lease. A lease that is not
+  in state running has no address: release it and take a new lease.
+
 6. Watch the time
 
   A lease lives 4 hours. No timer destroys it: the first werft lease,
@@ -125,8 +129,8 @@ Rules:
 
   The leases command lists the leases of this user's state directory:
   yours and those of other agents that share it, with id, owner, image,
-  tier, address and expiry. An expired lease is gone: extend fails with
-  not_found.
+  tier, state, address and expiry. An expired lease is gone: extend fails
+  with not_found.
 
 7. Release the lease
 

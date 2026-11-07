@@ -244,8 +244,11 @@ directory. Reap rules:
   as released.
 
 `werft leases` lists each lease: ID, domain, image and tier (from the domain name), stock version,
-owner, created, expiry (from the metadata), and the user, address, key, `ssh_config` and `ssh`
-command of the lease directory. A lease that still boots has no address yet.
+owner, created, expiry (from the metadata), the state (from `DomainState`: running, paused,
+shutting down, shut off, crashed or other), and the user, address, key, `ssh_config` and `ssh`
+command of the lease directory. A lease that still boots has no address yet. A lease that is not
+running lists no address: the address of its last boot is stale, and a start can give it a new
+one.
 
 `werft extend <lease-id> [--for duration]` (`lease.Extend`) adds `--for` (default 4 hours) to the
 expiry, under the global lock, and writes the metadata again with `SetDomainMetadata`. An expired

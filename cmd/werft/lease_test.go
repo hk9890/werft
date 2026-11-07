@@ -49,14 +49,14 @@ func TestLeaseText(t *testing.T) {
 	created := time.Date(2026, 11, 3, 10, 0, 0, 0, time.Local)
 	l := lease.Lease{
 		ID: "abc123", Domain: "werft-vm-plain-abc123", Image: "vm", Tier: "plain", Stock: "vm-plain-20261102",
-		Owner: "agent", User: "hans", Address: "vsock/3", Key: "/s/leases/abc123/id_ed25519",
+		Owner: "agent", State: "running", User: "hans", Address: "vsock/3", Key: "/s/leases/abc123/id_ed25519",
 		SSHConfig: "/s/leases/abc123/ssh_config", SSH: "ssh -F /s/leases/abc123/ssh_config abc123",
 		Created: created, Expiry: created.Add(lease.Lifetime),
 	}
 	var out bytes.Buffer
 	writeLease(&out, l)
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	for _, want := range []string{"lease: abc123", "owner: agent", "user: hans", "address: vsock/3", "key: /s/leases/abc123/id_ed25519",
+	for _, want := range []string{"lease: abc123", "owner: agent", "state: running", "user: hans", "address: vsock/3", "key: /s/leases/abc123/id_ed25519",
 		"ssh_config: /s/leases/abc123/ssh_config", "created: 2026-11-03 10:00", "expiry: 2026-11-03 14:00"} {
 		if !slices.ContainsFunc(lines, func(line string) bool { return strings.Join(strings.Fields(line), " ") == want }) {
 			t.Errorf("text output lacks %q:\n%s", want, out.String())
@@ -118,6 +118,7 @@ func addLease(t *testing.T, lh *lifecycleHost, id string, created time.Time) str
 		`<source file='/img/` + name + `.qcow2'/><target dev='vda'/></disk></devices></domain>`); err != nil {
 		t.Fatal(err)
 	}
+	lh.fake.SetState(name, virt.StateRunning)
 	if err := os.MkdirAll(dir.Lease(id), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -135,13 +136,16 @@ func setClock(t *testing.T, now time.Time) {
 }
 
 // TestLeasesReapsFirst: werft leases releases an expired lease before it
-// lists, and lists what PRODUCT.md promises of the lease that stays.
+// lists, and lists what PRODUCT.md promises of the leases that stay. A
+// shut-off lease has no address.
 func TestLeasesReapsFirst(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	lh := newLifecycleHost(t)
 	t0 := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	old := addLease(t, lh, "old111", t0)
 	addLease(t, lh, "new222", t0.Add(time.Hour))
+	off := addLease(t, lh, "off333", t0.Add(time.Hour))
+	lh.fake.SetState(off, virt.StateShutOff)
 	setClock(t, t0.Add(lease.Lifetime))
 
 	r := lh.run("--json", "leases")
@@ -149,13 +153,16 @@ func TestLeasesReapsFirst(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &leases); r.code != 0 || err != nil {
 		t.Fatalf("leases = %+v, %v", r, err)
 	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %v, want new222 alone", leases)
+	if len(leases) != 2 {
+		t.Fatalf("leases = %v, want new222 and off333", leases)
 	}
 	l := leases[0]
-	if l["id"] != "new222" || l["owner"] != "agent" || l["image"] != "vm" || l["tier"] != "plain" || l["address"] != "vsock/7" ||
-		l["expiry"] != "2026-11-03T15:00:00Z" {
+	if l["id"] != "new222" || l["owner"] != "agent" || l["image"] != "vm" || l["tier"] != "plain" || l["state"] != "running" ||
+		l["address"] != "vsock/7" || l["expiry"] != "2026-11-03T15:00:00Z" {
 		t.Errorf("lease = %v", l)
+	}
+	if l := leases[1]; l["id"] != "off333" || l["state"] != "shut off" || l["address"] != "" {
+		t.Errorf("shut-off lease = %v, want state shut off and no address", l)
 	}
 	if _, err := lh.fake.Domain(old); !failure.Is(err, failure.NotFound) {
 		t.Errorf("werft leases kept the expired %s: %v", old, err)
@@ -163,7 +170,8 @@ func TestLeasesReapsFirst(t *testing.T) {
 	if !strings.Contains(r.stderr, "Released "+old) {
 		t.Errorf("stderr = %q, want the released lease named", r.stderr)
 	}
-	if r := lh.run("leases"); r.code != 0 || !strings.Contains(r.stdout, "new222") || !strings.Contains(r.stdout, "ADDRESS") {
+	if r := lh.run("leases"); r.code != 0 || !strings.Contains(r.stdout, "new222") || !strings.Contains(r.stdout, "STATE") ||
+		!strings.Contains(r.stdout, "shut off") || !strings.Contains(r.stdout, "ADDRESS") {
 		t.Errorf("leases text = %+v", r)
 	}
 }
@@ -203,6 +211,30 @@ func TestReapRemovesOrphans(t *testing.T) {
 	}
 	if r := lh.run("reap"); r.code != 0 || r.stdout != "nothing to reap\n" {
 		t.Errorf("second reap = %+v", r)
+	}
+}
+
+// TestReapListsNoState: werft reap does not read the domain state, so an
+// expired lease in its JSON has no state key.
+func TestReapListsNoState(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	lh := newLifecycleHost(t)
+	t0 := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	addLease(t, lh, "abc123", t0)
+	setClock(t, t0.Add(lease.Lifetime))
+
+	r := lh.run("--json", "reap")
+	var doc struct {
+		Expired []map[string]any `json:"expired"`
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &doc); r.code != 0 || err != nil {
+		t.Fatalf("reap = %+v, %v", r, err)
+	}
+	if len(doc.Expired) != 1 || doc.Expired[0]["id"] != "abc123" {
+		t.Fatalf("expired = %v, want abc123", doc.Expired)
+	}
+	if s, ok := doc.Expired[0]["state"]; ok {
+		t.Errorf("expired lease has state %q, want no state key", s)
 	}
 }
 
