@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -203,6 +204,19 @@ func checkVolumes(t *testing.T, h virt.Hypervisor, g *livetest.Guest, data strin
 	}
 	_, err = h.VolumeInfo(livetest.Pool, "werft-test-fnd-absent.raw")
 	mustKind(t, err, failure.NotFound, "missing volume")
+
+	base, err := h.VolumePath(livetest.Pool, filepath.Base(livetest.Image(t)))
+	livetest.Must(t, err, "base volume path")
+	backing, err := h.VolumeBacking(livetest.Pool, g.DiskVolume())
+	livetest.Must(t, err, "backing of the overlay")
+	if backing != base {
+		t.Errorf("backing of the overlay = %q, want the base volume path %q", backing, base)
+	}
+	backing, err = h.VolumeBacking(livetest.Pool, data)
+	livetest.Must(t, err, "backing of a flat volume")
+	if backing != "" {
+		t.Errorf("backing of a flat volume = %q, want none", backing)
+	}
 }
 
 func checkRunningDomain(t *testing.T, h virt.Hypervisor, g *livetest.Guest) {

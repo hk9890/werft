@@ -73,6 +73,7 @@ type pool struct {
 
 type volume struct {
 	path     string
+	backing  string
 	capacity uint64
 	data     []byte
 	// internal is the qcow2 internal snapshot table: the data at each
@@ -879,6 +880,9 @@ func (f *Fake) newVolume(poolName, xml string) (*pool, string, *volume, error) {
 		return nil, "", nil, failure.New(failure.Conflict, "storage volume %s exists already", x.Name)
 	}
 	v := &volume{path: p.path + "/" + x.Name}
+	if x.BackingStore != nil {
+		v.backing = x.BackingStore.Path
+	}
 	if x.Capacity != nil {
 		v.capacity = scale(x.Capacity.Value, x.Capacity.Unit)
 	}
@@ -1049,6 +1053,19 @@ func (f *Fake) VolumeByPath(path string) (string, string, error) {
 		}
 	}
 	return "", "", notFound("volume at", path)
+}
+
+func (f *Fake) VolumeBacking(pool, name string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("VolumeBacking", pool, name); err != nil {
+		return "", err
+	}
+	v, err := f.volume(pool, name)
+	if err != nil {
+		return "", err
+	}
+	return v.backing, nil
 }
 
 func (f *Fake) DHCPLeases(network, mac string) ([]virt.DHCPLease, error) {

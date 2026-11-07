@@ -278,7 +278,7 @@ func (s *Seal) reserve(e Env) (Record, error) {
 		return Record{}, err
 	}
 	defer release()
-	records, err := Load(e.Catalog)
+	c, err := load(e.Catalog)
 	if err != nil {
 		return Record{}, err
 	}
@@ -291,10 +291,9 @@ func (s *Seal) reserve(e Env) (Record, error) {
 		return Record{}, err
 	}
 	now := e.Now()
-	name, version := nextName(s.Image, s.Tier, now, func(name string) bool {
+	name, version := nextName(s.Image, s.Tier, now, c.held(), func(name string) bool {
 		_, err := e.H.Domain(name)
-		return err == nil || hasName(records, name) ||
-			slices.Contains(volumes, name+".qcow2") || slices.Contains(volumes, name+"_VARS.qcow2")
+		return err == nil || slices.Contains(volumes, name+".qcow2") || slices.Contains(volumes, name+"_VARS.qcow2")
 	})
 	rec := Record{
 		Name: name, Image: s.Image, Tier: s.Tier, Version: version, Date: now.UTC().Truncate(time.Second),

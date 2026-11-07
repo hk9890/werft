@@ -9,6 +9,8 @@ Rules:
 - Use only werft images, lease, leases, extend, release, reap, guide and
   help. Never run werft start, stop, reset, snapshot, seal, provision,
   prepare or migrate: they change the user's build VMs.
+- Use werft images only to list the stock versions. Never run
+  werft images --prune: it deletes the user's old stock versions.
 - Never touch a VM that is not your lease. The one exception is reap: it
   removes only expired leases and orphans, the same pass that every lease
   command runs first.
@@ -112,8 +114,8 @@ Rules:
 6. Watch the time
 
   A lease lives 4 hours. No timer destroys it: the first werft lease,
-  leases, extend, release or reap after the expiry does. Add time before
-  the expiry:
+  leases, extend, release, reap or images --prune after the expiry does.
+  Add time before the expiry:
 
     werft --json extend <id> --for 2h
     werft --json leases
