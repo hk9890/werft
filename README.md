@@ -11,8 +11,10 @@ The status of each phase is in the [roadmap](docs/PRODUCT.md#roadmap).
 
 ## Install
 
-Install a release with mise. The repository is private, so mise needs a GitHub token with access
-to it ([docs/RELEASING.md](docs/RELEASING.md#install-through-mise)).
+Install a release with mise. The repository is private, so mise needs a GitHub token with the
+`repo` scope, or Contents: read for a fine-grained token. mise takes the first of `MISE_GITHUB_TOKEN`, `GITHUB_API_TOKEN`, `GITHUB_TOKEN` and
+the gh CLI login; `mise token github` shows which one it uses. [CHANGELOG.md](CHANGELOG.md) says
+what changed in each release.
 
 ```sh
 mise use -g github:hk9890/werft@X.Y.Z    # a version from the releases page

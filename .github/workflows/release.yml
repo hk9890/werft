@@ -23,6 +23,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Fails in seconds on a tag without a CHANGELOG.md section.
+      - run: scripts/release-notes "$GITHUB_REF_NAME" > /dev/null
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
       # TestZshCompletes drives the completion script in zsh.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh
@@ -42,6 +44,8 @@ jobs:
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install_args: go goreleaser
-      - run: goreleaser release --clean
+      - name: Release notes from CHANGELOG.md
+        run: scripts/release-notes "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+      - run: goreleaser release --clean --release-notes "$RUNNER_TEMP/release-notes.md"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

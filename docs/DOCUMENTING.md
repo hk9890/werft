@@ -17,6 +17,9 @@ conflict, this file wins.
   contract, the roadmap, and the open product questions.
 - [DESIGN.md](DESIGN.md) owns how werft is built: packages, data model, lease and reset-point
   mechanics, the provision pipeline, exit codes, risks, and the open technical questions.
+- [CHANGELOG.md](../CHANGELOG.md) owns what changed for the user in each release; its section is
+  the release text on GitHub. [RELEASING.md](RELEASING.md#what-goes-in-the-changelog-section)
+  owns the rules for writing it.
 - [examples/setup/README.md](../examples/setup/README.md) owns the setup-repo recipe: what
   `examples/setup/recipe.toml` and `examples/setup/bootstrap.sh` do and what a run needs. It moves
   to the setup repo with the recipe.
@@ -36,8 +39,6 @@ Re-open a decision here before you fill the gap in another file.
 
 - **No CONTRIBUTING.md.** werft has one user, and agents do the work. The human entry point is
   [README.md](../README.md); the agent entry point is `AGENTS.md`.
-- **No CHANGELOG.** werft has one user, who reads the commits. The release notes are GoReleaser's
-  commit list ([RELEASING.md](RELEASING.md)).
 
 ## Before you land a doc change
 
