@@ -213,10 +213,10 @@ domain and the lease directory, and fails; the next release tries again. Each st
 "already gone", so release can run twice, exits 0 for a lease that is gone, and finishes a
 half-done release.
 
-`lease`, `leases`, `extend` and `release` first release the expired leases and the orphans (a
-lease domain without a lease directory, or the reverse). `werft reap` does only that (`lease.Reap`
-in `internal/lease/reap.go`). `list` has no reap pass: it changes nothing. No timer runs
-`werft reap`, so an expired lease stays until one of these five commands runs with its state
+`lease`, `leases`, `extend`, `release` and `images --prune` first release the expired leases and
+the orphans (a lease domain without a lease directory, or the reverse). `werft reap` does only that
+(`lease.Reap` in `internal/lease/reap.go`). `list` has no reap pass: it changes nothing. No timer
+runs `werft reap`, so an expired lease stays until one of these six commands runs with its state
 directory. Reap rules:
 
 - It takes the global lock, so it never sees a lease directory whose domain is not yet defined.
@@ -422,7 +422,9 @@ deletes the disk, the NVRAM and the record of each stock version that matches al
 
 Steps:
 
-1. Find the versions without a lock, and change nothing. When there are none, stop.
+1. Run the reap pass ([Lease lifecycle](#lease-lifecycle)), so the versions of expired leases are
+   free in the same run. Then find the versions without a lock, and change nothing. When there are
+   none, stop.
 2. Confirm, and name each version; without a TTY it needs `--yes`.
 3. Under the global lock, find the versions again, and delete only those that were confirmed and
    still match. Delete the disk, then the NVRAM; a volume that is gone counts as deleted.

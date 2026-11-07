@@ -115,8 +115,8 @@ werft guide                                  # how an agent leases, uses and rel
 Point an agent at `werft guide`. It prints the lease flow, the JSON fields, the exit codes and the
 rules for an agent, and it matches the installed version.
 
-A lease expires 4 hours after it starts. `lease`, `leases`, `extend` and `release` first release
-the expired leases; `reap` does only that.
+A lease expires 4 hours after it starts. `lease`, `leases`, `extend`, `release` and
+`images --prune` first release the expired leases; `reap` does only that.
 
 Leases run in parallel. `werft lease` exits 6 (`no_capacity`) when the host memory, less the memory
 of the running VMs and of every lease, less the new lease, is below `memory_budget_mib` in

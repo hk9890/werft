@@ -136,14 +136,16 @@ func (c *cli) cmdImages(args []string) error {
 	return nil
 }
 
-// pruneImages deletes the old stock versions that no lease uses, after the
-// confirmation.
+// pruneImages runs the reap pass, then deletes the old stock versions that
+// no lease uses, after the confirmation. The reap pass first frees the
+// versions of expired leases.
 func (c *cli) pruneImages(dir state.Dir, yes bool) error {
 	h, err := c.hypervisor()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = h.Close() }()
+	c.reapFirst(c.leaseEnv(h, dir))
 	e := image.PruneEnv{
 		H: h, Catalog: dir.Images(),
 		Leased: func() (map[string]bool, error) { return lease.Stocks(h) },
