@@ -138,6 +138,24 @@ func TestPruneKeepsTheRecordWhenAVolumeStays(t *testing.T) {
 	}
 }
 
+// TestPruneNamesTheRemovedVersionsWhenItFails: the error of a prune that
+// failed part-way tells the caller what is gone.
+func TestPruneNamesTheRemovedVersionsWhenItFails(t *testing.T) {
+	f := world(t)
+	must(t, virt.EnsurePool(f, "werft", "/werft"))
+	catalog := filepath.Join(t.TempDir(), "images.toml")
+	stock(t, f, catalog, "vm-plain-20261101", "vm-plain-20261102", "vm-plain-20261103")
+	e := pruneEnv(f, catalog)
+	planned, err := image.Prunable(e)
+	must(t, err)
+	f.FailOn("DeleteVolume werft vm-plain-20261102.qcow2", errors.New("busy"))
+	removed, err := image.Prune(e, planned)
+	if !slices.Equal(names(removed), []string{"vm-plain-20261101"}) || !failure.Is(err, failure.Failed) ||
+		!strings.Contains(err.Error(), "prune removed vm-plain-20261101 and failed") || !strings.Contains(err.Error(), "busy") {
+		t.Errorf("Prune = %v, %v, want vm-plain-20261101 removed and the failure of vm-plain-20261102", names(removed), err)
+	}
+}
+
 // TestSealNeverReusesAPrunedName: seal numbers past every name the catalog
 // ever held, so a name never comes back with other content.
 func TestSealNeverReusesAPrunedName(t *testing.T) {

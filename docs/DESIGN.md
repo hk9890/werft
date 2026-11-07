@@ -145,10 +145,9 @@ step 6 is not built yet.
    domain definition (sealed before leases existed) fails with `unsupported` and names the seal.
 2. **Admit.** Take the global lock. Find the stock record in `images.toml` again; a version that
    `werft images --prune` deleted after step 1 fails with `not_found` (`lease.stillThere`). Fail
-   (`lease.admit`) with `no_capacity` when host memory less
-   committed memory less the `<memory>` of the stock definition is below `memory_budget_mib` in
-   `config.toml` (default 4096), or when `StoragePoolGetInfo` gives the stock pool less than 1 GiB
-   free (`lease.MinPoolFree`).
+   (`lease.admit`) with `no_capacity` when host memory less committed memory less the `<memory>`
+   of the stock definition is below `memory_budget_mib` in `config.toml` (default 4096), or when
+   `StoragePoolGetInfo` gives the stock pool less than 1 GiB free (`lease.MinPoolFree`).
    - Host memory is the total of `NodeGetInfo`.
    - Committed memory (`lease.committed`) is the configured `<memory>` of every domain that is not
      shut off, plus every lease domain in any state, whatever its state directory.
@@ -368,12 +367,12 @@ Both tiers run the same steps:
    from the checked definition fails the run before anything is copied.
 3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` past
    every name of that day that `images.toml` holds or names as pruned, that no volume of the pool
-   and no domain has. So a pruned name never comes back with other content. Define a temporary domain under that name, so
-   the name is reserved: the build VM XML on the stock volumes `<name>.qcow2` and
-   `<name>_VARS.qcow2` in the `werft` pool (`pool` in `config.toml`), with a new UUID and MAC, a
-   vsock device, and SMBIOS credentials that replace those of the build VM. The credentials are a
-   new key pair of the run as `ssh.ephemeral-authorized_keys-all`, and a `sshd-vsock@` drop-in that
-   runs `ssh-keygen -A`, because a cloud image has no host keys.
+   and no domain has. So a pruned name never comes back with other content. Define a temporary
+   domain under that name, so the name is reserved: the build VM XML on the stock volumes
+   `<name>.qcow2` and `<name>_VARS.qcow2` in the `werft` pool (`pool` in `config.toml`), with a new
+   UUID and MAC, a vsock device, and SMBIOS credentials that replace those of the build VM. The
+   credentials are a new key pair of the run as `ssh.ephemeral-authorized_keys-all`, and a
+   `sshd-vsock@` drop-in that runs `ssh-keygen -A`, because a cloud image has no host keys.
 4. Without the global lock, copy disk and NVRAM to the stock volumes with
    `StorageVolCreateXMLFrom`; the copy is flat, with no internal snapshots.
 5. Boot the temporary domain and log in as root over vsock with the key of the run. This needs no
@@ -432,8 +431,9 @@ Steps:
    ignores `removed`; its next seal writes the file without it.
 
 A failed volume delete keeps the record, so the next prune tries again. Prune goes on with the next
-version, names every failure, and fails with `failed`. `--json` gives `{"removed": [...]}` with the
-fields of `werft images --json`.
+version, names every failure, and fails with `failed`; the error message also names the versions it
+removed. `--json` gives `{"removed": [...]}` with the fields of `werft images --json` when prune
+does not fail.
 
 Admission finds the stock record again under the global lock, before it creates the overlay, so a
 version that the lease chose before the lock cannot go in between

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/virt"
@@ -91,7 +92,8 @@ func backingFiles(h virt.Hypervisor, pool string) ([]string, error) {
 // Prune deletes, under the global lock, the disk, the NVRAM and the record
 // of each version of planned that is still prunable, and returns them. A
 // version whose volume delete fails keeps its record, so the next prune
-// tries again; Prune goes on with the next and names every failure.
+// tries again; Prune goes on with the next and names every failure. The
+// error of a prune that failed part-way names the removed versions.
 func Prune(e PruneEnv, planned []Record) ([]Record, error) {
 	release, err := e.Global()
 	if err != nil {
@@ -123,7 +125,10 @@ func Prune(e PruneEnv, planned []Record) ([]Record, error) {
 		}
 	}
 	if len(errs) > 0 {
-		return removed, failure.Wrap(failure.Failed, errors.Join(errs...), "prune")
+		if len(names) == 0 {
+			return removed, failure.Wrap(failure.Failed, errors.Join(errs...), "prune")
+		}
+		return removed, failure.Wrap(failure.Failed, errors.Join(errs...), "prune removed %s and failed", strings.Join(names, ", "))
 	}
 	return removed, nil
 }
