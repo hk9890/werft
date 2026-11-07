@@ -9,14 +9,14 @@ Each section is also the text of its release on the
 ## v0.2.0
 
 - **`werft guide` prints how an agent leases a VM, uses it and gives it
-  back.** The text is built into the binary, so it matches the installed
+  back.** The binary holds the text, so it matches the installed
   version. It gives the real wait of `werft lease` and asks for a 15-minute
   timeout or a background run. It shows how to run commands with ssh and
   `sudo -n`, and how to copy files with tar and scp. It shows a port
   forward that fails when the local port is taken, and how to start a
   server that keeps running after ssh returns. It also covers reboot and
   power off, the tools of the full tier, extend and release, and the exit
-  codes. A lost lease is found by its `--owner`. `werft --json guide`
+  codes. It shows how to find a lost lease by its `--owner`. `werft --json guide`
   prints `{"guide": "<text>"}`.
 - **`werft completion zsh` prints a zsh completion script.** Load it with
   `source <(werft completion zsh)`. It completes the commands and their

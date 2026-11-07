@@ -30,17 +30,22 @@ mise run release:snapshot    # archives into dist/, publishes nothing
    [What goes in the CHANGELOG section](#what-goes-in-the-changelog-section) says, and land it like
    any other change: worktree, PR, merge ([CHANGE-WORKFLOW.md](CHANGE-WORKFLOW.md)).
 3. From the main checkout, create a worktree detached at `origin/main` under `/tmp`, and run the
-   gate in it. A hook on this host blocks `git worktree add` under `.claude/worktrees/`. Then check
-   the section against every commit since the last tag: each change a user can see has an entry. A
-   change with no entry goes back to step 2.
+   gate in it. A hook on this host blocks `git worktree add` under `.claude/worktrees/`. The
+   script must find the section, and the log lists every commit since the previous release.
+   Check that each change a user can see has an entry.
 
    ```bash
    WT=/tmp/werft-release-vX.Y.Z
-   git fetch origin
+   git fetch --tags origin
    git worktree add --detach "$WT" origin/main
    mise -C "$WT" run quality
-   git -C "$WT" log --no-merges --oneline "$(git -C "$WT" describe --tags --abbrev=0)"..HEAD
+   "$WT/scripts/release-notes" vX.Y.Z
+   prev=$(git -C "$WT" describe --tags --abbrev=0 --exclude vX.Y.Z) &&
+     git -C "$WT" log --no-merges --oneline "$prev"..HEAD
    ```
+
+   A missing entry or section goes back to step 2. Remove the worktree first, so step 3 can make it
+   again: `git worktree remove /tmp/werft-release-vX.Y.Z`.
 
 4. From the main checkout, check that the worktree is at `origin/main`, tag its commit, push the
    tag, then remove the worktree. Each code block sets `WT` itself, so a fresh shell runs it; the
@@ -62,14 +67,22 @@ mise run release:snapshot    # archives into dist/, publishes nothing
    gh run watch "$(gh run list --workflow=release.yml --branch vX.Y.Z --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
    ```
 
-6. Verify. Expect the two archives and the checksums file, and a body that is the tag's
-   `CHANGELOG.md` section. The `diff` prints nothing when they match; a wrong or empty body is
-   repaired without a new dispatch.
+6. Verify from the main checkout, after `git pull --ff-only`. Expect the two archives and the
+   checksums file, a binary that prints `werft vX.Y.Z`, and a body that is the tag's
+   `CHANGELOG.md` section: the `diff` prints nothing when they match.
 
    ```bash
    gh release view vX.Y.Z --json assets -q '.assets[].name'
-   diff <(gh release view vX.Y.Z --json body -q .body) <(scripts/release-notes vX.Y.Z)
-   gh release edit vX.Y.Z --notes-file <(scripts/release-notes vX.Y.Z)    # only to repair the body
+   D=$(mktemp -d) && gh release download vX.Y.Z -p '*_linux_x64.tar.gz' -D "$D" &&
+     tar -xzf "$D"/*.tar.gz -C "$D" && "$D/werft" version
+   diff <(gh release view vX.Y.Z --json body -q .body) <(scripts/release-notes vX.Y.Z; echo)
+   ```
+
+   When the body differs, set it from the section. This needs no new dispatch:
+
+   ```bash
+   scripts/release-notes vX.Y.Z > /tmp/werft-notes-vX.Y.Z.md &&
+     gh release edit vX.Y.Z --notes-file /tmp/werft-notes-vX.Y.Z.md
    ```
 
 **Dispatch on the tag, not on `main`.** `workflow_dispatch` reads the workflow from the ref it
@@ -82,7 +95,7 @@ assets (`release.replace_existing_artifacts`) but keeps its body.
 ## What goes in the CHANGELOG section
 
 The section is the release text on GitHub. Write it for whoever runs `werft` and has never opened
-the source. List features, changed behaviour and fixes, never a commit list. An entry earns its
+the source. List features, changed behavior and fixes, never a commit list. An entry earns its
 place by telling the reader what they must do, what they will see that they did not see before, or
 what was wrong that is now fixed. State the symptom; the cause belongs in the commit message.
 
