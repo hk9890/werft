@@ -37,14 +37,19 @@ func (c *cli) leaseEnv(h virt.Hypervisor, dir state.Dir) lease.Env {
 		Shell:   func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
 		NewKey:  guestEnsureKey,
 		Secrets: secret.Pass{}, Terminal: prompter{c},
-		Global: func() (func(), error) {
-			lock, err := dir.LockGlobal()
-			if err != nil {
-				return nil, err
-			}
-			return func() { _ = lock.Release() }, nil
-		},
-		Now: clock, Sleep: c.sleep, Out: c.stderr,
+		Global: globalLock(dir),
+		Now:    clock, Sleep: c.sleep, Out: c.stderr,
+	}
+}
+
+// globalLock takes the global lock of dir.
+func globalLock(dir state.Dir) func() (func(), error) {
+	return func() (func(), error) {
+		lock, err := dir.LockGlobal()
+		if err != nil {
+			return nil, err
+		}
+		return func() { _ = lock.Release() }, nil
 	}
 }
 

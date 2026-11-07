@@ -77,12 +77,18 @@ A stock image is a sealed copy of a build VM reset point. Leases start from it.
 werft seal ubuntu-26-04 provision-base       # reset to provision-base, seal a copy as the plain tier; asks first
 werft seal ubuntu-26-04-full clean           # reset to clean, seal a copy as the full tier of ubuntu-26-04; asks first
 werft images                                 # every stock version: image, tier, version, date
+werft images --prune                         # delete the old versions that no lease uses; asks first
 ```
 
-`seal` needs a guest with systemd 256 or later: it logs in as root over vsock.
+`seal` needs a guest with systemd 256 or later: it logs in as root over vsock. It refuses an
+older guest at once, when the reset point records its systemd version (`werft prepare` and the
+`detect-guest` step write it). A reset point without that record seals as before; when the vsock
+login then times out, the error tells you to run `werft prepare <vm>` and take the reset point
+again.
 
 To refresh both tiers after a change to the base, run these in order. New leases take the newest
-version; old versions stay.
+version; old versions stay until `werft images --prune`. Prune keeps the newest version of each
+image and tier, and every version a lease uses.
 
 ```sh
 werft reset ubuntu-26-04 provision-base      # back to the base
@@ -113,8 +119,8 @@ werft guide                                  # how an agent leases, uses and rel
 Point an agent at `werft guide`. It prints the lease flow, the JSON fields, the exit codes and the
 rules for an agent, and it matches the installed version.
 
-A lease expires 4 hours after it starts. `lease`, `leases`, `extend` and `release` first release
-the expired leases; `reap` does only that.
+A lease expires 4 hours after it starts. `lease`, `leases`, `extend`, `release` and
+`images --prune` first release the expired leases; `reap` does only that.
 
 Leases run in parallel. `werft lease` exits 6 (`no_capacity`) when the host memory, less the memory
 of the running VMs and of every lease, less the new lease, is below `memory_budget_mib` in

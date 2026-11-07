@@ -60,6 +60,9 @@ type Seal struct {
 	nvramPool string
 	nvram     string
 	nvramPath string
+	// systemdRecorded tells whether the reset point records the systemd
+	// version of the guest, so Plan could check it.
+	systemdRecorded bool
 }
 
 // Plan checks that the build VM can be sealed from label now, and changes
@@ -131,6 +134,12 @@ func (s *Seal) reread(h virt.Hypervisor) error {
 // inspect reads the one writable disk and the NVRAM of the definition d of
 // the build VM, and changes nothing.
 func (s *Seal) inspect(h virt.Hypervisor, d *libvirtxml.Domain) error {
+	v, ok := domxml.SystemdOf(domxml.Description(d))
+	s.systemdRecorded = ok
+	if ok && v < guest.VsockSystemd {
+		return failure.New(failure.Unsupported, "the guest of %s at '%s' has systemd %d; seal logs in over vsock, which needs systemd %d or later",
+			s.BuildVM, s.Label, v, guest.VsockSystemd)
+	}
 	disk, err := onlyDisk(h, d)
 	if err != nil {
 		return err
@@ -301,7 +310,7 @@ func (s *Seal) reserve(e Env) (Record, error) {
 		return Record{}, err
 	}
 	defer release()
-	records, err := Load(e.Catalog)
+	c, err := load(e.Catalog)
 	if err != nil {
 		return Record{}, err
 	}
@@ -314,10 +323,9 @@ func (s *Seal) reserve(e Env) (Record, error) {
 		return Record{}, err
 	}
 	now := e.Now()
-	name, version := nextName(s.Image, s.Tier, now, func(name string) bool {
+	name, version := nextName(s.Image, s.Tier, now, c.held(), func(name string) bool {
 		_, err := e.H.Domain(name)
-		return err == nil || hasName(records, name) ||
-			slices.Contains(volumes, name+".qcow2") || slices.Contains(volumes, name+"_VARS.qcow2")
+		return err == nil || slices.Contains(volumes, name+".qcow2") || slices.Contains(volumes, name+"_VARS.qcow2")
 	})
 	rec := Record{
 		Name: name, Image: s.Image, Tier: s.Tier, Version: version, Date: now.UTC().Truncate(time.Second),
@@ -408,8 +416,12 @@ func (s *Seal) seal(e Env, rec *Record, password string) error {
 	err = r.PollLogin(bootTimeout, "no SSH answer from "+rec.Name+" at "+addr.Host, func() bool {
 		return e.Shell.Run(r.Ctx, addr, "true", nil, io.Discard, io.Discard) == nil
 	})
+	if failure.Is(err, failure.Timeout) && !s.systemdRecorded {
+		err = failure.Wrap(failure.Timeout, err, "the reset point '%s' of %s records no systemd version; run werft prepare %s and take the reset point again, so seal can check it before the copy",
+			s.Label, s.BuildVM, s.BuildVM)
+	}
 	if s.LUKS && failure.Is(err, failure.Timeout) {
-		return failure.Wrap(failure.Timeout, err, "the disk can have refused the typed password, and nothing types it twice; check the disk password of %s", s.BuildVM)
+		err = failure.Wrap(failure.Timeout, err, "the disk can have refused the typed password, and nothing types it twice; check the disk password of %s", s.BuildVM)
 	}
 	if err != nil {
 		return err

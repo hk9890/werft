@@ -29,13 +29,15 @@ The host is the user's workstation. Its build VMs are every domain not named `we
 `werft list`), and they are the user's work.
 
 - Run `list`, `snapshots`, `help` and `version` at any time. They change nothing.
-- `lease`, `leases`, `extend`, `release` and `reap` first release the expired leases and the
-  orphans of the state directory they run with
+- `lease`, `leases`, `extend`, `release`, `reap` and `images --prune` first release the expired
+  leases and the orphans of the state directory they run with
   ([DESIGN.md, "Lease lifecycle"](DESIGN.md#lease-lifecycle)). With your real state directory they
   can release a lease of another agent that expired; run them with an isolated state directory
   ([Isolate config and state](#isolate-config-and-state)).
 - Run `start`, `stop`, `snapshot`, `reset`, `migrate`, `prepare` and `provision` only on a domain
   named `werft-test-*`.
+- Run `images --prune` only with an isolated state directory. With your real one it deletes the
+  user's old stock versions.
 - Run a write command on a build VM only when the user is present and asked for that run.
 
 ## Get a scratch domain

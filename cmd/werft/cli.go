@@ -47,7 +47,7 @@ func init() {
 		{name: "extend", args: "<lease-id> [--for duration]", summary: "move the expiry of a lease by --for (default 4h)", run: (*cli).cmdExtend},
 		{name: "guide", summary: "print how an agent leases a VM, uses it and gives it back", run: (*cli).cmdGuide},
 		{name: "help", args: "[command]", summary: "show the usage of werft or of one command", run: (*cli).cmdHelp},
-		{name: "images", summary: "list the stock images: image, tier, version, date", run: (*cli).cmdImages},
+		{name: "images", args: "[--prune] [--yes]", summary: "list the stock images: image, tier, version, date; --prune deletes the old versions no lease uses", run: (*cli).cmdImages},
 		{name: "lease", args: "<image> [--tier plain|full] [--owner o] [--view]", summary: "lease a disposable VM from the newest stock image; returns when SSH answers", run: (*cli).cmdLease},
 		{name: "leases", summary: "list the leases: id, owner, image, tier, address, expiry; releases expired ones first", run: (*cli).cmdLeases},
 		{name: "list", summary: "list all VMs: state, disk use, reset points, LUKS marker, address", run: (*cli).cmdList},

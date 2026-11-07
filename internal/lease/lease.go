@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,8 +39,6 @@ const (
 	BootTimeout = 5 * time.Minute
 	// Namespace is the namespace of the werft metadata of a lease domain.
 	Namespace = "https://github.com/hk9890/werft/lease"
-	// vsockSystemd is the first systemd version with SSH over AF_VSOCK.
-	vsockSystemd = 256
 	// MinPoolFree is the free space a pool must have for the overlay of a
 	// new lease, which grows as the guest writes.
 	MinPoolFree = 1 << 30
@@ -206,6 +205,9 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 		return Lease{}, err
 	}
 	defer release()
+	if err := stillThere(e.Dir.Images(), rec.Name); err != nil {
+		return Lease{}, err
+	}
 	if err := admit(e, tmpl, rec.Pool); err != nil {
 		return Lease{}, err
 	}
@@ -255,6 +257,20 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 		return fail(err)
 	}
 	return l, nil
+}
+
+// stillThere fails with not_found when the images.toml at catalog has no
+// record name any more. The caller holds the global lock, so werft images
+// --prune cannot delete the version between this check and the overlay.
+func stillThere(catalog, name string) error {
+	records, err := image.Load(catalog)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(records, func(r image.Record) bool { return r.Name == name }) {
+		return failure.New(failure.NotFound, "the stock version %s is gone from %s; run werft lease again for the newest one", name, catalog)
+	}
+	return nil
 }
 
 // admit refuses a lease of tmpl with no_capacity when the host memory, less
@@ -339,7 +355,7 @@ func committed(h virt.Hypervisor) (uint64, error) {
 // address is vsock/<cid> when the guest has SSH over AF_VSOCK, else the IPv4
 // DHCP lease of its MAC.
 func address(e Env, r *pipeline.Run, domain string, systemd int) (string, error) {
-	if systemd >= vsockSystemd {
+	if systemd >= guest.VsockSystemd {
 		cid, _ := virt.DomainAddresses(e.H, domain)
 		if cid == "" {
 			return "", failure.New(failure.Failed, "the running %s has no vsock CID", domain)
