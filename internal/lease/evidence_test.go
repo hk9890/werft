@@ -15,14 +15,14 @@ import (
 
 // failBoot starts a lease whose SSH wait times out while its domain shows a
 // screen. It returns the evidence directory and the error of the start.
-// prepare, when set, gets the evidence directory before the start.
-func failBoot(t *testing.T, f *virttest.Fake, prepare func(dir string)) (string, error) {
+// prepare, when set, can change the environment before the start.
+func failBoot(t *testing.T, f *virttest.Fake, prepare func(e *lease.Env)) (string, error) {
 	t.Helper()
 	defer lease.SetNewID("abc123")()
 	e := env(t, f, &shell{up: false})
 	e.Sleep = func(time.Duration) { f.SetScreenshot("werft-vm-plain-abc123", "image/png", []byte("\x89PNG screen")) }
 	if prepare != nil {
-		prepare(e.Dir.Evidence())
+		prepare(&e)
 	}
 	_, err := lease.Start(e, record(), "agent")
 	return e.Dir.Evidence(), err
@@ -53,7 +53,8 @@ func TestStartSavesTheScreenOfAFailedBoot(t *testing.T) {
 func TestStartKeepsTheNewestEvidence(t *testing.T) {
 	f := world(t)
 	var old []string
-	dir, _ := failBoot(t, f, func(dir string) {
+	dir, _ := failBoot(t, f, func(e *lease.Env) {
+		dir := e.Dir.Evidence()
 		must(t, os.MkdirAll(dir, 0o700))
 		for i := range lease.KeepEvidence {
 			name := fmt.Sprintf("20260101-0000%02d-werft-vm-plain-old%03d.png", i, i)
@@ -99,5 +100,51 @@ func TestStartNamesAScreenItCouldNotSave(t *testing.T) {
 	_, err := failBoot(t, f, nil)
 	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "no last screen saved: injected screenshot") {
 		t.Errorf("Start = %v, want kind timeout and the screenshot failure", err)
+	}
+}
+
+// TestStartKeepsTheNewScreen: files whose names sort after the new one, as
+// after a clock step backward, do not push the new screen out.
+func TestStartKeepsTheNewScreen(t *testing.T) {
+	f := world(t)
+	dir, err := failBoot(t, f, func(e *lease.Env) {
+		dir := e.Dir.Evidence()
+		must(t, os.MkdirAll(dir, 0o700))
+		for i := range lease.KeepEvidence {
+			must(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("20270101-0000%02d-werft-vm-plain-new%03d.png", i, i)), nil, 0o600))
+		}
+	})
+	path := filepath.Join(dir, "20261103-100000-werft-vm-plain-abc123.png")
+	if _, serr := os.Stat(path); serr != nil || !strings.Contains(err.Error(), path) {
+		t.Errorf("the new screen %s is gone or not named: %v; %v", path, serr, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != lease.KeepEvidence {
+		t.Errorf("%d evidence files, want %d", len(entries), lease.KeepEvidence)
+	}
+}
+
+// TestStartNamesTheScreenInUTC: the time in the file name is UTC, so the
+// names sort by age across a change of the local clock.
+func TestStartNamesTheScreenInUTC(t *testing.T) {
+	f := world(t)
+	dir, _ := failBoot(t, f, func(e *lease.Env) {
+		e.Now = func() time.Time { return time.Date(2026, 11, 3, 11, 0, 0, 0, time.FixedZone("CET", 3600)) }
+	})
+	if _, err := os.Stat(filepath.Join(dir, "20261103-100000-werft-vm-plain-abc123.png")); err != nil {
+		t.Errorf("no screen with a UTC name: %v", err)
+	}
+}
+
+// TestStartSavesAnUnknownImageAsBin: a screen of an unknown image type gets
+// .bin, so no viewer takes it for a PNG.
+func TestStartSavesAnUnknownImageAsBin(t *testing.T) {
+	f := world(t)
+	dir, _ := failBoot(t, f, func(e *lease.Env) {
+		e.Sleep = func(time.Duration) {
+			f.SetScreenshot("werft-vm-plain-abc123", "application/octet-stream", []byte("raw"))
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, "20261103-100000-werft-vm-plain-abc123.bin")); err != nil {
+		t.Errorf("no .bin screen: %v", err)
 	}
 }

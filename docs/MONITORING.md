@@ -83,7 +83,7 @@ Before the release, werft saves the screen of the domain (`lease.saveScreen` in
 - Get the path from the error: `its last screen is in <path>` (`error.message` under `--json`).
   When the screenshot failed, the error says `no last screen saved:` and why.
 - The file is `~/.local/state/werft/evidence/<YYYYmmdd-HHMMSS>-<domain>.png`, `.ppm` when QEMU
-  gives PPM. List them, newest first: `ls -r ~/.local/state/werft/evidence/`.
+  gives PPM, `.bin` for an unknown image type. The time is UTC. List them, newest first: `ls -r ~/.local/state/werft/evidence/`.
 - werft keeps the 10 newest files (`lease.KeepEvidence`) and deletes the older ones at each save.
   Copy a file elsewhere to keep it.
 - A lease that failed before its domain started has no screen, and its error names none.

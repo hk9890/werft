@@ -56,8 +56,8 @@ Rules:
 
   A lease that fails cleans up after itself. If its error message names
   werft release <id>, run that command. Then try the lease once more.
-  If the second lease fails too, give the user the error message: it
-  names the file with the last screen of the VM.
+  If the second lease fails too, give the user the error message. When
+  the last screen of the VM was saved, the message names its file.
 
 3. Run commands in the VM
 
