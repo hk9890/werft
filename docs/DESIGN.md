@@ -99,8 +99,9 @@ real adapters.
   (on `-full`).
 - **Stock image.** A flat qcow2 disk file plus a qcow2 NVRAM vars file, made from a build VM reset
   point by `seal`. Named `<image>-<tier>-<YYYYMMDD>[-n]`. Immutable: werft never attaches it to a
-  domain or writes it. A new seal makes a new version. An old version is deleted only when no lease
-  domain names it in its metadata (stock garbage collection, not built yet: old versions stay).
+  domain or writes it. A new seal makes a new version. Stock garbage collection deletes an old
+  version only when no lease domain names it in its metadata. It is not built yet: old versions
+  stay.
 - **Tier.** `plain` comes from the `provision-base` reset point of the build VM. `full` comes from
   the `clean` reset point of the `-full` build VM.
 - **Lease.** A domain `werft-<image>-<tier>-<id>` with a thin overlay on one stock version, its own
