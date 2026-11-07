@@ -32,6 +32,7 @@ func (d Dir) Images() string         { return filepath.Join(string(d), "images.t
 func (d Dir) Leases() string         { return filepath.Join(string(d), "leases") }
 func (d Dir) Lease(id string) string { return filepath.Join(d.Leases(), id) }
 func (d Dir) Logs() string           { return filepath.Join(string(d), "logs") }
+func (d Dir) Evidence() string       { return filepath.Join(string(d), "evidence") }
 func (d Dir) Locks() string          { return filepath.Join(string(d), "locks") }
 
 // SSHKey is the private key prepare installs in a build VM.

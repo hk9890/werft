@@ -119,15 +119,21 @@ func Start(e Env, rec image.Record, owner string) (l Lease, err error) {
 	if err != nil {
 		return Lease{}, err
 	}
+	booted := false
 	defer func() {
 		if err != nil {
-			err = abandon(e, l, err)
+			note := ""
+			if booted {
+				note = evidence(e, l.Domain)
+			}
+			err = abandon(e, l, note, err)
 		}
 	}()
 	e.printf("Booting %s (headless, no window)", l.Domain)
 	if err = e.H.StartDomain(l.Domain); err != nil {
 		return l, err
 	}
+	booted = true
 	if e.View != nil {
 		e.View(l.Domain)
 	}
@@ -190,7 +196,7 @@ func reserve(e Env, rec image.Record, owner string, tmpl *libvirtxml.Domain) (Le
 		}
 		return Lease{}, failure.Wrap(kind, err, "create the lease directory")
 	}
-	fail := func(err error) (Lease, error) { return Lease{}, abandon(e, l, err) }
+	fail := func(err error) (Lease, error) { return Lease{}, abandon(e, l, "", err) }
 	if err := e.NewKey(l.Key); err != nil {
 		return fail(failure.Wrap(failure.Failed, err, "create the lease key"))
 	}
@@ -319,20 +325,21 @@ func address(e Env, r *pipeline.Run, domain string, systemd int) (string, error)
 }
 
 // abandon releases a lease whose start failed, and keeps the kind of cause.
+// note, empty or starting with "; ", follows "did not start" in the error.
 // werft release finds a lease only through its domain, so an overlay left
 // without a domain gets the command that deletes it.
-func abandon(e Env, l Lease, cause error) error {
+func abandon(e Env, l Lease, note string, cause error) error {
 	err := remove(e.H, l.Domain, l.pool, l.overlay, e.Dir.Lease(l.ID))
 	var left *overlayError
 	if errors.As(err, &left) {
 		if _, derr := e.H.Domain(l.Domain); failure.Is(derr, failure.NotFound) {
-			return failure.Wrap(failure.KindOf(cause), cause, "%s did not start; delete its overlay with virsh -c qemu:///system vol-delete --pool %s %s: %v", l.Domain, left.pool, left.volume, err)
+			return failure.Wrap(failure.KindOf(cause), cause, "%s did not start%s; delete its overlay with virsh -c qemu:///system vol-delete --pool %s %s: %v", l.Domain, note, left.pool, left.volume, err)
 		}
 	}
 	if err != nil {
-		return failure.Wrap(failure.KindOf(cause), cause, "%s did not start; remove what is left with werft release %s: %v", l.Domain, l.ID, err)
+		return failure.Wrap(failure.KindOf(cause), cause, "%s did not start%s; remove what is left with werft release %s: %v", l.Domain, note, l.ID, err)
 	}
-	return failure.Wrap(failure.KindOf(cause), cause, "%s did not start and is released", l.Domain)
+	return failure.Wrap(failure.KindOf(cause), cause, "%s did not start%s; it is released", l.Domain, note)
 }
 
 // metadata is the werft element of a lease domain: owner, created, expiry,
