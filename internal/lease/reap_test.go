@@ -182,13 +182,50 @@ func TestListShutOff(t *testing.T) {
 	}
 }
 
+// TestListSkipsAGoneDomain: a lease domain that is gone between the scan
+// and its state read is not listed, and the other leases are.
+func TestListSkipsAGoneDomain(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	vanished := startAt(t, e, e.Now())
+	stays := startAt(t, e, e.Now())
+	f.FailOn("DomainState "+vanished.Domain, failure.New(failure.NotFound, "injected"))
+	leases, err := lease.List(e)
+	must(t, err)
+	if len(leases) != 1 || leases[0].ID != stays.ID {
+		t.Errorf("List = %+v, want %s alone", leases, stays.ID)
+	}
+}
+
+// TestReapIgnoresTheDomainState: libvirt that cannot give the state of a
+// lease domain fails List and Extend with its kind, and does not stop a
+// reap.
+func TestReapIgnoresTheDomainState(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l := startAt(t, e, e.Now().Add(-lease.Lifetime))
+	stays := startAt(t, e, e.Now())
+	f.FailOn("DomainState", failure.New(failure.Failed, "injected"))
+	if _, err := lease.List(e); !failure.Is(err, failure.Failed) {
+		t.Errorf("List = %v, want failed", err)
+	}
+	if _, err := lease.Extend(e, stays.ID, time.Hour); !failure.Is(err, failure.Failed) {
+		t.Errorf("Extend = %v, want failed", err)
+	}
+	r, err := lease.Reap(e)
+	must(t, err)
+	if len(r.Expired) != 1 || r.Expired[0].ID != l.ID {
+		t.Errorf("Reap = %+v, want %s released", r, l.ID)
+	}
+}
+
 func TestExtend(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
 	l := startAt(t, e, e.Now())
 	got, err := lease.Extend(e, l.ID, time.Hour)
 	must(t, err)
-	if !got.Expiry.Equal(l.Expiry.Add(time.Hour)) || !got.Created.Equal(l.Created) {
+	if !got.Expiry.Equal(l.Expiry.Add(time.Hour)) || !got.Created.Equal(l.Created) || got.State != "running" {
 		t.Errorf("Extend = %+v, want expiry %v", got, l.Expiry.Add(time.Hour))
 	}
 	meta, err := f.DomainMetadata(l.Domain, lease.Namespace)

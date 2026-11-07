@@ -121,7 +121,7 @@ func writeLease(w io.Writer, l lease.Lease) {
 	const when = "2006-01-02 15:04"
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, row := range [][2]string{
-		{"lease", l.ID}, {"domain", l.Domain}, {"image", l.Image}, {"tier", l.Tier}, {"stock", l.Stock}, {"owner", l.Owner},
+		{"lease", l.ID}, {"domain", l.Domain}, {"image", l.Image}, {"tier", l.Tier}, {"stock", l.Stock}, {"owner", l.Owner}, {"state", l.State},
 		{"user", l.User}, {"address", l.Address}, {"key", l.Key}, {"ssh_config", l.SSHConfig},
 		{"created", l.Created.Local().Format(when)}, {"expiry", l.Expiry.Local().Format(when)},
 	} {

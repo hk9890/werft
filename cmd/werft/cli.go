@@ -49,7 +49,7 @@ func init() {
 		{name: "help", args: "[command]", summary: "show the usage of werft or of one command", run: (*cli).cmdHelp},
 		{name: "images", summary: "list the stock images: image, tier, version, date", run: (*cli).cmdImages},
 		{name: "lease", args: "<image> [--tier plain|full] [--owner o] [--view]", summary: "lease a disposable VM from the newest stock image; returns when SSH answers", run: (*cli).cmdLease},
-		{name: "leases", summary: "list the leases: id, owner, image, tier, address, expiry; releases expired ones first", run: (*cli).cmdLeases},
+		{name: "leases", summary: "list the leases: id, owner, image, tier, state, address, expiry; releases expired ones first", run: (*cli).cmdLeases},
 		{name: "list", summary: "list all VMs: state, disk use, reset points, LUKS marker, address", run: (*cli).cmdList},
 		{name: "migrate", args: "[--yes] <name>", summary: "move a build VM from the reset points of vm to native ones: keep provision-base (clean on -full), export clean-install", run: (*cli).cmdMigrate},
 		{name: "prepare", args: "[--yes] [--recipe file] <name>", summary: "make a stock install the base provision starts from: werft key and your own key, hostname, provision-base", run: (*cli).cmdPrepare},
