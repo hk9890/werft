@@ -534,7 +534,7 @@ All generic.
 | `upload` | Copy the embedded helpers and the recipe files into the guest |
 | `wait-session` | Wait for the desktop session |
 | `unlock-keyring` | Unlock the GNOME keyring |
-| `sudo-grant` | Grant passwordless sudo, `sudo -v` included, and revoke it in cleanup |
+| `sudo-grant` | Grant passwordless sudo, and revoke it in cleanup. Under classic sudo (Omarchy, Ubuntu 24.04) `sudo -v` passes too; sudo-rs (Ubuntu 26.04) still asks there |
 | `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup. A failed detach leaves the stick in the guest, mounts nothing on the host, and is tried again at the end of the run. A VM that is off, or booted again, has let go of the stick, and the host mounts it |
 | `pinentry` | Install a pinentry stub with the passphrase in tmpfs and a gpg-agent line; remove them in cleanup |
 | `run` | Run a guest command or script, with an optional secret on stdin |
