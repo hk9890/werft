@@ -319,7 +319,7 @@ func TestProvisionOmarchy(t *testing.T) {
 	}
 	w.assertSequence("the disk password is typed at each boot, then the Omarchy update and its reboot",
 		"^StartDomain testvm$", "^SendKey testvm \\[34\\]$", "^SendKey testvm \\[28\\]$", "^ssh true$",
-		"^ssh pgrep .*'Hyprland'$", "^ssh sudo .*NOPASSWD", "OMARCHY_UPDATE_LOGGED=1 omarchy update -y$",
+		"^ssh pgrep .*'Hyprland'$", "^ssh sudo .*NOPASSWD", "env LANG=C.UTF-8 .*OMARCHY_UPDATE_LOGGED=1 omarchy update -y$",
 		"systemctl poweroff", "^StartDomain testvm$", "^SendKey testvm \\[28\\]$", "^ssh rm -rf '/tmp/werft-provision'",
 		"^AttachDevice", "bootstrap.sh", "rm -f .*90-werft-provision",
 		"systemctl poweroff", "^StartDomain testvm$", "^SendKey testvm \\[28\\]$", "run.sh",
