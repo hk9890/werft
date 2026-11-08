@@ -6,6 +6,38 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.3.0
+
+- **`werft images --prune` deletes old stock versions.** It keeps the
+  newest version of each image and tier, and every version a lease uses.
+  It asks first; `--yes` skips the question. Like `lease`, it first
+  releases the expired leases. Before, no command deleted a stock version.
+  A new seal never takes the name of a deleted version again.
+- **`werft lease` takes `--memory`, `--cpus`, `--for` and `--stock`.**
+  `--memory` (MiB, at least 256) and `--cpus` replace the size of the stock
+  image. `--for` sets the lifetime, from 15m to 24h; the default stays 4h.
+  `--stock <version>` leases that version instead of the newest; without
+  `--tier` the lease takes the tier of that version. A `--tier` or image
+  that does not match the version fails with exit 2.
+- **`werft seal` and `werft lease` work with an encrypted (LUKS) disk.**
+  Both type the disk password from `pass` at boot. `werft images` marks
+  such a version with `"luks": true`. When the password store is locked,
+  the lease fails with `secret_unavailable` and names the `pass` entry to
+  unlock. The password never appears in output. This path has no live test
+  on a real encrypted guest yet.
+- **`werft leases` shows the state of each lease.** The table has a STATE
+  column and the JSON a `state` field, such as `running` or `shut off`. A
+  lease that is not running shows no address.
+- **A lease that does not boot saves its last screen.** The error names the
+  file under `~/.local/state/werft/evidence/`. werft keeps the 10 newest.
+  A lease stopped by Ctrl-C saves none.
+- **`werft seal` refuses a guest with systemd older than 256 before it
+  copies a disk.** It fails with `unsupported` when the reset point records
+  the systemd version, which `werft prepare` writes. For a reset point
+  without that record, a login timeout now tells you to run
+  `werft prepare <vm>` and take the reset point again. Before, `seal` copied
+  the disk and then failed on the timeout.
+
 ## v0.2.0
 
 - **`werft guide` prints how an agent leases a VM, uses it and gives it
