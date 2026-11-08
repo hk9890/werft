@@ -54,10 +54,11 @@ type = "unlock-keyring"
 # pending, so it is updated its own way first, inside the sudo window.
 # OMARCHY_UPDATE_LOGGED keeps the update from re-running itself under script,
 # where its reboot question waits forever. env-bootstrap sets OMARCHY_PATH,
-# which an SSH command does not get from a shell setup. LANG comes from
-# /etc/locale.conf: under locale C, Qt writes a warning into the answers of the
-# desktop shell, and a migration that reads them fails. The reboot after it
-# gives a new kernel its modules, the stick's among them.
+# which an SSH command does not get from a shell setup. The reboot after the
+# update gives a new kernel its modules, the stick's among them. An SSH command
+# runs under locale C, where Qt writes a warning into the answers of the
+# desktop shell and a migration that reads them fails; LANG=C.UTF-8 keeps
+# Qt quiet and the output English.
 [[steps]]
 type = "sudo-grant"
 family = "omarchy"
@@ -65,7 +66,7 @@ family = "omarchy"
 [[steps]]
 type = "run"
 family = "omarchy"
-command = ". /usr/share/omarchy/default/bash/env-bootstrap && . /etc/locale.conf && env LANG=\"$LANG\" XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus OMARCHY_UPDATE_LOGGED=1 omarchy update -y"
+command = ". /usr/share/omarchy/default/bash/env-bootstrap && env LANG=C.UTF-8 XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus OMARCHY_UPDATE_LOGGED=1 omarchy update -y"
 
 [[steps]]
 type = "reboot"
