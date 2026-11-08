@@ -288,6 +288,11 @@ func (UnlockKeyring) Run(r *pipeline.Run) error {
 
 const guestSudoers = "/etc/sudoers.d/90-werft-provision"
 
+// grantSudo writes the grant for user $1 to file $2. verifypw=any lets
+// sudo -v pass too: classic sudo asks there while any rule of the user, such
+// as the one of group wheel, asks. sudo-rs ignores verifypw.
+const grantSudo = `umask 227; printf "%s ALL=(ALL) NOPASSWD:ALL\nDefaults:%s verifypw=any\n" "$1" "$1" >"$2"`
+
 // SudoGrant opens passwordless sudo for the guest user, for scripts that call
 // sudo with no terminal to ask on, and closes it in cleanup. Neither the base
 // nor the clone carries it.
@@ -303,7 +308,7 @@ func (s *SudoGrant) Run(r *pipeline.Run) error {
 	// Set first: a grant that fails after the guest wrote the file is still
 	// taken back.
 	s.domain = r.Domain
-	if err := r.Root(`umask 227; printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$1" >"$2"`, r.User, guestSudoers); err != nil {
+	if err := r.Root(grantSudo, r.User, guestSudoers); err != nil {
 		return failure.Wrap(failure.Failed, err, "could not open sudo in %s", r.Domain)
 	}
 	return nil
