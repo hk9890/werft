@@ -290,7 +290,8 @@ const guestSudoers = "/etc/sudoers.d/90-werft-provision"
 
 // SudoGrant opens passwordless sudo for the guest user, for scripts that call
 // sudo with no terminal to ask on, and closes it in cleanup. Neither the base
-// nor the clone carries it.
+// nor the clone carries it. verifypw=any lets sudo -v pass too: by default it
+// asks while any rule of the user, such as the one of group wheel, asks.
 type SudoGrant struct{ domain string }
 
 func (s *SudoGrant) Check(r *pipeline.Run) error {
@@ -303,7 +304,7 @@ func (s *SudoGrant) Run(r *pipeline.Run) error {
 	// Set first: a grant that fails after the guest wrote the file is still
 	// taken back.
 	s.domain = r.Domain
-	if err := r.Root(`umask 227; printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$1" >"$2"`, r.User, guestSudoers); err != nil {
+	if err := r.Root(`umask 227; printf "%s ALL=(ALL) NOPASSWD:ALL\nDefaults:%s verifypw=any\n" "$1" "$1" >"$2"`, r.User, guestSudoers); err != nil {
 		return failure.Wrap(failure.Failed, err, "could not open sudo in %s", r.Domain)
 	}
 	return nil

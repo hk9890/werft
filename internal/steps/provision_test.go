@@ -35,7 +35,7 @@ func TestProvisionUbuntu(t *testing.T) {
 		"^ssh rm -rf '/tmp/werft-provision' && mkdir -p .* && tar -x",
 		"^ssh pgrep -u .* 'gnome-shell'$", "Secret.Service Collections$", "gjs '/tmp/werft-provision/unlock-keyring.js'$", "grep -qx 'b false'$",
 		"^host unmount stick$", "^AttachDevice testvm$", "^ssh findmnt -rn -S UUID=ABCD-1234$",
-		"^ssh sudo .*NOPASSWD.* sh 'tester' '/etc/sudoers.d/90-werft-provision'$",
+		"^ssh sudo .*NOPASSWD:ALL.*Defaults:%s verifypw=any.* sh 'tester' '/etc/sudoers.d/90-werft-provision'$",
 		"^ssh sh -c .*pinentry-program", "^ssh mkdir -p .* && bash bootstrap.sh https://github.com/carlo9890/bootstrap-scripts$",
 		"^ssh sh -c .*grep -vxF", "^ssh udisksctl unmount -b /dev/disk/by-uuid/ABCD-1234$", "^DetachDevice testvm$", "^host mount stick$",
 		"^ssh sudo .*rm -f .* sh '/etc/sudoers.d/90-werft-provision'$",
