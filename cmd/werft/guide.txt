@@ -34,10 +34,10 @@ Rules:
     werft --json lease ubuntu-26-04 --tier plain --owner <your-name>
 
   The command returns when the VM accepts SSH. An encrypted image first
-  waits up to 2 minutes for its disk password prompt. Then it waits up to
+  waits up to 3 minutes for its disk password prompt. Then it waits up to
   5 minutes for an address and then up to 5 minutes for SSH, plus the time
   of each attempt and the wait for the lock of other lease calls. Give the
-  call a timeout of at least 15 minutes, or run it in the background and
+  call a timeout of at least 20 minutes, or run it in the background and
   wait for it. The id comes only in the JSON document at the end.
 
   If the call was killed or its output is lost, find your lease by its

@@ -82,10 +82,10 @@ type Prompt struct {
 	Sleep func(time.Duration)
 }
 
-// DefaultPrompt has the timings of vm. They allow for Omarchy, whose console
-// stays black and still for some 20s between its boot menu and the disk
-// prompt.
-var DefaultPrompt = Prompt{Timeout: 120 * time.Second, Interval: 2 * time.Second, Still: 4}
+// DefaultPrompt waits for a screen that holds still for 40 s. The prompt
+// waits as long as it takes; the firmware screen of Omarchy held still for
+// 23 s on the first boot of a copied disk, and vm's 8 s typed into it.
+var DefaultPrompt = Prompt{Timeout: 180 * time.Second, Interval: 2 * time.Second, Still: 20}
 
 func (p Prompt) sleep(ctx context.Context) {
 	if p.Sleep != nil {
@@ -108,6 +108,9 @@ func (p Prompt) sleep(ctx context.Context) {
 func WaitForPrompt(ctx context.Context, h virt.Hypervisor, domain string, p Prompt) error {
 	var last, before [32]byte
 	still := 0
+	// lit keeps the verdict of blank per screen, so a still screen is
+	// decoded once, not on each of its screenshots.
+	lit := map[[32]byte]bool{}
 	for waited := time.Duration(0); ; waited += p.Interval {
 		if err := ctx.Err(); err != nil {
 			return failure.Wrap(failure.Failed, err, "interrupted while waiting for the prompt of %s; nothing was typed", domain)
@@ -115,7 +118,10 @@ func WaitForPrompt(ctx context.Context, h virt.Hypervisor, domain string, p Prom
 		var buf bytes.Buffer
 		if _, err := h.Screenshot(domain, &buf); err == nil {
 			sum := sha256.Sum256(buf.Bytes())
-			if (sum == last || sum == before) && !blank(buf.Bytes()) {
+			if _, ok := lit[sum]; !ok {
+				lit[sum] = !blank(buf.Bytes())
+			}
+			if (sum == last || sum == before) && lit[sum] {
 				still++
 			} else {
 				still = 0
