@@ -196,3 +196,26 @@ func TestWaitForPromptSkipsAFailedScreenshot(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// The firmware screen of Omarchy held still for 23 s on the first boot of a
+// copied disk. The default timings wait it out and type at the prompt.
+func TestDefaultPromptWaitsOutTheFirmwareScreen(t *testing.T) {
+	f := running(t)
+	firmwareScreen, promptScreen := screen(t, true), screen(t, true)
+	promptScreen = append(promptScreen[:len(promptScreen):len(promptScreen)], 0) // another hash
+	f.SetScreenshot("vm", "image/png", firmwareScreen)
+	shots := 0
+	p := console.DefaultPrompt
+	p.Sleep = func(time.Duration) {
+		shots++
+		if shots == 12 {
+			f.SetScreenshot("vm", "image/png", promptScreen)
+		}
+	}
+	if err := console.WaitForPrompt(context.Background(), f, "vm", p); err != nil {
+		t.Fatal(err)
+	}
+	if shots < 12+p.Still {
+		t.Errorf("returned after %d waits, on the firmware screen", shots)
+	}
+}
