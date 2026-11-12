@@ -57,8 +57,7 @@ real adapters.
   pauses 1 s after the first attempt and doubles the pause up to 8 s.
 - **`internal/guest/assets`** — Generic guest helpers, embedded in the binary with `go:embed`.
 - **`internal/console`** — Typing at the boot console: screenshot, decode with Go `image/png`, detect
-  "not black and still for 4 frames, after the console went black once after the firmware
-  screen", send key codes with `DomainSendKey`. No keystroke passes
+  "not black and still for 4 frames", send key codes with `DomainSendKey`. No keystroke passes
   through a `virsh` process. The timings are those of `vm`: a screenshot every 2 s, at most 120 s.
   The wait stops when its context ends, so SIGINT stops it before anything is typed.
 - **`internal/lifecycle`** — `list`, `start` and `stop` for any domain. `list` gets disk use from
