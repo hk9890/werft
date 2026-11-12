@@ -103,11 +103,14 @@ func (p Prompt) sleep(ctx context.Context) {
 // WaitForPrompt returns once the console shows something other than black
 // and holds still: the prompt waits, the boot stages before it move on. A
 // screenshot that matches either of the two before it counts as still, so a
-// blinking cursor cannot keep the prompt from settling. It stops when ctx
+// blinking cursor cannot keep the prompt from settling. Only a screen after
+// the console went black counts: the firmware screen comes first, and on the
+// first boot of a copied disk it held still for 23 s. It stops when ctx
 // ends, as on SIGINT.
 func WaitForPrompt(ctx context.Context, h virt.Hypervisor, domain string, p Prompt) error {
 	var last, before [32]byte
 	still := 0
+	drawn, cleared := false, false
 	for waited := time.Duration(0); ; waited += p.Interval {
 		if err := ctx.Err(); err != nil {
 			return failure.Wrap(failure.Failed, err, "interrupted while waiting for the prompt of %s; nothing was typed", domain)
@@ -115,7 +118,10 @@ func WaitForPrompt(ctx context.Context, h virt.Hypervisor, domain string, p Prom
 		var buf bytes.Buffer
 		if _, err := h.Screenshot(domain, &buf); err == nil {
 			sum := sha256.Sum256(buf.Bytes())
-			if (sum == last || sum == before) && !blank(buf.Bytes()) {
+			black := blank(buf.Bytes())
+			cleared = cleared || (drawn && black)
+			drawn = drawn || !black
+			if (sum == last || sum == before) && !black && cleared {
 				still++
 			} else {
 				still = 0

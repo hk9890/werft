@@ -75,13 +75,38 @@ func prompt(sleeps *int) console.Prompt {
 
 func TestWaitForPromptNeedsAStillScreen(t *testing.T) {
 	f := running(t)
-	f.SetScreenshot("vm", "image/png", screen(t, true))
+	f.SetScreens("vm", "image/png", virttest.BootScreens()...)
 	sleeps := 0
 	if err := console.WaitForPrompt(context.Background(), f, "vm", prompt(&sleeps)); err != nil {
 		t.Fatal(err)
 	}
-	if sleeps != 4 {
-		t.Errorf("returned after %d waits, want 4 still screenshots after the first", sleeps)
+	if sleeps != 6 {
+		t.Errorf("returned after %d waits, want firmware, black, the prompt and 4 still screenshots", sleeps)
+	}
+}
+
+// The firmware screen can hold still longer than the prompt needs, as on the
+// first boot of a copied disk. It is no prompt: the prompt comes after the
+// console went black.
+func TestWaitForPromptSkipsTheFirmwareScreen(t *testing.T) {
+	boot := virttest.BootScreens()
+	firmware := slices.Repeat([][]byte{boot[0]}, 10)
+	f := running(t)
+	f.SetScreens("vm", "image/png", firmware...)
+	sleeps := 0
+	err := console.WaitForPrompt(context.Background(), f, "vm", prompt(&sleeps))
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "nothing was typed") {
+		t.Errorf("a still firmware screen counted as the prompt: %v", err)
+	}
+	f.SetScreens("vm", "image/png", append(firmware, boot[1:]...)...)
+	sleeps = 0
+	p := prompt(&sleeps)
+	p.Timeout = 60 * time.Second
+	if err := console.WaitForPrompt(context.Background(), f, "vm", p); err != nil {
+		t.Fatal(err)
+	}
+	if sleeps != 15 {
+		t.Errorf("returned after %d waits, want 10 firmware, black, the prompt and 4 still screenshots", sleeps)
 	}
 }
 
@@ -97,7 +122,8 @@ func TestWaitForPromptIgnoresABlackScreen(t *testing.T) {
 
 func TestWaitForPromptReadsPPM(t *testing.T) {
 	f := running(t)
-	f.SetScreenshot("vm", "image/x-portable-pixmap", append([]byte("P6\n2 1\n255\n"), 0, 0, 0, 9, 9, 9))
+	lit := append([]byte("P6\n2 1\n255\n"), 0, 0, 0, 9, 9, 9)
+	f.SetScreens("vm", "image/x-portable-pixmap", lit, append([]byte("P6\n2 1\n255\n"), 0, 0, 0, 0, 0, 0), lit)
 	sleeps := 0
 	if err := console.WaitForPrompt(context.Background(), f, "vm", prompt(&sleeps)); err != nil {
 		t.Error(err)
@@ -155,7 +181,9 @@ func TestWaitForPromptSettlesWithABlinkingCursor(t *testing.T) {
 	shots := 0
 	p := console.Prompt{Timeout: 20 * time.Second, Interval: 2 * time.Second, Still: 4, Sleep: func(time.Duration) {
 		shots++
-		if shots%2 == 1 {
+		if shots == 1 {
+			f.SetScreenshot("vm", "image/png", screen(t, false))
+		} else if shots%2 == 1 {
 			f.SetScreenshot("vm", "image/png", off)
 		} else {
 			f.SetScreenshot("vm", "image/png", on)

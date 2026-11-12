@@ -40,15 +40,17 @@ type domain struct {
 	uuid string
 	// transient is a running domain that was undefined; it goes away when
 	// it stops.
-	transient  bool
-	xml        string
-	liveXML    string
-	state      virt.State
-	metadata   map[string]string
-	snapshots  []snapshot
-	keys       [][]uint32
-	devices    []string
-	screenshot []byte
+	transient bool
+	xml       string
+	liveXML   string
+	state     virt.State
+	metadata  map[string]string
+	snapshots []snapshot
+	keys      [][]uint32
+	devices   []string
+	// screens is the console of one boot, in order; the last one stays.
+	screens    [][]byte
+	screen     int
 	screenMIME string
 	// ignoresACPI is a guest that does not react to ShutdownDomain.
 	ignoresACPI bool
@@ -162,10 +164,20 @@ func (f *Fake) AddDHCPLease(network string, l virt.DHCPLease) {
 }
 
 func (f *Fake) SetScreenshot(domain, mime string, data []byte) {
+	f.SetScreens(domain, mime, data)
+}
+
+// SetScreens sets the console of each boot: every screenshot shows the next
+// screen, and the last one stays. A start shows the first one again.
+func (f *Fake) SetScreens(domain, mime string, screens ...[]byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if d, ok := f.domains[domain]; ok {
-		d.screenMIME, d.screenshot = mime, slices.Clone(data)
+		d.screenMIME, d.screen = mime, 0
+		d.screens = nil
+		for _, s := range screens {
+			d.screens = append(d.screens, slices.Clone(s))
+		}
 	}
 }
 
@@ -358,6 +370,7 @@ func (f *Fake) StartDomain(name string) error {
 		return failure.Wrap(failure.Failed, err, "start %s", name)
 	}
 	d.state = virt.StateRunning
+	d.screen = 0
 	return nil
 }
 
@@ -1101,7 +1114,12 @@ func (f *Fake) Screenshot(domain string, w io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := w.Write(d.screenshot); err != nil {
+	var screen []byte
+	if len(d.screens) > 0 {
+		screen = d.screens[d.screen]
+		d.screen = min(d.screen+1, len(d.screens)-1)
+	}
+	if _, err := w.Write(screen); err != nil {
 		return "", failure.Wrap(failure.Failed, err, "screenshot of %s", domain)
 	}
 	return d.screenMIME, nil

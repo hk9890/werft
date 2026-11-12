@@ -6,9 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	stdimage "image"
-	"image/color"
-	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -513,16 +510,15 @@ func TestReleaseFinishesAHalfDoneRelease(t *testing.T) {
 	}
 }
 
-// screen is the fake whose every console shows a still prompt.
+// screen is the fake whose every console asks for the disk password at boot.
 type screen struct{ *virttest.Fake }
 
-func (s screen) Screenshot(domain string, w io.Writer) (string, error) {
-	if _, err := s.Fake.Screenshot(domain, io.Discard); err != nil {
-		return "", err
+func (s screen) DefineDomain(xml string) (virt.Domain, error) {
+	d, err := s.Fake.DefineDomain(xml)
+	if err == nil {
+		s.SetScreens(d.Name, "image/png", virttest.BootScreens()...)
 	}
-	img := stdimage.NewRGBA(stdimage.Rect(0, 0, 4, 4))
-	img.Set(1, 1, color.White)
-	return "image/png", png.Encode(w, img)
+	return d, err
 }
 
 // store is pass with one entry.

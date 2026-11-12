@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,8 +46,8 @@ type world struct {
 	term  *terminal
 	pass  map[string]string
 	out   bytes.Buffer
-	// screen is the console of every domain, the disk prompt of Omarchy.
-	screen []byte
+	// screens is the console of every boot, up to the disk prompt of Omarchy.
+	screens [][]byte
 	// key is the werft key, userKey the user's own; only their public
 	// halves exist.
 	key     string
@@ -152,12 +149,8 @@ func (w *world) omarchy() {
 	must(w.t, w.fake.SetDomainDescription(vm, "my notes\n"+domxml.LUKSMarker))
 	must(w.t, w.fake.DeleteSnapshot(vm, resetpoint.ProvisionBase))
 	must(w.t, w.fake.CreateSnapshot(vm, resetpoint.ProvisionBase, ""))
-	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
-	img.Set(1, 1, color.White)
-	var buf bytes.Buffer
-	must(w.t, png.Encode(&buf, img))
-	w.screen = buf.Bytes()
-	w.fake.SetScreenshot(vm, "image/png", w.screen)
+	w.screens = virttest.BootScreens()
+	w.fake.SetScreens(vm, "image/png", w.screens...)
 }
 
 func (w *world) run(entries []pipeline.Entry, yes bool) (*pipeline.Run, error) {
@@ -231,8 +224,8 @@ func (h *recorder) DeleteSnapshot(domain, name string) error {
 func (h *recorder) DefineDomain(xml string) (virt.Domain, error) {
 	d, err := h.Fake.DefineDomain(xml)
 	h.w.add("DefineDomain " + d.Name)
-	if h.w.screen != nil {
-		h.SetScreenshot(d.Name, "image/png", h.w.screen)
+	if h.w.screens != nil {
+		h.SetScreens(d.Name, "image/png", h.w.screens...)
 	}
 	return d, err
 }
