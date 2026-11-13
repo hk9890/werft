@@ -20,7 +20,7 @@ Each row is a proposal until the user accepts it.
 | Lease address | AF_VSOCK first, DHCP lease by MAC as fallback | Unique per domain, no DNS race. mDNS is not used for leases. |
 | SSH | OpenSSH `ssh`/`scp` as child processes | The agent gets the same command werft used. vsock works through `systemd-ssh-proxy`. |
 | Clone | Domain XML generated in Go | `virt-clone` goes away, and with it the mise-python `gi` failure. |
-| Setup-specific steps | A recipe file that the setup repo owns (accepted). Until the setup repo takes it over, werft ships it as `examples/setup/recipe.toml` | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
+| Setup-specific steps | A recipe file that the setup repo owns (accepted): `tests/werft/recipe.toml` | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
 
 ## Packages
 
@@ -126,7 +126,7 @@ real adapters.
 | Last screen of a lease that did not boot | `~/.local/state/werft/evidence/<YYYYmmdd-HHMMSS>-<domain>.png` (UTC), the 10 newest | werft |
 | Locks | `~/.local/state/werft/locks/` | werft |
 | Config | `~/.config/werft/config.toml` | user |
-| Recipes | setup repo; until then `examples/setup/` in werft | setup repo |
+| Recipes | setup repo, `tests/werft/` | setup repo |
 
 werft never opens a file under `/var/lib/libvirt/` directly. Every disk operation goes through the
 storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception: `list`,
@@ -581,7 +581,8 @@ guest can reboot and the run can move on to the clone after the step ran.
 ### Recipe
 
 A recipe is a TOML file that lists the provision steps and their parameters. The setup repo owns
-it and the files it names; paths resolve relative to the recipe, and `~/` is the home directory. A
+it and the files it names, in `tests/werft/`, and its stow package `dotfiles/werft` links the
+`config.toml` that names it. Paths resolve relative to the recipe, and `~/` is the home directory. A
 step can be limited to a guest family. `config.toml` maps each build VM to its recipe (`recipe` for
 all, `[recipes]` per build VM); `--recipe` overrides it. `prepare` reads only `[guest_password]`
 from it; without a recipe it says so and asks for the guest password at the terminal.
@@ -709,8 +710,6 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 - **SSH library.** OpenSSH child processes (proposed), or `golang.org/x/crypto/ssh` with an AF_VSOCK
   dialer: no process per call, but a different path from the one the agent uses.
-- **Recipe location.** Where in the setup repo the recipe lives. TOML with a `family` key per step
-  is enough for the setup recipe.
 - **Scripted secrets.** Is `pass` plus TTY enough, or does an unattended `provision` need a secret
   file or file descriptor? Can an agent run `provision` without a TTY at all, given the key stick
   and the `pinentry` secret?

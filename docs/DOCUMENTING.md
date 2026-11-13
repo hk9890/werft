@@ -20,9 +20,6 @@ conflict, this file wins.
 - [CHANGELOG.md](../CHANGELOG.md) owns what changed for the user in each release; its section is
   the release text on GitHub. [RELEASING.md](RELEASING.md#what-goes-in-the-changelog-section)
   owns the rules for writing it.
-- [examples/setup/README.md](../examples/setup/README.md) owns the setup-repo recipe: what
-  `examples/setup/recipe.toml` and `examples/setup/bootstrap.sh` do and what a run needs. It moves
-  to the setup repo with the recipe.
 
 ## Decisions and work items
 

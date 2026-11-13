@@ -1,5 +1,6 @@
-# werft provision recipe for the setup repo (github.com/carlo9890/setup).
-# It replays the fresh-machine bootstrap in a build VM, runs the system
+# A copy of the werft provision recipe of the setup repo
+# (github.com/carlo9890/setup, tests/werft/recipe.toml), the fixture of the
+# step tests. It replays the fresh-machine bootstrap in a build VM, runs the system
 # checks, and keeps the result as <build VM>-full: what `vm provision` did.
 # Paths are relative to this file; ~/ is the home directory.
 

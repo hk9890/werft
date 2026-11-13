@@ -53,9 +53,9 @@ mise run werft -- <command>     # build, then run in your shell's directory; ver
 - **Locks**: take `LockDomain` from `state.Root()` before a command changes a build VM;
   `c.lockedHypervisor(name)` in `cmd/werft/resetpoint.go` does both. A held lock fails with
   `conflict`.
-- **Setup recipe**: keep `examples/setup/recipe.toml` and `examples/setup/bootstrap.sh` as
-  [examples/setup/README.md](../examples/setup/README.md) describes them; change the README in the
-  same PR.
+- **Setup recipe**: the step tests load `internal/steps/testdata/setup/recipe.toml`, a copy of
+  `tests/werft/recipe.toml` of the setup repo. A change to a step or a key that the setup recipe
+  uses needs a setup PR too.
 - **Guest assets**: put the file in `internal/guest/assets/`, add a `//go:embed` variable in
   `assets.go`, and add it to `Helpers()` when the `upload` step must copy it.
 
