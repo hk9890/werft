@@ -37,7 +37,9 @@ for unit in ssh sshd; do
 	printf '[Unit]\nWants=werft-ssh-host-keys.service\nAfter=werft-ssh-host-keys.service\n' >"$units/$unit.service.d/werft-host-keys.conf"
 done
 
-printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$1" >/etc/sudoers.d/werft
+# verifypw=any lets sudo -v pass too: classic sudo asks there while any rule
+# of the user, such as the one of group wheel, asks. sudo-rs ignores it.
+printf '%s ALL=(ALL) NOPASSWD: ALL\nDefaults:%s verifypw=any\n' "$1" "$1" >/etc/sudoers.d/werft
 chmod 0440 /etc/sudoers.d/werft
 visudo -cqf /etc/sudoers.d/werft >/dev/null
 sync
