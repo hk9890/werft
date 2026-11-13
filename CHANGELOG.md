@@ -6,6 +6,15 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.4.0
+
+- **`werft seal --recipe <file>` names the recipe that gives the disk
+  password of an encrypted (LUKS) build VM.** Without the flag, seal uses
+  the recipe `config.toml` names, else it asks at the terminal, as before.
+- **`sudo -n -v` passes in a lease of a stock image sealed with this
+  version.** Before, on an Omarchy lease it asked for a password, although
+  other `sudo -n` commands ran. Seal the image again to get the fix.
+
 ## v0.3.1
 
 - **werft waits longer before it types the disk password of an encrypted
