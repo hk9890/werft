@@ -27,6 +27,7 @@ func (c *cli) cmdSeal(args []string) error {
 	var yes bool
 	fs.BoolVar(&yes, "yes", false, "reset the build VM to the label without asking")
 	fs.BoolVar(&yes, "y", false, "short for --yes")
+	recipePath := fs.String("recipe", "", "the recipe whose guest_password gives the disk password of a LUKS build VM; default: the recipe config.toml names for the image")
 	if err := c.parseFlags(fs, "seal", args); err != nil {
 		return err
 	}
@@ -53,7 +54,7 @@ func (c *cli) cmdSeal(args []string) error {
 	}
 	var spec secret.Spec
 	if s.LUKS {
-		if spec, err = diskPasswordSpec(cfg, s); err != nil {
+		if spec, err = diskPasswordSpec(cfg, *recipePath, s); err != nil {
 			return err
 		}
 	}
@@ -89,11 +90,14 @@ func (c *cli) cmdSeal(args []string) error {
 }
 
 // diskPasswordSpec says where the disk password of the LUKS build VM of s
-// comes from: guest_password of the recipe of its image, as provision reads
-// it, else the terminal.
-func diskPasswordSpec(cfg config.Config, s *image.Seal) (secret.Spec, error) {
+// comes from: guest_password of the recipe at path, else of the recipe of its
+// image, as provision reads it, else the terminal.
+func diskPasswordSpec(cfg config.Config, path string, s *image.Seal) (secret.Spec, error) {
 	var spec secret.Spec
-	if path := cfg.RecipeFor(s.Image); path != "" {
+	if path == "" {
+		path = cfg.RecipeFor(s.Image)
+	}
+	if path != "" {
 		var err error
 		if spec, err = recipe.GuestPassword(path); err != nil {
 			return secret.Spec{}, err
