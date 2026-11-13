@@ -177,8 +177,10 @@ func (c *cli) cmdRelease(args []string) error {
 	byOwner := false
 	fs.Visit(func(f *flag.Flag) { byOwner = byOwner || f.Name == "owner" })
 	switch {
-	case byOwner && (*owner == "" || fs.NArg() != 0):
-		return failure.New(failure.Usage, "release takes one lease id or --owner with an owner, not both")
+	case byOwner && fs.NArg() != 0:
+		return failure.New(failure.Usage, "release takes one lease id or --owner, not both")
+	case byOwner && *owner == "":
+		return failure.New(failure.Usage, "--owner needs an owner, such as the one werft leases shows")
 	case !byOwner && fs.NArg() != 1:
 		return failure.New(failure.Usage, "release takes one lease id, or --owner <owner>")
 	}

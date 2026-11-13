@@ -101,9 +101,16 @@ func TestReleaseArguments(t *testing.T) {
 	if r := lh.run("release", "abc123"); r.code != 0 || r.stdout != "lease abc123 is gone already\n" {
 		t.Errorf("release text = %+v", r)
 	}
-	for _, args := range [][]string{{"release", "--owner", "agent", "abc123"}, {"release", "--owner", ""}, {"release", "--owner"}} {
-		if r := lh.run(append([]string{"--json"}, args...)...); r.code != 2 {
-			t.Errorf("werft %q = %+v, want usage", args, r)
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"release", "--owner", "agent", "abc123"}, "not both"},
+		{[]string{"release", "--owner", ""}, "needs an owner"},
+		{[]string{"release", "--owner"}, "flag needs an argument"},
+	} {
+		if r := lh.run(append([]string{"--json"}, tt.args...)...); r.code != 2 || !strings.Contains(r.stdout, tt.want) {
+			t.Errorf("werft %q = %+v, want usage with %q", tt.args, r, tt.want)
 		}
 	}
 }
@@ -144,19 +151,46 @@ func TestReleaseOwner(t *testing.T) {
 	}
 }
 
-// TestReleaseOwnerFails: a release that fails does not stop the others, and
-// the error names each lease that failed.
+// TestReleaseOwnerFails: a release that fails does not stop the others.
+// The error names the lease that failed, and stderr names the lease that
+// was released.
 func TestReleaseOwnerFails(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	lh := newLifecycleHost(t)
 	setClock(t, time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC))
-	addOwnedLease(t, lh, "aaa111", "claude-x", clock())
-	addOwnedLease(t, lh, "bbb222", "claude-x", clock())
-	lh.fake.FailOn("DeleteVolume", failure.New(failure.Failed, "injected"))
+	kept := addOwnedLease(t, lh, "aaa111", "claude-x", clock())
+	gone := addOwnedLease(t, lh, "bbb222", "claude-x", clock())
+	lh.fake.FailOn("DeleteVolume default "+kept+".qcow2", failure.New(failure.Failed, "injected"))
 
 	r := lh.run("--json", "release", "--owner", "claude-x")
-	if r.code != 1 || !strings.Contains(r.stdout, "aaa111, bbb222") {
-		t.Errorf("release --owner with a failing overlay delete = %+v, want failed naming both leases", r)
+	if r.code != 1 || !strings.Contains(r.stdout, kept) || strings.Contains(r.stdout, gone) {
+		t.Errorf("release --owner with one failing overlay delete = %+v, want failed naming %s only", r, kept)
+	}
+	if !strings.Contains(r.stderr, "Released "+gone) {
+		t.Errorf("stderr = %q, want the released %s named", r.stderr, gone)
+	}
+	if _, err := lh.fake.Domain(gone); !failure.Is(err, failure.NotFound) {
+		t.Errorf("%s is left: %v", gone, err)
+	}
+}
+
+// TestReleaseOwnerKeepsForeign: release --owner keeps a lease of the same
+// owner that names another state directory.
+func TestReleaseOwnerKeepsForeign(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	lh := newLifecycleHost(t)
+	setClock(t, time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC))
+	mine := addOwnedLease(t, lh, "aaa111", "claude-x", clock())
+	home := os.Getenv("XDG_STATE_HOME")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	foreign := addOwnedLease(t, lh, "bbb222", "claude-x", clock())
+	t.Setenv("XDG_STATE_HOME", home)
+
+	if r := lh.run("--json", "release", "--owner", "claude-x"); r.code != 0 || !strings.Contains(r.stdout, mine) || strings.Contains(r.stdout, foreign) {
+		t.Errorf("release --owner = %+v, want %s only", r, mine)
+	}
+	if _, err := lh.fake.Domain(foreign); err != nil {
+		t.Errorf("release --owner removed the foreign %s: %v", foreign, err)
 	}
 }
 

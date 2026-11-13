@@ -3,7 +3,6 @@
 package lease
 
 import (
-	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -534,30 +533,31 @@ type Released struct {
 	Domain string `json:"domain"`
 }
 
-// ReleaseOwner releases every lease of List with the owner. A release that
-// fails does not stop the others: the error names each lease that failed,
-// with the kind of the first failure.
+// ReleaseOwner releases every lease with the owner that List would list,
+// as Release does, and prints each one it released. Like Reap, it reads no
+// domain state, goes on after a failure, and names every failure.
 func ReleaseOwner(e Env, owner string) ([]Released, error) {
-	leases, err := List(e)
+	all, err := scan(e)
 	if err != nil {
 		return nil, err
 	}
 	released := []Released{}
-	var first error
-	var failed []string
-	for _, l := range leases {
-		if l.Owner != owner {
+	var errs []error
+	for _, f := range all {
+		if f.owner == foreign || f.Owner != owner {
 			continue
 		}
-		domain, err := Release(e.H, e.Dir, e.Prefix, l.ID)
-		if err != nil {
-			first = cmp.Or(first, err)
-			failed = append(failed, l.ID)
+		if err := releaseDomain(e, f.Domain, e.Dir.Lease(f.ID)); err != nil {
+			errs = append(errs, err)
 			continue
 		}
-		released = append(released, Released{ID: l.ID, Domain: domain})
+		e.printf("Released %s: lease %s of owner %s", f.Domain, f.ID, owner)
+		released = append(released, Released{ID: f.ID, Domain: f.Domain})
 	}
-	return released, failure.Wrap(failure.KindOf(first), first, "the release of lease %s of owner %s failed", strings.Join(failed, ", "), owner)
+	if len(errs) > 0 {
+		return released, failure.Wrap(failure.Failed, errors.Join(errs...), "release --owner %s", owner)
+	}
+	return released, nil
 }
 
 // find is the lease domain of id, empty when there is none.

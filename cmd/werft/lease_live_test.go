@@ -30,7 +30,7 @@ import (
 // the first two with the ssh command werft lease prints, and releases the first. It releases the last
 // two with --owner. Then it checks the lifetime of the second (leaseLifetime), which also shows that
 // --owner kept the lease of another owner. Control: the stock definition writes the serial console
-// to one file, which the two leases would share; a key other than the lease
+// to one file, which the leases would share; a key other than the lease
 // key gets no login, and the lease key does with the same command line.
 func TestLeaseLive(t *testing.T) {
 	isolate(t)
@@ -259,9 +259,19 @@ func releaseOwnerLive(t *testing.T, h virt.Hypervisor, owner string, docs []map[
 	if !slices.Equal(released, want) {
 		t.Errorf("release --owner %s = %v, want %v", owner, released, want)
 	}
+	dir, err := state.Root()
+	livetest.Must(t, err, "state directory")
+	volumes, err := h.Volumes(livetest.Pool)
+	livetest.Must(t, err, "list the volumes")
 	for _, r := range want {
 		if _, err := h.Domain(r.Domain); !failure.Is(err, failure.NotFound) {
 			t.Errorf("%s is left after release --owner: %v", r.Domain, err)
+		}
+		if slices.Contains(volumes, r.Domain+".qcow2") {
+			t.Errorf("the overlay %s.qcow2 is left after release --owner", r.Domain)
+		}
+		if _, err := os.Stat(dir.Lease(r.ID)); !os.IsNotExist(err) {
+			t.Errorf("the lease directory of %s is left after release --owner: %v", r.ID, err)
 		}
 	}
 }
