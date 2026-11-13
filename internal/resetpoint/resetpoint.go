@@ -82,10 +82,10 @@ func guard(h virt.Hypervisor, domain string, legacy bool) error {
 	return nil
 }
 
-// Legacy is the labels of the reset points vm keeps for domain: a copy of
+// Legacy is the labels of the reset points vm kept for domain: a copy of
 // the NVRAM named <nvram>.<label>.bak next to it. It lists the directory, as
 // vm did, and not the storage pool: libvirt refreshes a pool only on request,
-// and vm writes the copies outside the pool API. The nvram directory of
+// and vm wrote the copies outside the pool API. The nvram directory of
 // libvirt is world-readable, so no root is needed. A domain without NVRAM,
 // or with an NVRAM in a directory werft cannot list, has none.
 func Legacy(h virt.Hypervisor, domain string) ([]string, error) {

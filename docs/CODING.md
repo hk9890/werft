@@ -55,7 +55,8 @@ mise run werft -- <command>     # build, then run in your shell's directory; ver
   `conflict`.
 - **Setup recipe**: the step tests load `internal/steps/testdata/setup/recipe.toml`, a copy of
   `tests/werft/recipe.toml` of the setup repo. A change to a step or a key that the setup recipe
-  uses needs a setup PR too.
+  uses needs a setup PR too. Each path the copy names needs a stub at the same relative path,
+  such as `internal/steps/testdata/system/`: the recipe load fails on a missing path.
 - **Guest assets**: put the file in `internal/guest/assets/`, add a `//go:embed` variable in
   `assets.go`, and add it to `Helpers()` when the `upload` step must copy it.
 

@@ -128,10 +128,11 @@ type = "wait-session"
 [[steps]]
 type = "unlock-keyring"
 
-# From the host checkout, so a check added on a branch runs at once.
+# From the checkout that holds this recipe, so a check added on a branch runs
+# when the run names that branch's recipe.
 [[steps]]
 type = "checks"
-dir = "~/setup/tests/system"
+dir = "../system"
 command = "run.sh"
 
 # Stage 3: the result image.

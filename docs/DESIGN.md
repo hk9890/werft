@@ -1,8 +1,8 @@
 # werft — design
 
-How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). werft replaces the
-bash tool `vm` in [`scripts/vm/`](https://github.com/carlo9890/setup/tree/main/scripts/vm) of the
-setup repo.
+How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). werft replaced the
+bash tool `vm` of the setup repo, which deleted it in roadmap phase 2. Its last version:
+[`scripts/vm/`](https://github.com/carlo9890/setup/tree/0860f2b2ecd080f3b1724ba43a53e0abb68c0d9d/scripts/vm).
 
 Status of each phase: [PRODUCT.md, "Roadmap"](PRODUCT.md#roadmap).
 
@@ -65,7 +65,7 @@ real adapters.
 - **`internal/lifecycle`** — `list`, `start` and `stop` for any domain. `list` gets disk use from
   the storage API and counts native reset points plus the `.bak` files of `vm`. It finds the `.bak`
   files in a listing of the NVRAM directory, as `vm` did, and not through the storage pool: `vm`
-  writes them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
+  wrote them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
   The address is `vsock/<cid>`, else the IPv4 DHCP lease (`virt.DomainAddresses`, the same rule
   that `prepare` and `provision` use). `start` opens no viewer without `--view`, does not type a
   disk password, and waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
@@ -94,7 +94,7 @@ real adapters.
 ### Objects
 
 - **Build VM.** A libvirt domain a human installed from vendor media, for example `ubuntu-26-04`,
-  plus its provision result `ubuntu-26-04-full`. These are the domains `vm` manages today. Only
+  plus its provision result `ubuntu-26-04-full`. These are the domains `vm` managed. Only
   build VMs have reset points. Leases never run on them.
 - **Reset point.** A native libvirt internal snapshot of a shut-off build VM. It holds disk and
   NVRAM. Fixed labels carry over: `clean-install`, `provision-base` (made by `prepare`), `clean`
@@ -117,7 +117,7 @@ real adapters.
 | Reset points | libvirt snapshot metadata plus qcow2 internal snapshots in disk and NVRAM | libvirt |
 | Stock files, lease overlays, `clean-install` exports of `migrate` | storage pool `werft`, `/var/lib/libvirt/images/werft/` | libvirt |
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
-| LUKS marker | domain description line, same format as `vm` writes | libvirt |
+| LUKS marker | domain description line, same format as `vm` wrote | libvirt |
 | Guest systemd version of a build VM | domain description line `werft: the guest has systemd <N>`, written by `detect-guest`; a reset point holds the line of its time | libvirt |
 | Image records (user, guest family, systemd version, versions, the domain definition leases start from, the LUKS marker and the `pass` entry of the disk password), and the names of the pruned versions | `~/.local/state/werft/images.toml`, written by `seal` and `images --prune` | werft |
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/`: `id_ed25519`, `id_ed25519.pub`, `ssh_config` | werft, removed on release |
@@ -336,7 +336,7 @@ labels are equal, so migration keeps one label per domain:
   (disk) and `<domain>-clean-install_VARS.qcow2` (NVRAM).
 - **Deleted:** every other label.
 
-`vm` took its `qemu-img` snapshots of the first disk only, and marks each with
+`vm` took its `qemu-img` snapshots of the first disk only, and marked each with
 `<nvram>.<label>.bak`. migrate finds the labels in the volume list of the NVRAM pool, after a pool
 refresh. When no pool lists the NVRAM yet, it finds them in a listing of the NVRAM directory, and
 makes the pool only after the confirmation. It needs no root:
@@ -375,13 +375,6 @@ domain names the raw NVRAM. When the native snapshot fails, the error names
 A domain with neither the kept label nor `clean-install` keeps its current disk and NVRAM: step 3
 runs, the qcow2 NVRAM is a copy of the current one, and the domain gets no reset point.
 `werft prepare` or `werft snapshot` takes one.
-
-After migration `vm reset` and `vm provision` refuse the domain, because they find no `.bak` file.
-`vm snapshot` does not refuse it: it finds the native reset point with `qemu-img snapshot -l`, and
-takes a `qemu-img` snapshot plus a `.bak` copy of the qcow2 NVRAM. `vm snapshot --replace` of a
-native label deletes the disk half of the libvirt reset point. Do not use `vm snapshot` on a
-migrated domain. The raw-NVRAM guard catches the `.bak` file of such a snapshot. The two tools run
-side by side, one per domain.
 
 ## Stock images and seal
 
@@ -610,7 +603,8 @@ that has a cleanup. The setup recipe holds:
 
 - the bootstrap repo URL and the script that clones it and runs `install.sh` (the rest of
   `guest/bootstrap.sh`);
-- `tests/system` for the `checks` step, from the host checkout as today;
+- `tests/system` for the `checks` step, as `../system` from the recipe, so the checks come from
+  the checkout that holds the recipe;
 - `usb-passthrough` with mount label `MASTER-KEY`, and `pinentry` with a TTY secret;
 - the guest password secret from `pass` entry `vm/guest-password`;
 - for family `omarchy`: a `run` step for `omarchy update` (`OMARCHY_UPDATE_LOGGED=1`,
@@ -676,10 +670,8 @@ Exit codes are part of the contract:
 
 The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
-- The user migrates one build VM at a time with `werft migrate`. `vm` keeps working on the domains
-  not yet migrated and refuses a migrated domain.
-- Phase 2 adds a guard to `vm snapshot` in the setup repo, so it refuses a domain with a qcow2
-  NVRAM ([One-time migration](#one-time-migration)).
+- The user migrates one build VM at a time with `werft migrate`. A domain with a raw NVRAM, as
+  `vm` left it, needs it: `snapshot`, `reset`, `prepare` and `provision` refuse it.
 - The setup repo keeps: the recipe, the bootstrap script, `tests/system`, the `pass` entry
   `vm/guest-password`, `scripts/common/wait-for-package-manager.sh` for its own use, and the
   `~/.ssh/config` entries for build VMs. Leases need no ssh config entry; werft writes one per lease.

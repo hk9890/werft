@@ -540,14 +540,9 @@ func (w *world) count(pattern string) int {
 }
 
 // setupRecipe loads testdata/setup/recipe.toml, a copy of the recipe of the
-// setup repo, with a home that holds the setup checkout it names.
+// setup repo.
 func setupRecipe(t *testing.T) *recipe.Recipe {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	checks := filepath.Join(home, "setup", "tests", "system")
-	must(t, os.MkdirAll(filepath.Join(checks, "checks"), 0o755))
-	must(t, os.WriteFile(filepath.Join(checks, "run.sh"), []byte("echo PASS\n"), 0o755))
 	rec, err := recipe.Load(filepath.Join("testdata", "setup", "recipe.toml"))
 	must(t, err)
 	return rec

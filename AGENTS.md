@@ -2,7 +2,7 @@
 
 ## Repository purpose
 
-werft is a Go CLI that hands out disposable test VMs from stock images on one libvirt host, for agents first and humans second. It replaces the bash tool `vm` of the setup repo. The host is the user's workstation, and its build VMs are the user's work.
+werft is a Go CLI that hands out disposable test VMs from stock images on one libvirt host, for agents first and humans second. It replaced the bash tool `vm` of the setup repo. The host is the user's workstation, and its build VMs are the user's work.
 
 ## Use-case routing
 
@@ -46,7 +46,7 @@ Every route below is **mandatory, not advisory**. Load the document BEFORE the f
 
 ### Reviewing changes
 
-**MUST read [docs/REVIEWING.md](docs/REVIEWING.md) before reviewing a PR or a diff.** It carries the host-safety, agent-contract and parity checks the generic review skills cannot know.
+**MUST read [docs/REVIEWING.md](docs/REVIEWING.md) before reviewing a PR or a diff.** It carries the host-safety and agent-contract checks the generic review skills cannot know.
 
 ### Writing project docs
 
