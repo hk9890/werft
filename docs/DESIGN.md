@@ -65,7 +65,7 @@ real adapters.
 - **`internal/lifecycle`** — `list`, `start` and `stop` for any domain. `list` gets disk use from
   the storage API and counts native reset points plus the `.bak` files of `vm`. It finds the `.bak`
   files in a listing of the NVRAM directory, as `vm` did, and not through the storage pool: `vm`
-  writes them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
+  wrote them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
   The address is `vsock/<cid>`, else the IPv4 DHCP lease (`virt.DomainAddresses`, the same rule
   that `prepare` and `provision` use). `start` opens no viewer without `--view`, does not type a
   disk password, and waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
@@ -94,7 +94,7 @@ real adapters.
 ### Objects
 
 - **Build VM.** A libvirt domain a human installed from vendor media, for example `ubuntu-26-04`,
-  plus its provision result `ubuntu-26-04-full`. These are the domains `vm` manages today. Only
+  plus its provision result `ubuntu-26-04-full`. These are the domains `vm` managed. Only
   build VMs have reset points. Leases never run on them.
 - **Reset point.** A native libvirt internal snapshot of a shut-off build VM. It holds disk and
   NVRAM. Fixed labels carry over: `clean-install`, `provision-base` (made by `prepare`), `clean`
@@ -603,7 +603,8 @@ that has a cleanup. The setup recipe holds:
 
 - the bootstrap repo URL and the script that clones it and runs `install.sh` (the rest of
   `guest/bootstrap.sh`);
-- `tests/system` for the `checks` step, from the host checkout as today;
+- `tests/system` for the `checks` step, as `../system` from the recipe, so the checks come from
+  the checkout that holds the recipe;
 - `usb-passthrough` with mount label `MASTER-KEY`, and `pinentry` with a TTY secret;
 - the guest password secret from `pass` entry `vm/guest-password`;
 - for family `omarchy`: a `run` step for `omarchy update` (`OMARCHY_UPDATE_LOGGED=1`,

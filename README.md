@@ -46,7 +46,7 @@ A reset point holds disk and UEFI variables of a shut-off VM. The default label 
 `clean-install`.
 
 ```sh
-werft migrate ubuntu-26-04                   # once per build VM that vm manages; asks first
+werft migrate ubuntu-26-04                   # once per build VM that vm managed; asks first
 werft snapshot ubuntu-26-04                  # take clean-install
 werft snapshot --replace ubuntu-26-04 mine   # retake the label mine
 werft snapshots ubuntu-26-04                 # list them; also works while the VM runs
