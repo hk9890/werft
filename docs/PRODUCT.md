@@ -85,10 +85,10 @@ The interaction to support: a user tells an agent "get a VM and do some tests in
 runs:
 
 ```sh
-werft images --json                          # which images and tiers exist
-werft lease ubuntu-26-04 --tier full --json  # get a VM; blocks until SSH answers
-ssh -F <lease ssh_config> <lease-id>         # the command werft prints; install software, run tests
-werft release <lease-id>                     # give it back; the VM is destroyed
+werft --json images                                        # which images and tiers exist
+werft --json lease ubuntu-26-04 --tier plain --owner <me>  # get a VM; blocks until SSH answers
+ssh -F <lease ssh_config> <lease-id>                       # the command werft prints; install, test
+werft --json release <lease-id>                            # give it back; the VM is destroyed
 ```
 
 Requirements:
@@ -155,9 +155,10 @@ repo owns. werft only runs it.
    collection (`images --prune`). Status: done, also for encrypted images.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, a way for an agent to find werft, and an end-to-end test where an agent leases a VM, tests
-   in it, and releases it. Status: done. The `werft` plugin of claude-dev-tools v1.52.0 makes werft
-   known. In a recorded run, a fresh `claude -p` session told only "Get a VM and run curl
-   https://example.com in it." loaded the skill, leased a VM, ran curl in it and released it.
+   in it, and releases it. Status: done. The `werft` plugin of the claude-dev-tools marketplace
+   loads `werft guide` when a task needs a VM. The end-to-end test is a recorded run. Its prompt
+   was only "Get a VM and run curl https://example.com in it.", and Bash was allowed. A fresh
+   `claude -p` session loaded the skill, leased a VM, ran curl in it and released it.
 
 ## Open questions
 
