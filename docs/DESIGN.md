@@ -405,7 +405,8 @@ Both tiers run the same steps:
    without that line (taken before `detect-guest` recorded it) is not checked, and seal runs. Then
    confirm: the revert loses what the build VM wrote since the label. With the LUKS marker, read
    the disk password before the revert, as `provision` reads the guest password: from the `pass`
-   entry of `guest_password` in the recipe that `config.toml` gives the image, else at a TTY.
+   entry of `guest_password` in the recipe of `--recipe`, else in the one that `config.toml` gives
+   the image, else at a TTY.
    Without both, seal fails with `secret_unavailable` and changes nothing.
 2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
    from the checked definition fails the run before anything is copied.
