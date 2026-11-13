@@ -87,15 +87,15 @@ runs:
 ```sh
 werft --json images                                        # which images and tiers exist
 werft --json lease ubuntu-26-04 --tier plain --owner <me>  # get a VM; blocks until SSH answers
-ssh -F <lease ssh_config> <lease-id>                       # the command werft prints; install, test
+ssh -F <lease ssh_config> <lease-id> '<command>'           # one command per call; install, test
 werft --json release <lease-id>                            # give it back; the VM is destroyed
 ```
 
 Requirements:
 
-- A Claude Code agent finds werft through the `werft` skill of the `werft` plugin in the user's
-  claude-dev-tools marketplace. The skill loads the output of `werft guide`; the guide stays in
-  the werft binary.
+- A Claude Code agent finds werft through the `werft` skill of the `werft` plugin in the
+  claude-dev-tools marketplace. When a task needs a VM, the skill loads the output of
+  `werft guide`; the guide stays in the werft binary.
 - `werft lease` returns only when the VM accepts an SSH login. The output has the lease ID, the
   address, the SSH user, the key path, the path of the lease `ssh_config`, a ready `ssh` command,
   and the expiry time.
@@ -109,7 +109,7 @@ Requirements:
   <lease-id>` adds time. werft destroys an expired lease at the next werft run that reads leases
   with the same state directory; no timer runs ([DESIGN.md, "Lease lifecycle"](DESIGN.md#lease-lifecycle)
   names those commands). The VM of an agent that crashes stays until then.
-- `werft leases --json` lists active leases with owner, image, tier, state, address, and expiry.
+- `werft --json leases` lists active leases with owner, image, tier, state, address, and expiry.
   A lease that does not run, such as one the guest powered off, lists its state and no address.
 - A lease gets the memory and vCPUs of its stock image by default; `--memory` and `--cpus` set
   others. `--stock` picks an older stock version of the image and tier, for example to bisect.
@@ -155,10 +155,10 @@ repo owns. werft only runs it.
    collection (`images --prune`). Status: done, also for encrypted images.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, a way for an agent to find werft, and an end-to-end test where an agent leases a VM, tests
-   in it, and releases it. Status: done. The `werft` plugin of the claude-dev-tools marketplace
-   loads `werft guide` when a task needs a VM. The end-to-end test is a recorded run. Its prompt
-   was only "Get a VM and run curl https://example.com in it.", and Bash was allowed. A fresh
-   `claude -p` session loaded the skill, leased a VM, ran curl in it and released it.
+   in it, and releases it. Status: done; the `werft` plugin makes werft known (see "Agent
+   experience"). The end-to-end test is a recorded run in [PR #47](https://github.com/hk9890/werft/pull/47). Its prompt was only "Get a VM
+   and run curl https://example.com in it.", and Bash was allowed. A fresh `claude -p` session
+   loaded the skill, leased a VM, ran curl in it and released it.
 
 ## Open questions
 

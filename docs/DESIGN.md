@@ -627,9 +627,11 @@ line 1, guest password on line 2) goes away.
   `--json` it prints `{"guide": "<text>"}`. `cmd/werft/guide_test.go` checks against `commands`,
   `lease.Lease` and `exitCodes`: every command the guide names after `werft`, alone or in a list,
   the flags of its example calls, its lease JSON fields and its exit codes.
-- The `werft` plugin of the claude-dev-tools marketplace loads `werft guide` into a Claude Code
-  session. Its skill pre-approves the call forms of the guide, such as `werft --json lease *`. A
-  change to these forms in `guide.txt` needs a plugin release too.
+- The `werft` skill of the claude-dev-tools marketplace loads the output of `werft guide` when the
+  skill is called. Its `allowed-tools` pre-approve the werft calls of the guide in their exact
+  forms, such as `werft --json lease *`; the `ssh` and `scp` calls into a lease are not
+  pre-approved. A change to a werft call form in `cmd/werft/guide.txt` needs a plugin release
+  too.
 - `werft completion zsh` prints a zsh completion script generated from `commands` in
   `cmd/werft/cli.go`. `zshArguments` in `cmd/werft/completion.go` maps each placeholder of `args`
   to a completer; a new placeholder needs an entry in `completers`. The script reads names from
