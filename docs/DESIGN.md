@@ -18,7 +18,7 @@ Each row is a proposal until the user accepts it.
 | Leases | Linked clone: thin qcow2 overlay on a flat, immutable stock file (accepted) | Created in milliseconds. The stock file never changes. |
 | Lease identity | systemd credentials over SMBIOS type 11 (accepted) | Nothing per lease is written into the stock image. No libguestfs. fw_cfg is no option: QEMU limits its names to 55 characters. |
 | Lease address | AF_VSOCK first, DHCP lease by MAC as fallback (accepted) | Unique per domain, no DNS race. mDNS is not used for leases. |
-| SSH | OpenSSH `ssh`/`scp` as child processes (accepted) | The agent gets the same command werft used. vsock works through `systemd-ssh-proxy`. `golang.org/x/crypto/ssh` would save a process per call, but would take a path the agent does not use. |
+| SSH | OpenSSH `ssh`/`scp` as child processes (accepted) | The agent gets the same command werft used. vsock works through `systemd-ssh-proxy`. `golang.org/x/crypto/ssh` saves a process per call, but takes a path that the agent does not use. |
 | Clone | Domain XML generated in Go (accepted) | `virt-clone` goes away, and with it the mise-python `gi` failure. |
 | Setup-specific steps | A recipe file that the setup repo owns (accepted): `tests/werft/recipe.toml` | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
 
