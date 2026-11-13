@@ -119,7 +119,8 @@ werft guide                                  # how an agent leases, uses and rel
 ```
 
 Point an agent at `werft guide`. It prints the lease flow, the JSON fields, the exit codes and the
-rules for an agent, and it matches the installed version.
+rules for an agent, and it matches the installed version. In Claude Code, the `werft` plugin of
+the claude-dev-tools marketplace does this: with it, a request such as "get a VM" leads to werft.
 
 A lease gets the memory and vCPUs of its stock image unless `--memory` (MiB, at least 256) or
 `--cpus` names others. It expires 4 hours after it starts, or after `--for` (15m to 24h).

@@ -93,8 +93,9 @@ werft release <lease-id>                     # give it back; the VM is destroyed
 
 Requirements:
 
-- A Claude Code agent finds werft through the `werft` skill of the user's Claude Code plugins. The
-  skill tells it to run `werft guide`; the guide stays in the werft binary.
+- A Claude Code agent finds werft through the `werft` skill of the `werft` plugin in the user's
+  claude-dev-tools marketplace. The skill loads the output of `werft guide`; the guide stays in
+  the werft binary.
 - `werft lease` returns only when the VM accepts an SSH login. The output has the lease ID, the
   address, the SSH user, the key path, the path of the lease `ssh_config`, a ready `ssh` command,
   and the expiry time.
@@ -154,10 +155,9 @@ repo owns. werft only runs it.
    collection (`images --prune`). Status: done, also for encrypted images.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, a way for an agent to find werft, and an end-to-end test where an agent leases a VM, tests
-   in it, and releases it. Status: the JSON output, the exit codes and `werft guide` in code. In a
-   recorded run, a prompt that said that werft is installed made a fresh `claude -p` session lease
-   a VM, test in it and release it. With only "get a VM and run X in it", the session built its own
-   VM without werft. Open: the `werft` skill, then that run again (werft-dmut7g).
+   in it, and releases it. Status: done. The `werft` plugin of claude-dev-tools v1.52.0 makes werft
+   known. In a recorded run, a fresh `claude -p` session told only "Get a VM and run curl
+   https://example.com in it." loaded the skill, leased a VM, ran curl in it and released it.
 
 ## Open questions
 
