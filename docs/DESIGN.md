@@ -670,8 +670,8 @@ Exit codes are part of the contract:
 
 The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
-- The user migrates one build VM at a time with `werft migrate`. A domain that still has the
-  `.bak` reset points of `vm` needs it before any other werft command that changes it.
+- The user migrates one build VM at a time with `werft migrate`. A domain with a raw NVRAM, as
+  `vm` left it, needs it: `snapshot`, `reset`, `prepare` and `provision` refuse it.
 - The setup repo keeps: the recipe, the bootstrap script, `tests/system`, the `pass` entry
   `vm/guest-password`, `scripts/common/wait-for-package-manager.sh` for its own use, and the
   `~/.ssh/config` entries for build VMs. Leases need no ssh config entry; werft writes one per lease.
