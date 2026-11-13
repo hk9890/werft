@@ -93,6 +93,8 @@ werft release <lease-id>                     # give it back; the VM is destroyed
 
 Requirements:
 
+- A Claude Code agent finds werft through the `werft` skill of the user's Claude Code plugins. The
+  skill tells it to run `werft guide`; the guide stays in the werft binary.
 - `werft lease` returns only when the VM accepts an SSH login. The output has the lease ID, the
   address, the SSH user, the key path, the path of the lease `ssh_config`, a ready `ssh` command,
   and the expiry time.
@@ -148,15 +150,16 @@ repo owns. werft only runs it.
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`. Status: done; the
    recipe is in `tests/werft/` of the setup repo, and `scripts/vm/` is deleted.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
-   `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: `seal`,
-   `images`, `lease`, `release`, `leases`, `extend`, `reap`, parallel leases with a memory
-   budget, and stock garbage collection (`images --prune`), of the `plain` and `full` tiers and of
-   encrypted images, in code.
+   `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases, stock garbage
+   collection (`images --prune`). Status: done, also for encrypted images.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
-   werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it. Status:
-   `werft guide` in code.
+   werft, a way for an agent to find werft, and an end-to-end test where an agent leases a VM, tests
+   in it, and releases it. Status: the JSON output, the exit codes and `werft guide` in code. In a
+   recorded run, a prompt that said that werft is installed made a fresh `claude -p` session lease
+   a VM, test in it and release it. With only "get a VM and run X in it", the session built its own
+   VM without werft. Open: the `werft` skill, then that run again (werft-dmut7g).
 
 ## Open questions
 
-None open. The technical questions (lease mechanism, addressing, firmware state, host access) are proposals in
+None open. The technical decisions (lease mechanism, addressing, firmware state, host access) are in
 [DESIGN.md](DESIGN.md#proposals-in-short).

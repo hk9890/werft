@@ -12,15 +12,15 @@ Each row is a proposal until the user accepts it.
 
 | Topic | Proposal | Why |
 |---|---|---|
-| libvirt access | `github.com/digitalocean/go-libvirt` (pure Go RPC) plus `libvirt.org/go/libvirtxml`, behind one internal interface | Works with `CGO_ENABLED=0`. Typed errors, no text parsing, no process per call. |
-| URI | `qemu:///system` | NAT network and DHCP leases exist only there. The user is in group `libvirt`, so the socket needs no sudo and no polkit. |
-| Reset points | Native libvirt internal snapshots, NVRAM in qcow2 format | Disk and firmware in one atomic operation. No sudo, no `.bak` files. |
-| Leases | Linked clone: thin qcow2 overlay on a flat, immutable stock file | Created in milliseconds. The stock file never changes. |
-| Lease identity | systemd credentials over SMBIOS type 11 | Nothing per lease is written into the stock image. No libguestfs. fw_cfg is no option: QEMU limits its names to 55 characters. |
-| Lease address | AF_VSOCK first, DHCP lease by MAC as fallback | Unique per domain, no DNS race. mDNS is not used for leases. |
-| SSH | OpenSSH `ssh`/`scp` as child processes | The agent gets the same command werft used. vsock works through `systemd-ssh-proxy`. |
-| Clone | Domain XML generated in Go | `virt-clone` goes away, and with it the mise-python `gi` failure. |
-| Setup-specific steps | A recipe file that the setup repo owns (accepted): `tests/werft/recipe.toml` | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
+| libvirt access | `github.com/digitalocean/go-libvirt` (pure Go RPC) plus `libvirt.org/go/libvirtxml`, behind one internal interface (accepted) | Works with `CGO_ENABLED=0`. Typed errors, no text parsing, no process per call. |
+| URI | `qemu:///system` (accepted) | NAT network and DHCP leases exist only there. The user is in group `libvirt`, so the socket needs no sudo and no polkit. |
+| Reset points | Native libvirt internal snapshots, NVRAM in qcow2 format (accepted) | Disk and firmware in one atomic operation. No sudo, no `.bak` files. |
+| Leases | Linked clone: thin qcow2 overlay on a flat, immutable stock file (accepted) | Created in milliseconds. The stock file never changes. |
+| Lease identity | systemd credentials over SMBIOS type 11 (accepted) | Nothing per lease is written into the stock image. No libguestfs. fw_cfg is no option: QEMU limits its names to 55 characters. |
+| Lease address | AF_VSOCK first, DHCP lease by MAC as fallback (accepted) | Unique per domain, no DNS race. mDNS is not used for leases. |
+| SSH | OpenSSH `ssh`/`scp` as child processes (accepted) | The agent gets the same command werft used. vsock works through `systemd-ssh-proxy`. `golang.org/x/crypto/ssh` with an AF_VSOCK dialer saves a process per call, but the agent cannot run it. |
+| Clone | Domain XML generated in Go (accepted) | `virt-clone` goes away, and with it the mise-python `gi` failure. |
+| Setup-specific steps | A recipe file that the setup repo owns: `tests/werft/recipe.toml` (accepted) | werft holds no knowledge of the bootstrap repo, the key stick, or the system checks. |
 
 ## Packages
 
@@ -701,8 +701,6 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 ## Open questions
 
-- **SSH library.** OpenSSH child processes (proposed), or `golang.org/x/crypto/ssh` with an AF_VSOCK
-  dialer: no process per call, but a different path from the one the agent uses.
 - **Scripted secrets.** Is `pass` plus TTY enough, or does an unattended `provision` need a secret
   file or file descriptor? Can an agent run `provision` without a TTY at all, given the key stick
   and the `pinentry` secret?
