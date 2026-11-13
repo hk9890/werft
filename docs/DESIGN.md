@@ -628,10 +628,22 @@ line 1, guest password on line 2) goes away.
   `lease.Lease` and `exitCodes`: every command the guide names after `werft`, alone or in a list,
   the flags of its example calls, its lease JSON fields and its exit codes.
 - The `werft` skill of the claude-dev-tools marketplace loads the output of `werft guide` when the
-  skill is called. Its `allowed-tools` pre-approve the werft calls of the guide in their exact
-  forms, such as `werft --json lease *`; the `ssh` and `scp` calls into a lease are not
-  pre-approved. A change to a werft call form in `cmd/werft/guide.txt` needs a plugin release
-  too.
+  skill is called. The skill is part of the `werft` plugin. Where the permission mode alone
+  would ask, a hook of the plugin allows these calls:
+  - the skill;
+  - the agent commands of werft: `images`, `lease`, `leases`, `extend`, `release`, `reap`,
+    `guide` and `help`, with no `--prune`, `--yes` or `--view`;
+  - `ssh`, an `scp` copy and a `tar` pipe into a lease. `werft --json leases` must list the lease
+    with the same `ssh_config`.
+
+  Each call must be one Bash call in the form of the guide: plain words, the remote command in
+  one single-quoted string, and nothing joined to it. A copy out of a lease still asks. When a
+  session ends, the hook releases the leases with owner `claude-<session id>`.
+
+  The hook keeps its own copy of these forms. These werft changes need a plugin release too: a
+  change to the list of agent commands, a new flag that only the user may give, a new form of
+  the `ssh`, `scp` or `tar` calls in `cmd/werft/guide.txt`, and a change to the `id`, `owner` or
+  `ssh_config` field of `werft --json leases`.
 - `werft completion zsh` prints a zsh completion script generated from `commands` in
   `cmd/werft/cli.go`. `zshArguments` in `cmd/werft/completion.go` maps each placeholder of `args`
   to a completer; a new placeholder needs an entry in `completers`. The script reads names from

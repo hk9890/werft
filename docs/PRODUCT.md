@@ -95,7 +95,9 @@ Requirements:
 
 - A Claude Code agent finds werft through the `werft` skill of the `werft` plugin in the
   claude-dev-tools marketplace. When a task needs a VM, the skill loads the output of
-  `werft guide`; the guide stays in the werft binary.
+  `werft guide`; the guide stays in the werft binary. In the default permission mode, the werft
+  and `ssh` calls of the guide run with no permission prompt. When the session ends, the plugin
+  releases the leases of that session.
 - `werft lease` returns only when the VM accepts an SSH login. The output has the lease ID, the
   address, the SSH user, the key path, the path of the lease `ssh_config`, a ready `ssh` command,
   and the expiry time.
@@ -156,9 +158,10 @@ repo owns. werft only runs it.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, a way for an agent to find werft, and an end-to-end test where an agent leases a VM, tests
    in it, and releases it. Status: done; the `werft` plugin makes werft known (see "Agent
-   experience"). The end-to-end test is a recorded run in [PR #47](https://github.com/hk9890/werft/pull/47). Its prompt was only "Get a VM
-   and run curl https://example.com in it.", and Bash was allowed. A fresh `claude -p` session
-   loaded the skill, leased a VM, ran curl in it and released it.
+   experience"). The end-to-end test is a recorded run in [PR #48](https://github.com/hk9890/werft/pull/48). Its prompt was only "Get a VM
+   and run curl https://example.com in it.", in the default permission mode, with no tool
+   allowed. A fresh `claude -p` session loaded the skill, leased a VM, ran curl in it and
+   released it, with no permission prompt.
 
 ## Open questions
 
