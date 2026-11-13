@@ -46,7 +46,7 @@ Every route below is **mandatory, not advisory**. Load the document BEFORE the f
 
 ### Reviewing changes
 
-**MUST read [docs/REVIEWING.md](docs/REVIEWING.md) before reviewing a PR or a diff.** It carries the host-safety, agent-contract and parity checks the generic review skills cannot know.
+**MUST read [docs/REVIEWING.md](docs/REVIEWING.md) before reviewing a PR or a diff.** It carries the host-safety and agent-contract checks the generic review skills cannot know.
 
 ### Writing project docs
 

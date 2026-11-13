@@ -51,7 +51,7 @@ rg -n '^\s+\w+\(' internal/virt/virt.go                    # every call of the h
 
 | Resource | URL |
 |----------|-----|
-| `vm`, the bash tool werft replaces | https://github.com/carlo9890/setup/tree/main/scripts/vm |
+| `vm`, the bash tool werft replaced, at its last version | https://github.com/carlo9890/setup/tree/0860f2b2ecd080f3b1724ba43a53e0abb68c0d9d/scripts/vm |
 | The provision recipe of the setup repo | https://github.com/carlo9890/setup/tree/main/tests/werft |
 | libvirt API reference | https://libvirt.org/html/index.html |
 | libvirt domain XML format | https://libvirt.org/formatdomain.html |

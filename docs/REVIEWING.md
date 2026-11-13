@@ -11,18 +11,6 @@ for the generic lens; this file holds only the local delta. Where the two confli
 - **Destructive order**: a pipeline step that can change a VM before preflight ends is a blocking
   finding.
 
-## Parity with `vm`
-
-Applies until the setup repo deletes `scripts/vm/` (roadmap phase 2,
-[PRODUCT.md](PRODUCT.md#roadmap)). The reference is `scripts/vm/vm.sh` in the setup repo
-(https://github.com/carlo9890/setup/tree/main/scripts/vm).
-
-- A change to `list`, `start`, `stop`, `snapshot`, `snapshots`, `reset`, `prepare` or `provision`
-  keeps the behavior of the matching `cmd_<command>` function in `vm.sh` and of the helpers it
-  calls. Compare function by function: arguments, refusals, questions, order of steps, timings.
-- A deliberate difference from `vm` is written in [DESIGN.md](DESIGN.md) in the same PR. Flag a
-  difference that DESIGN.md does not state.
-
 ## Agent contract
 
 The contract is in [PRODUCT.md](PRODUCT.md#agent-experience) and

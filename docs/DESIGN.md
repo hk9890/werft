@@ -1,8 +1,8 @@
 # werft — design
 
 How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). werft replaces the
-bash tool `vm` in [`scripts/vm/`](https://github.com/carlo9890/setup/tree/main/scripts/vm) of the
-setup repo.
+bash tool `vm` of the setup repo, which deleted it in roadmap phase 2. Its last version:
+[`scripts/vm/`](https://github.com/carlo9890/setup/tree/0860f2b2ecd080f3b1724ba43a53e0abb68c0d9d/scripts/vm).
 
 Status of each phase: [PRODUCT.md, "Roadmap"](PRODUCT.md#roadmap).
 
@@ -376,13 +376,6 @@ A domain with neither the kept label nor `clean-install` keeps its current disk 
 runs, the qcow2 NVRAM is a copy of the current one, and the domain gets no reset point.
 `werft prepare` or `werft snapshot` takes one.
 
-After migration `vm reset` and `vm provision` refuse the domain, because they find no `.bak` file.
-`vm snapshot` does not refuse it: it finds the native reset point with `qemu-img snapshot -l`, and
-takes a `qemu-img` snapshot plus a `.bak` copy of the qcow2 NVRAM. `vm snapshot --replace` of a
-native label deletes the disk half of the libvirt reset point. Do not use `vm snapshot` on a
-migrated domain. The raw-NVRAM guard catches the `.bak` file of such a snapshot. The two tools run
-side by side, one per domain.
-
 ## Stock images and seal
 
 `werft seal [--yes] <build-vm> <label>` makes a new stock version (`image.Plan`, `Seal.Run` in
@@ -676,10 +669,8 @@ Exit codes are part of the contract:
 
 The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
-- The user migrates one build VM at a time with `werft migrate`. `vm` keeps working on the domains
-  not yet migrated and refuses a migrated domain.
-- Phase 2 adds a guard to `vm snapshot` in the setup repo, so it refuses a domain with a qcow2
-  NVRAM ([One-time migration](#one-time-migration)).
+- The user migrates one build VM at a time with `werft migrate`. A domain that still has the
+  `.bak` reset points of `vm` needs it before any other werft command that changes it.
 - The setup repo keeps: the recipe, the bootstrap script, `tests/system`, the `pass` entry
   `vm/guest-password`, `scripts/common/wait-for-package-manager.sh` for its own use, and the
   `~/.ssh/config` entries for build VMs. Leases need no ssh config entry; werft writes one per lease.
