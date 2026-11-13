@@ -157,8 +157,8 @@ func writeLease(w io.Writer, l lease.Lease) {
 	_, _ = fmt.Fprintln(w, l.SSH)
 }
 
-// leaseOwner is flag, else $WERFT_OWNER, else $USER. The owner is a label:
-// release does not check it.
+// leaseOwner is flag, else $WERFT_OWNER, else $USER. The owner is a label
+// that release --owner selects by; release of one lease id does not check it.
 func leaseOwner(flag string) string {
 	for _, v := range []string{flag, os.Getenv("WERFT_OWNER"), os.Getenv("USER")} {
 		if v != "" {

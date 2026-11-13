@@ -236,9 +236,9 @@ After SIGINT werft saves no screen, and the error names no file: the user stoppe
 screen shows no failure. When an overlay delete fails and no domain was defined, `werft release`
 cannot find the overlay, so the error names the `virsh vol-delete` command that removes it.
 
-The owner is the `--owner` flag, else `$WERFT_OWNER`, else `$USER`. It is a label for `werft
-leases` and the reap output. Release does not check it: the lease ID is the handle, and the host
-has one user.
+The owner is the `--owner` flag, else `$WERFT_OWNER`, else `$USER`. It labels the lease in `werft
+leases` and the reap output, and selects the leases of `werft release --owner`. `werft release
+<lease-id>` does not check it: the lease ID is the handle, and the host has one user.
 
 `werft release <lease-id>` (`lease.Release`) finds the lease domain by its name
 `werft-*-<id>` and its werft metadata; a domain without the metadata is no lease and stays. It
