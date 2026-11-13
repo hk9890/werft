@@ -3,6 +3,7 @@
 package lease
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -525,6 +526,38 @@ func Release(h virt.Hypervisor, dir state.Dir, prefix, id string) (string, error
 		return name, failure.Wrap(failure.Failed, err, "release %s", id)
 	}
 	return name, nil
+}
+
+// Released is one lease that a release by owner destroyed.
+type Released struct {
+	ID     string `json:"id"`
+	Domain string `json:"domain"`
+}
+
+// ReleaseOwner releases every lease of List with the owner. A release that
+// fails does not stop the others: the error names each lease that failed,
+// with the kind of the first failure.
+func ReleaseOwner(e Env, owner string) ([]Released, error) {
+	leases, err := List(e)
+	if err != nil {
+		return nil, err
+	}
+	released := []Released{}
+	var first error
+	var failed []string
+	for _, l := range leases {
+		if l.Owner != owner {
+			continue
+		}
+		domain, err := Release(e.H, e.Dir, e.Prefix, l.ID)
+		if err != nil {
+			first = cmp.Or(first, err)
+			failed = append(failed, l.ID)
+			continue
+		}
+		released = append(released, Released{ID: l.ID, Domain: domain})
+	}
+	return released, failure.Wrap(failure.KindOf(first), first, "the release of lease %s of owner %s failed", strings.Join(failed, ", "), owner)
 }
 
 // find is the lease domain of id, empty when there is none.

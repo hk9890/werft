@@ -112,6 +112,7 @@ werft lease ubuntu-26-04 --memory 8192 --cpus 4 --for 2h   # memory in MiB, vCPU
 werft lease ubuntu-26-04 --stock ubuntu-26-04-plain-20261102   # an older stock version
 ssh -F ~/.local/state/werft/leases/<id>/ssh_config <id>
 werft release <id>                           # destroy the VM, its disk and its key; a second release exits 0
+werft release --owner agent-7                # release every lease of owner agent-7
 werft leases                                 # id, owner, image, tier, state, address, expiry of each lease
 werft extend <id> --for 1h                   # move the expiry by 1h (default 4h)
 werft reap                                   # release expired leases and orphans now

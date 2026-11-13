@@ -40,8 +40,10 @@ Rules:
   call a timeout of at least 20 minutes, or run it in the background and
   wait for it. The id comes only in the JSON document at the end.
 
-  If the call was killed or its output is lost, find your lease by its
-  owner in the output of werft --json leases and release it.
+  If the call was killed or its output is lost, release every lease of
+  your owner:
+
+    werft --json release --owner <your-name>
 
   The default tier is plain. The VM gets the memory, the vCPUs and the
   stock version of the newest stock image, and lives 4 hours. Change them
@@ -153,6 +155,14 @@ Rules:
 
   Release is idempotent: a second release of the same id exits 0. If a
   release fails, run it again.
+
+  To release every lease of your owner in one call:
+
+    werft --json release --owner <your-name>
+
+  The JSON document is a list of the released leases, each with "id" and
+  "domain"; it is [] when you have no lease. A lease that fails to release
+  does not stop the others; the error names each lease that failed.
 
 Exit codes:
   0   ok

@@ -101,11 +101,75 @@ func TestReleaseArguments(t *testing.T) {
 	if r := lh.run("release", "abc123"); r.code != 0 || r.stdout != "lease abc123 is gone already\n" {
 		t.Errorf("release text = %+v", r)
 	}
+	for _, args := range [][]string{{"release", "--owner", "agent", "abc123"}, {"release", "--owner", ""}, {"release", "--owner"}} {
+		if r := lh.run(append([]string{"--json"}, args...)...); r.code != 2 {
+			t.Errorf("werft %q = %+v, want usage", args, r)
+		}
+	}
 }
 
-// addLease puts a lease made at created into the fake: its overlay, its
-// domain with lease metadata, and its lease directory with an ssh_config.
+// TestReleaseOwner: werft release --owner releases every lease of that owner
+// and keeps the lease of another owner and vm1.
+func TestReleaseOwner(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	lh := newLifecycleHost(t)
+	setClock(t, time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC))
+	mine := []string{addOwnedLease(t, lh, "aaa111", "claude-x", clock()), addOwnedLease(t, lh, "bbb222", "claude-x", clock())}
+	other := addLease(t, lh, "ccc333", clock())
+
+	r := lh.run("--json", "release", "--owner", "claude-x")
+	var released []lease.Released
+	if err := json.Unmarshal([]byte(r.stdout), &released); r.code != 0 || err != nil {
+		t.Fatalf("release --owner = %+v, %v", r, err)
+	}
+	want := []lease.Released{{ID: "aaa111", Domain: mine[0]}, {ID: "bbb222", Domain: mine[1]}}
+	if !slices.Equal(released, want) {
+		t.Errorf("released = %v, want %v", released, want)
+	}
+	for _, name := range mine {
+		if _, err := lh.fake.Domain(name); !failure.Is(err, failure.NotFound) {
+			t.Errorf("%s is left: %v", name, err)
+		}
+	}
+	for _, name := range []string{other, "vm1"} {
+		if _, err := lh.fake.Domain(name); err != nil {
+			t.Errorf("release --owner removed %s: %v", name, err)
+		}
+	}
+	if r := lh.run("--json", "release", "--owner", "claude-x"); r.code != 0 || strings.TrimSpace(r.stdout) != "[]" {
+		t.Errorf("second release --owner = %+v, want []", r)
+	}
+	if r := lh.run("release", "--owner", "claude-x"); r.code != 0 || r.stdout != "no lease of owner claude-x\n" {
+		t.Errorf("release --owner text = %+v", r)
+	}
+}
+
+// TestReleaseOwnerFails: a release that fails does not stop the others, and
+// the error names each lease that failed.
+func TestReleaseOwnerFails(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	lh := newLifecycleHost(t)
+	setClock(t, time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC))
+	addOwnedLease(t, lh, "aaa111", "claude-x", clock())
+	addOwnedLease(t, lh, "bbb222", "claude-x", clock())
+	lh.fake.FailOn("DeleteVolume", failure.New(failure.Failed, "injected"))
+
+	r := lh.run("--json", "release", "--owner", "claude-x")
+	if r.code != 1 || !strings.Contains(r.stdout, "aaa111, bbb222") {
+		t.Errorf("release --owner with a failing overlay delete = %+v, want failed naming both leases", r)
+	}
+}
+
+// addLease puts a lease of owner agent made at created into the fake: its
+// overlay, its domain with lease metadata, and its lease directory with an
+// ssh_config.
 func addLease(t *testing.T, lh *lifecycleHost, id string, created time.Time) string {
+	t.Helper()
+	return addOwnedLease(t, lh, id, "agent", created)
+}
+
+// addOwnedLease is addLease with the owner.
+func addOwnedLease(t *testing.T, lh *lifecycleHost, id, owner string, created time.Time) string {
 	t.Helper()
 	name := "werft-vm-plain-" + id
 	if _, err := lh.fake.CreateVolume("default", "<volume><name>"+name+".qcow2</name><capacity>1</capacity></volume>"); err != nil {
@@ -116,7 +180,7 @@ func addLease(t *testing.T, lh *lifecycleHost, id string, created time.Time) str
 		t.Fatal(err)
 	}
 	if _, err := lh.fake.DefineDomain(`<domain type='kvm'><name>` + name + `</name><metadata><werft:lease xmlns:werft='` + lease.Namespace + `'>` +
-		`<werft:owner>agent</werft:owner><werft:created>` + created.UTC().Format(time.RFC3339) + `</werft:created>` +
+		`<werft:owner>` + owner + `</werft:owner><werft:created>` + created.UTC().Format(time.RFC3339) + `</werft:created>` +
 		`<werft:expiry>` + created.Add(lease.Lifetime).UTC().Format(time.RFC3339) + `</werft:expiry><werft:stock>vm-plain-20261102</werft:stock>` +
 		`<werft:state>` + string(dir) + `</werft:state></werft:lease></metadata><devices><disk type='file' device='disk'><driver name='qemu' type='qcow2'/>` +
 		`<source file='/img/` + name + `.qcow2'/><target dev='vda'/></disk></devices></domain>`); err != nil {

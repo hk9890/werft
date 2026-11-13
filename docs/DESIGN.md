@@ -248,6 +248,10 @@ domain and the lease directory, and fails; the next release tries again. Each st
 "already gone", so release can run twice, exits 0 for a lease that is gone, and finishes a
 half-done release.
 
+`werft release --owner <o>` (`lease.ReleaseOwner`) releases each lease that `werft leases` lists
+with owner `<o>`, in the same way. A release that fails does not stop the others; the error names
+each lease that failed and has the kind of the first failure.
+
 `lease`, `leases`, `extend`, `release` and `images --prune` first release the expired leases and
 the orphans (a lease domain without a lease directory, or the reverse). `werft reap` does only that
 (`lease.Reap` in `internal/lease/reap.go`). `list` has no reap pass: it changes nothing. No timer

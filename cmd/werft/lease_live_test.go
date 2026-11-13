@@ -26,9 +26,10 @@ import (
 )
 
 // TestLeaseLive seals a scratch domain, refuses a lease over a budget of
-// 1 PiB, starts two leases of the stock image at the same time, logs in to
-// both with the ssh command werft lease prints, and releases the first. Then it checks the lifetime of the second
-// (leaseLifetime). Control: the stock definition writes the serial console
+// 1 PiB, starts four leases of the stock image at the same time, logs in to
+// the first two with the ssh command werft lease prints, and releases the first. It releases the last
+// two with --owner. Then it checks the lifetime of the second (leaseLifetime), which also shows that
+// --owner kept the lease of another owner. Control: the stock definition writes the serial console
 // to one file, which the two leases would share; a key other than the lease
 // key gets no login, and the lease key does with the same command line.
 func TestLeaseLive(t *testing.T) {
@@ -71,7 +72,8 @@ func TestLeaseLive(t *testing.T) {
 		t.Errorf("lease over a budget of 1 PiB = %v, want no capacity", doc)
 	}
 	livetest.Must(t, os.WriteFile(config, cfg, 0o600), "restore config.toml")
-	docs := parallelLeases(t, h, prefix, []string{"lease", src.Name, "--tier", "plain", "--owner", "agent-ls"}, []string{"lease", src.Name})
+	byOwner := []string{"lease", src.Name, "--owner", "agent-ls-own"}
+	docs := parallelLeases(t, h, prefix, []string{"lease", src.Name, "--tier", "plain", "--owner", "agent-ls"}, []string{"lease", src.Name}, byOwner, byOwner)
 	doc, second := docs[0], docs[1]
 	id, _ := doc["id"].(string)
 	name, _ := doc["domain"].(string)
@@ -143,6 +145,8 @@ func TestLeaseLive(t *testing.T) {
 	if doc := werftJSON(t, 0, "release", id); doc["domain"] != "" {
 		t.Errorf("second release = %v", doc)
 	}
+
+	releaseOwnerLive(t, h, "agent-ls-own", docs[2:])
 
 	leaseLifetime(t, h, second)
 }
@@ -232,6 +236,33 @@ func leaseLifetime(t *testing.T, h virt.Hypervisor, doc map[string]any) {
 	}
 	if _, err := os.Stat(dir.Lease(id)); !os.IsNotExist(err) {
 		t.Errorf("the lease directory of the expired lease is left: %v", err)
+	}
+}
+
+// releaseOwnerLive runs werft release --owner owner and checks that it
+// released the leases of docs, and that their domains are gone.
+func releaseOwnerLive(t *testing.T, h virt.Hypervisor, owner string, docs []map[string]any) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	c := &cli{stdout: &out, stderr: &errOut, dial: dialLibvirt, sleep: time.Sleep}
+	if code := c.run([]string{"--json", "release", "--owner", owner}); code != 0 {
+		t.Fatalf("werft release --owner %s exited %d: %s", owner, code, errOut.String())
+	}
+	var released []lease.Released
+	livetest.Must(t, json.Unmarshal(out.Bytes(), &released), "parse the output of werft release --owner")
+	want := []lease.Released{}
+	for _, doc := range docs {
+		want = append(want, lease.Released{ID: doc["id"].(string), Domain: doc["domain"].(string)})
+	}
+	slices.SortFunc(want, func(a, b lease.Released) int { return strings.Compare(a.Domain, b.Domain) })
+	slices.SortFunc(released, func(a, b lease.Released) int { return strings.Compare(a.Domain, b.Domain) })
+	if !slices.Equal(released, want) {
+		t.Errorf("release --owner %s = %v, want %v", owner, released, want)
+	}
+	for _, r := range want {
+		if _, err := h.Domain(r.Domain); !failure.Is(err, failure.NotFound) {
+			t.Errorf("%s is left after release --owner: %v", r.Domain, err)
+		}
 	}
 }
 
