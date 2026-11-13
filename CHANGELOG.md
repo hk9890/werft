@@ -6,6 +6,24 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.3.1
+
+- **werft waits longer before it types the disk password of an encrypted
+  (LUKS) guest.** It types when the console has held still for 40 s.
+  Before, it typed after 8 s, so on the first boot of a copied disk it
+  could type into the firmware screen: `provision` then failed with no SSH
+  answer while the console still asked for the password, and `seal` and
+  `lease` could fail the same way. Each boot of an encrypted guest now
+  takes about 30 s longer, and the prompt wait takes up to 3 minutes.
+  `werft guide` now asks for a timeout of 20 minutes on a lease call.
+- **`werft provision` lets `sudo -v` pass in the guest during the run.**
+  Before, a recipe step that ran `sudo -v` stopped with "a terminal is
+  required to read the password". Omarchy's update runs it. Ubuntu 26.04
+  uses sudo-rs, where `sudo -v` still asks.
+- **The example recipe `examples/setup/recipe.toml` runs `omarchy update`
+  with `LANG=C.UTF-8`.** Before, the update failed on Omarchy in a
+  migration that read a locale warning as its answer.
+
 ## v0.3.0
 
 - **`werft images --prune` deletes old stock versions.** It keeps the
