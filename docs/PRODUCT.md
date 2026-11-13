@@ -145,7 +145,8 @@ repo owns. werft only runs it.
    reset points. `vm` and werft run side by side, one build VM at a time. Status: in code; next
    is a `migrate`, `prepare` and `provision` of each real build VM.
 2. **Setup-repo switch.** The setup repo adds its recipe. When `werft provision` makes a `-full`
-   build VM that passes the system checks, the setup repo deletes `scripts/vm/`.
+   build VM that passes the system checks, the setup repo deletes `scripts/vm/`. Status: the
+   recipe is in the setup repo (`tests/werft/`).
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
    `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: `seal`,
    `images`, `lease`, `release`, `leases`, `extend`, `reap`, parallel leases with a memory

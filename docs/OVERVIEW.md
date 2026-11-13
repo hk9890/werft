@@ -28,7 +28,6 @@ internal/failure/          error kinds
 internal/ansi/             strip terminal escapes for the provision log
 internal/build/            version stamp (ldflags)
 internal/livetest/         helpers for live tests (build tag live)
-examples/setup/            the setup-repo recipe werft ships until the setup repo takes it over
 scripts/release-notes      prints a CHANGELOG.md section as the release text
 ```
 
@@ -53,6 +52,7 @@ rg -n '^\s+\w+\(' internal/virt/virt.go                    # every call of the h
 | Resource | URL |
 |----------|-----|
 | `vm`, the bash tool werft replaces | https://github.com/carlo9890/setup/tree/main/scripts/vm |
+| The provision recipe of the setup repo | https://github.com/carlo9890/setup/tree/main/tests/werft |
 | libvirt API reference | https://libvirt.org/html/index.html |
 | libvirt domain XML format | https://libvirt.org/formatdomain.html |
 | go-libvirt (RPC client) | https://pkg.go.dev/github.com/digitalocean/go-libvirt |

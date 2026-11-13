@@ -60,8 +60,8 @@ VM whose UEFI variables are raw, because a reset point would leave them out.
 
 `werft provision` runs a recipe on a build VM and keeps the result as `<name>-full`. Point
 `~/.config/werft/config.toml` at a recipe with `recipe = "<path>"`, or pass `--recipe <path>`.
-[examples/setup/README.md](examples/setup/README.md) holds the recipe of the setup repo, its
-config, and what a run needs.
+The setup repo holds its recipe, its config, and what a run needs in
+[tests/werft](https://github.com/carlo9890/setup/tree/main/tests/werft).
 
 ```sh
 werft prepare ubuntu-26-04                   # once: werft key and your own key, hostname, provision-base

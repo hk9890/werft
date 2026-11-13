@@ -68,4 +68,4 @@ echo 'pool = "werft-test"' > "$XDG_CONFIG_HOME/werft/config.toml"
 `isolate` in `cmd/werft/resetpoint_live_test.go` does the same inside a test.
 
 - The real config is `~/.config/werft/config.toml`; read it, and leave it as the user wrote it.
-- The provision recipe and its config keys are in [examples/setup/README.md](../examples/setup/README.md).
+- The provision recipe of the setup repo, and what a run needs, are in `tests/werft/README.md` of the setup repo (https://github.com/carlo9890/setup/tree/main/tests/werft).
