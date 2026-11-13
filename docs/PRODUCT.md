@@ -148,9 +148,9 @@ repo owns. werft only runs it.
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`. Status: done; the
    recipe is in `tests/werft/` of the setup repo, and `scripts/vm/` is deleted.
 3. **Lease model.** Disposable VMs from a stock image and tier: `seal`, `images`, `lease`, `extend`,
-   `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: done; also
-   stock garbage collection (`images --prune`), of the `plain` and `full` tiers and of encrypted
-   images.
+   `release`, `leases`, `reap`, lifetimes, expiry cleanup, parallel leases. Status: done, for the
+   `plain` and `full` tiers and for encrypted images. Stock garbage collection (`images --prune`)
+   is also done.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it. Status:
    done; `werft guide` is the guide, and a fresh agent session with no help leased, tested and
