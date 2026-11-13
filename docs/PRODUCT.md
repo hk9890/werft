@@ -158,5 +158,5 @@ repo owns. werft only runs it.
 
 ## Open questions
 
-None open. The technical questions (lease mechanism, addressing, firmware state, host access) are proposals in
+None open. The technical decisions (lease mechanism, addressing, firmware state, host access) are in
 [DESIGN.md](DESIGN.md#proposals-in-short).
