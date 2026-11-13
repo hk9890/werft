@@ -1,6 +1,6 @@
 # werft — design
 
-How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). werft replaces the
+How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). werft replaced the
 bash tool `vm` of the setup repo, which deleted it in roadmap phase 2. Its last version:
 [`scripts/vm/`](https://github.com/carlo9890/setup/tree/0860f2b2ecd080f3b1724ba43a53e0abb68c0d9d/scripts/vm).
 
@@ -117,7 +117,7 @@ real adapters.
 | Reset points | libvirt snapshot metadata plus qcow2 internal snapshots in disk and NVRAM | libvirt |
 | Stock files, lease overlays, `clean-install` exports of `migrate` | storage pool `werft`, `/var/lib/libvirt/images/werft/` | libvirt |
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
-| LUKS marker | domain description line, same format as `vm` writes | libvirt |
+| LUKS marker | domain description line, same format as `vm` wrote | libvirt |
 | Guest systemd version of a build VM | domain description line `werft: the guest has systemd <N>`, written by `detect-guest`; a reset point holds the line of its time | libvirt |
 | Image records (user, guest family, systemd version, versions, the domain definition leases start from, the LUKS marker and the `pass` entry of the disk password), and the names of the pruned versions | `~/.local/state/werft/images.toml`, written by `seal` and `images --prune` | werft |
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/`: `id_ed25519`, `id_ed25519.pub`, `ssh_config` | werft, removed on release |
@@ -336,7 +336,7 @@ labels are equal, so migration keeps one label per domain:
   (disk) and `<domain>-clean-install_VARS.qcow2` (NVRAM).
 - **Deleted:** every other label.
 
-`vm` took its `qemu-img` snapshots of the first disk only, and marks each with
+`vm` took its `qemu-img` snapshots of the first disk only, and marked each with
 `<nvram>.<label>.bak`. migrate finds the labels in the volume list of the NVRAM pool, after a pool
 refresh. When no pool lists the NVRAM yet, it finds them in a listing of the NVRAM directory, and
 makes the pool only after the confirmation. It needs no root:

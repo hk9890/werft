@@ -3,7 +3,7 @@
 werft (German for shipyard) is a VM lab on one Linux workstation. Agents and humans use it to get a
 disposable VM, test something in it, and give it back. Agents are the main users.
 
-werft replaces the bash tool `vm` of the setup repo (`carlo9890/setup`). The setup repo deleted
+werft replaced the bash tool `vm` of the setup repo (`carlo9890/setup`). The setup repo deleted
 `scripts/vm/` when werft reached parity.
 
 Technical design: [DESIGN.md](DESIGN.md).
@@ -142,7 +142,7 @@ repo owns. werft only runs it.
 
 1. **Parity with `vm`.** Same commands and pipelines in Go: `list`, `start`, `stop`, `snapshot`,
    `snapshots`, `reset`, `prepare`, `provision`, plus `migrate` to move each build VM to werft
-   reset points. `vm` and werft run side by side, one build VM at a time. Status: done; every build
+   reset points. `vm` and werft ran side by side, one build VM at a time. Status: done; every build
    VM has werft reset points only.
 2. **Setup-repo switch.** The setup repo adds its recipe. When `werft provision` makes a `-full`
    build VM that passes the system checks, the setup repo deletes `scripts/vm/`. Status: done; the

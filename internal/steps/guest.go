@@ -411,8 +411,7 @@ func (s Run) Run(r *pipeline.Run) error {
 }
 
 // Checks copies a host directory of checks into the guest directory, runs
-// its entry script there and fails with checks_failed when it fails. The
-// checks come from the host, so a check added on a branch runs at once.
+// its entry script there and fails with checks_failed when it fails.
 type Checks struct {
 	Dir     string
 	Command string
