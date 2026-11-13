@@ -152,9 +152,9 @@ repo owns. werft only runs it.
    collection (`images --prune`). Status: done, also for encrypted images.
 4. **Agent integration.** Stable JSON output and exit codes, a guide that tells an agent how to use
    werft, and an end-to-end test where an agent leases a VM, tests in it, and releases it. Status:
-   done; `werft guide` is the guide. The end-to-end test is a recorded run: a fresh `claude -p`
-   session, told only that werft is installed and what to test, leased a VM, tested in it and
-   released it with no help from the user.
+   `werft guide` in code. A fresh `claude -p` session told that werft is installed leases, tests
+   and releases with no help. Told only "get a VM and run X in it", it builds its own VM without
+   werft: an agent finds werft only after the werft skill of the user's Claude Code plugins ships.
 
 ## Open questions
 
