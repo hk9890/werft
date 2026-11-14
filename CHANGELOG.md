@@ -6,6 +6,14 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.5.0
+
+- **`werft release --owner <owner>` releases every lease of one owner in
+  one call.** With `--json` it prints the released leases as a list, `[]`
+  when there is none. When one release fails, it still releases the others,
+  exits 1, and names each lease that failed. An agent can give back all its
+  leases at the end of its session this way.
+
 ## v0.4.0
 
 - **`werft seal --recipe <file>` names the recipe that gives the disk
