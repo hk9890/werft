@@ -154,6 +154,16 @@ Rules:
   Release is idempotent: a second release of the same id exits 0. If a
   release fails, run it again.
 
+  To release every lease of your owner in one call, when you are done
+  with all of them:
+
+    werft --json release --owner <your-name>
+
+  The JSON document is a list of the released leases, each with "id" and
+  "domain"; it is [] when you have no lease. A lease that fails to release
+  does not stop the others. Then the command exits 1, the error names
+  each VM that failed, and stderr names each lease it released.
+
 Exit codes:
   0   ok
   1   failed              unexpected libvirt or SSH error; read the message

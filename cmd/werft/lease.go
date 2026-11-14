@@ -157,8 +157,8 @@ func writeLease(w io.Writer, l lease.Lease) {
 	_, _ = fmt.Fprintln(w, l.SSH)
 }
 
-// leaseOwner is flag, else $WERFT_OWNER, else $USER. The owner is a label:
-// release does not check it.
+// leaseOwner is flag, else $WERFT_OWNER, else $USER. The owner is a label
+// that release --owner selects by; release of one lease id does not check it.
 func leaseOwner(flag string) string {
 	for _, v := range []string{flag, os.Getenv("WERFT_OWNER"), os.Getenv("USER")} {
 		if v != "" {
@@ -170,19 +170,30 @@ func leaseOwner(flag string) string {
 
 func (c *cli) cmdRelease(args []string) error {
 	fs := flag.NewFlagSet("release", flag.ContinueOnError)
+	owner := fs.String("owner", "", "release every lease of this owner, in place of one lease id")
 	if err := c.parseFlags(fs, "release", args); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
-		return failure.New(failure.Usage, "release takes one lease id")
+	byOwner := false
+	fs.Visit(func(f *flag.Flag) { byOwner = byOwner || f.Name == "owner" })
+	switch {
+	case byOwner && fs.NArg() != 0:
+		return failure.New(failure.Usage, "release takes one lease id or --owner, not both")
+	case byOwner && *owner == "":
+		return failure.New(failure.Usage, "--owner needs an owner, such as the one werft leases shows")
+	case !byOwner && fs.NArg() != 1:
+		return failure.New(failure.Usage, "release takes one lease id, or --owner <owner>")
 	}
-	id := fs.Arg(0)
 	e, done, err := c.leaseHost()
 	if err != nil {
 		return err
 	}
 	defer done()
 	c.reapFirst(e)
+	if byOwner {
+		return c.releaseOwner(e, *owner)
+	}
+	id := fs.Arg(0)
 	domain, err := lease.Release(e.H, e.Dir, e.Prefix, id)
 	if err != nil {
 		return err
@@ -193,6 +204,24 @@ func (c *cli) cmdRelease(args []string) error {
 			return
 		}
 		_, _ = fmt.Fprintf(w, "lease %s released: %s is destroyed\n", id, domain)
+	})
+	return nil
+}
+
+// releaseOwner is werft release --owner: it prints the leases it released.
+func (c *cli) releaseOwner(e lease.Env, owner string) error {
+	released, err := lease.ReleaseOwner(e, owner)
+	if err != nil {
+		return err
+	}
+	c.output(released, func(w io.Writer) {
+		if len(released) == 0 {
+			_, _ = fmt.Fprintf(w, "no lease of owner %s\n", owner)
+			return
+		}
+		for _, r := range released {
+			_, _ = fmt.Fprintf(w, "lease %s released: %s is destroyed\n", r.ID, r.Domain)
+		}
 	})
 	return nil
 }

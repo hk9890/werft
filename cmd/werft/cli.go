@@ -55,7 +55,7 @@ func init() {
 		{name: "prepare", args: "[--yes] [--recipe file] <name>", summary: "make a stock install the base provision starts from: werft key and your own key, hostname, provision-base", run: (*cli).cmdPrepare},
 		{name: "provision", args: "[--yes] [--recipe file] [--key mount] <name>", summary: "run the recipe on <name> from provision-base and keep the result as <name>-full", run: (*cli).cmdProvision},
 		{name: "reap", summary: "release expired leases, lease VMs without a lease directory, and lease directories without a VM", run: (*cli).cmdReap},
-		{name: "release", args: "<lease-id>", summary: "destroy a lease: its VM, disk and key; a second release succeeds", run: (*cli).cmdRelease},
+		{name: "release", args: "[--owner o] [lease-id]", summary: "destroy a lease: its VM, disk and key; --owner destroys every lease of that owner; a second release succeeds", run: (*cli).cmdRelease},
 		{name: "reset", args: "[--yes] <name> [label]", summary: "roll a shut-off VM back to a reset point (default label: clean-install)", run: (*cli).cmdReset},
 		{name: "seal", args: "[--yes] [--recipe file] <build-vm> <label>", summary: "make a new stock image version from a reset point of a build VM; provision-base gives the plain tier, clean on <x>-full the full tier", run: (*cli).cmdSeal},
 		{name: "snapshot", args: "[--replace] <name> [label]", summary: "take a reset point of a shut-off VM (default label: clean-install); --replace retakes one", run: (*cli).cmdSnapshot},

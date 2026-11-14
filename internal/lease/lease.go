@@ -527,6 +527,39 @@ func Release(h virt.Hypervisor, dir state.Dir, prefix, id string) (string, error
 	return name, nil
 }
 
+// Released is one lease that a release by owner destroyed.
+type Released struct {
+	ID     string `json:"id"`
+	Domain string `json:"domain"`
+}
+
+// ReleaseOwner releases every lease with the owner that List would list,
+// as Release does, and prints each one it released. Like Reap, it reads no
+// domain state, goes on after a failure, and names every failure.
+func ReleaseOwner(e Env, owner string) ([]Released, error) {
+	all, err := scan(e)
+	if err != nil {
+		return nil, err
+	}
+	released := []Released{}
+	var errs []error
+	for _, f := range all {
+		if f.owner == foreign || f.Owner != owner {
+			continue
+		}
+		if err := releaseDomain(e, f.Domain, e.Dir.Lease(f.ID)); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		e.printf("Released %s: lease %s of owner %s", f.Domain, f.ID, owner)
+		released = append(released, Released{ID: f.ID, Domain: f.Domain})
+	}
+	if len(errs) > 0 {
+		return released, failure.Wrap(failure.Failed, errors.Join(errs...), "release --owner %s", owner)
+	}
+	return released, nil
+}
+
 // find is the lease domain of id, empty when there is none.
 func find(h virt.Hypervisor, prefix, id string) (string, error) {
 	domains, err := h.Domains()

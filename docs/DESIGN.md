@@ -236,9 +236,9 @@ After SIGINT werft saves no screen, and the error names no file: the user stoppe
 screen shows no failure. When an overlay delete fails and no domain was defined, `werft release`
 cannot find the overlay, so the error names the `virsh vol-delete` command that removes it.
 
-The owner is the `--owner` flag, else `$WERFT_OWNER`, else `$USER`. It is a label for `werft
-leases` and the reap output. Release does not check it: the lease ID is the handle, and the host
-has one user.
+The owner is the `--owner` flag, else `$WERFT_OWNER`, else `$USER`. It labels the lease in `werft
+leases` and the reap output, and selects the leases of `werft release --owner`. `werft release
+<lease-id>` does not check it: the lease ID is the handle, and the host has one user.
 
 `werft release <lease-id>` (`lease.Release`) finds the lease domain by its name
 `werft-*-<id>` and its werft metadata; a domain without the metadata is no lease and stays. It
@@ -247,6 +247,12 @@ directory. The domain is the only way to find the overlay, so a failed overlay d
 domain and the lease directory, and fails; the next release tries again. Each step accepts
 "already gone", so release can run twice, exits 0 for a lease that is gone, and finishes a
 half-done release.
+
+`werft release --owner <o>` (`lease.ReleaseOwner`) releases, in the same way, each lease with
+owner `<o>` of its own state directory or of none, and names each one on stderr. Like the reap,
+it reads no domain state, so a lease whose state libvirt cannot give does not stop it. A release
+that fails does not stop the others; the command then fails with kind `failed` and names each
+lease domain that failed.
 
 `lease`, `leases`, `extend`, `release` and `images --prune` first release the expired leases and
 the orphans (a lease domain without a lease directory, or the reverse). `werft reap` does only that

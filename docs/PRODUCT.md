@@ -111,6 +111,8 @@ Requirements:
   <lease-id>` adds time. werft destroys an expired lease at the next werft run that reads leases
   with the same state directory; no timer runs ([DESIGN.md, "Lease lifecycle"](DESIGN.md#lease-lifecycle)
   names those commands). The VM of an agent that crashes stays until then.
+- `werft --json release --owner <o>` releases every lease of owner `<o>` in one call, so an agent
+  or the end of its session gives back all its leases at once.
 - `werft --json leases` lists active leases with owner, image, tier, state, address, and expiry.
   A lease that does not run, such as one the guest powered off, lists its state and no address.
 - A lease gets the memory and vCPUs of its stock image by default; `--memory` and `--cpus` set
