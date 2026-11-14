@@ -18,9 +18,13 @@ mise run werft -- <command>     # build, then run in your shell's directory; ver
 
 - Run werft by hand only as [RUNNING.md, "What is safe on this host"](RUNNING.md#what-is-safe-on-this-host)
   allows.
-- Keep every command acting only on the domain named on its command line, plus its `-full` clone
-  (`buildVMRun` in `cmd/werft/adapters.go`, `resetpoint.FullSuffix`). No code path picks a domain
-  by itself.
+- Keep every build-VM command acting only on the domain named on its command line, plus its
+  `-full` clone (`buildVMRun` in `cmd/werft/adapters.go`, `resetpoint.FullSuffix`). No code path
+  picks a build VM by itself.
+- Keep every lease command acting only on domains with werft lease metadata (`Namespace` in
+  `internal/lease/lease.go`). A lease command that picks leases by itself, such as `Reap` and
+  `ReleaseOwner`, takes them from `scan` in `internal/lease/reap.go` and skips each lease whose
+  metadata names another state directory (`ownership`).
 - In unit tests, set `cli.dial` to a `virttest.New()` fake (`cmd/werft/lifecycle_test.go`); step
   tests use the fake world in `internal/steps/harness_test.go`.
 - In live tests, create and remove domains as
