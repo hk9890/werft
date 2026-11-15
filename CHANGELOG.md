@@ -6,6 +6,21 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.6.0
+
+- **werft is open source under the MIT license, and mise installs it
+  without a GitHub token.** Before, the repository was private, and mise
+  needed a token with access to it. `go install
+  github.com/hk9890/werft/cmd/werft@latest` works too.
+- **Each release archive holds `LICENSE`, `THIRD_PARTY_LICENSES` and
+  `README.md` next to the binary.** Before, it held the binary alone.
+- **Each release is signed and has an SBOM and a build-provenance
+  attestation.** You can verify an archive with `sha256sum`, `cosign` 3.x
+  and `gh attestation verify`; the README shows the commands.
+- **`examples/recipe.toml` is a provision recipe to start from.** It
+  installs packages on an Ubuntu build VM and keeps the result as
+  `<build VM>-full`.
+
 ## v0.5.0
 
 - **`werft release --owner <owner>` releases every lease of one owner in
