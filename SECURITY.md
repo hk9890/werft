@@ -13,8 +13,8 @@ Include:
 - Steps to reproduce (commands, recipe, environment).
 - The affected version (`werft version`) or commit.
 
-Expect an acknowledgement within a few days. When a fix is available, a patched release is
-published, and the reporter is credited unless they ask to stay anonymous.
+Expect an acknowledgement within a few days. When a fix is ready, we publish a patched release
+and credit the reporter, unless they ask to stay anonymous.
 
 ## Supported versions
 
