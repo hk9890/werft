@@ -11,14 +11,15 @@ The status of each phase is in the [roadmap](docs/PRODUCT.md#roadmap).
 
 ## Install
 
-Install a release with mise. The repository is private, so mise needs a GitHub token with the
-`repo` scope, or Contents: read for a fine-grained token. mise takes the first of `MISE_GITHUB_TOKEN`, `GITHUB_API_TOKEN`, `GITHUB_TOKEN` and
-the gh CLI login; `mise token github` shows which one it uses. [CHANGELOG.md](CHANGELOG.md) says
-what changed in each release.
+Install a release with mise, or with Go. [CHANGELOG.md](CHANGELOG.md) says what changed in each
+release.
 
 ```sh
-mise use -g github:hk9890/werft@X.Y.Z    # a version from the releases page
+mise use -g github:hk9890/werft@X.Y.Z               # a version from the releases page
+go install github.com/hk9890/werft/cmd/werft@latest   # version prints "dev"
 ```
+
+To verify a release archive, follow [docs/RELEASING.md](docs/RELEASING.md#cut-a-release), step 6.
 
 To build from source, follow [docs/CODING.md](docs/CODING.md#build-and-run-from-source).
 
@@ -60,8 +61,8 @@ VM whose UEFI variables are raw, because a reset point would leave them out.
 
 `werft provision` runs a recipe on a build VM and keeps the result as `<name>-full`. Point
 `~/.config/werft/config.toml` at a recipe with `recipe = "<path>"`, or pass `--recipe <path>`.
-The setup repo holds its recipe, its config, and what a run needs in
-[tests/werft](https://github.com/carlo9890/setup/tree/main/tests/werft).
+[examples/recipe.toml](examples/recipe.toml) installs packages and keeps the result; the recipe
+format is in [docs/DESIGN.md, "Recipe"](docs/DESIGN.md#recipe).
 
 ```sh
 werft prepare ubuntu-26-04                   # once: werft key and your own key, hostname, provision-base
@@ -140,7 +141,10 @@ A stock image sealed before `werft lease` existed has no domain definition for l
 
 - [docs/PRODUCT.md](docs/PRODUCT.md): users, core concepts, the agent contract, the roadmap
 - [docs/DESIGN.md](docs/DESIGN.md): how werft works, exit codes, where state lives
+- [CONTRIBUTING.md](CONTRIBUTING.md): build from source and propose a change
+- [SECURITY.md](SECURITY.md): report a vulnerability
 
 ## License
 
-Private. All rights reserved.
+MIT, see [LICENSE](LICENSE). The licenses of the linked modules are in
+[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).

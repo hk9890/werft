@@ -30,13 +30,6 @@ conflict, this file wins.
 - Track a work item, a plan step or a TODO as an issue ([CHANGE-WORKFLOW.md](CHANGE-WORKFLOW.md#issues)).
   The docs hold the target state, not the backlog.
 
-## What werft does not document, and why
-
-Re-open a decision here before you fill the gap in another file.
-
-- **No CONTRIBUTING.md.** werft has one user, and agents do the work. The human entry point is
-  [README.md](../README.md); the agent entry point is `AGENTS.md`.
-
 ## Before you land a doc change
 
 No tool checks the docs, and CI (`mise run quality`) does not read Markdown. Check by hand:

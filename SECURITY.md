@@ -1,0 +1,34 @@
+# Security Policy
+
+## Reporting a vulnerability
+
+Report a vulnerability **privately**, through GitHub's
+[private vulnerability reporting](https://github.com/hk9890/werft/security/advisories/new)
+("Report a vulnerability" on the **Security** tab of the repository). Do not open a public issue
+for a suspected vulnerability.
+
+Include:
+
+- A description of the issue and its impact.
+- Steps to reproduce (commands, recipe, environment).
+- The affected version (`werft version`) or commit.
+
+Expect an acknowledgement within a few days. When a fix is available, a patched release is
+published, and the reporter is credited unless they ask to stay anonymous.
+
+## Supported versions
+
+Security fixes go into the latest release only. Older releases get no backports.
+
+## Scope
+
+werft is a local CLI. It runs as your user and drives `qemu:///system` through group `libvirt`,
+without sudo. Of particular relevance:
+
+- **Lease keys and `ssh_config`** under `~/.local/state/werft/leases/<id>/`: any process of your
+  user can read them and reach the lease.
+- **Secrets**: the guest password and recipe secrets come from `pass` or a terminal prompt.
+  werft passes them to the guest on stdin, never as a command-line argument.
+- **Recipes** run commands in the guest and copy host files into it. Treat a recipe as trusted
+  input, as you would a shell script.
+- **Stock images** are copies of your build VMs. Anything a build VM holds, a lease of it holds.
