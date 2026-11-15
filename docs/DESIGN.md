@@ -610,8 +610,8 @@ that has a cleanup. The setup recipe holds:
   `guest/bootstrap.sh`);
 - `tests/system` for the `checks` step, as `../system` from the recipe, so the checks come from
   the checkout that holds the recipe;
-- `usb-passthrough` with mount label `KEYSTICK`, and `pinentry` with a TTY secret;
-- the guest password secret from `pass` entry `werft/guest-password`;
+- `usb-passthrough` with the mount label of the key stick, and `pinentry` with a TTY secret;
+- the guest password secret from a `pass` entry;
 - for family `omarchy`: a `run` step for `omarchy update` (`OMARCHY_UPDATE_LOGGED=1`,
   `env-bootstrap`), then `reboot`;
 - `autologin` and `unlock-keyring`, because the setup writes gsettings and uses `gh`.
@@ -694,8 +694,8 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 - The user migrates one build VM at a time with `werft migrate`. A domain with a raw NVRAM, as
   `vm` left it, needs it: `snapshot`, `reset`, `prepare` and `provision` refuse it.
-- The setup repo keeps: the recipe, the bootstrap script, `tests/system`, the `pass` entry
-  `werft/guest-password`, `scripts/common/wait-for-package-manager.sh` for its own use, and the
+- The setup repo keeps: the recipe, the bootstrap script, `tests/system`, the `pass` entry of the
+  guest password, `scripts/common/wait-for-package-manager.sh` for its own use, and the
   `~/.ssh/config` entries for build VMs. Leases need no ssh config entry; werft writes one per lease.
 
 ## Risks
