@@ -125,7 +125,7 @@ real adapters.
 | Last screen of a lease that did not boot | `~/.local/state/werft/evidence/<YYYYmmdd-HHMMSS>-<domain>.png` (UTC), the 10 newest | werft |
 | Locks | `~/.local/state/werft/locks/` | werft |
 | Config | `~/.config/werft/config.toml` | user |
-| Recipes | the user's own path; the setup repo keeps its recipe in `tests/werft/`; `examples/recipe.toml` | user |
+| Recipes | the user's own path; the setup repo keeps its recipe in `tests/werft/` | user |
 
 werft never opens a file under `/var/lib/libvirt/` directly. Every disk operation goes through the
 storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception: `list`,
