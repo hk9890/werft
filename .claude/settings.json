@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "werft@claude-dev-tools": true
+  }
+}
