@@ -71,7 +71,7 @@ VM whose UEFI variables are raw, because a reset point would leave them out.
 
 `werft provision` runs a recipe on a build VM and keeps the result as `<name>-full`. Point
 `~/.config/werft/config.toml` at a recipe with `recipe = "<path>"`, or pass `--recipe <path>`.
-[examples/recipe.toml](examples/recipe.toml) installs packages and keeps the result; the recipe
+[examples/recipe.toml](examples/recipe.toml) installs packages on Ubuntu and keeps the result; the recipe
 format is in [docs/DESIGN.md, "Recipe"](docs/DESIGN.md#recipe).
 
 ```sh

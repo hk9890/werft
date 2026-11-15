@@ -581,7 +581,7 @@ guest can reboot and the run can move on to the clone after the step ran.
 
 A recipe is a TOML file that lists the provision steps and their parameters. The user owns it and
 the files it names; `examples/recipe.toml` is a small one. The setup repo keeps its recipe in
-`tests/werft/`, and its stow package `dotfiles/werft` links the `config.toml` that names it. Paths resolve relative to the recipe, and `~/` is the home directory. A
+`tests/werft/`. Paths resolve relative to the recipe, and `~/` is the home directory. A
 step can be limited to a guest family. `config.toml` maps each build VM to its recipe (`recipe` for
 all, `[recipes]` per build VM); `--recipe` overrides it. `prepare` reads only `[guest_password]`
 from it; without a recipe it says so and asks for the guest password at the terminal.

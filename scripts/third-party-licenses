@@ -4,6 +4,8 @@
 # left out, so a dependency bump changes the file only when a license changes.
 # Exits 1 when a module has no license file.
 set -eu
+# One byte order for the module list and the globs, whatever the caller's locale.
+export LC_ALL=C
 
 cd "$(dirname "$0")/.."
 # Before any output, so a failed go list stops the script instead of an empty list.
@@ -19,7 +21,7 @@ EOF
 printf 'Go %s\n%s\n' "$(go env GOROOT)" "$modules" |
 	while read -r path dir; do
 		found=
-		for f in "$dir"/LICENSE* "$dir"/COPYING* "$dir"/NOTICE*; do
+		for f in "$dir"/LICENSE* "$dir"/COPYING* "$dir"/NOTICE* "$dir"/PATENTS*; do
 			[ -f "$f" ] || continue
 			found=1
 			printf '\n%s\n%s (%s)\n%s\n\n' \

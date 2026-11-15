@@ -66,7 +66,8 @@ run = "go mod tidy -diff"
 
 [tasks.licenses]
 description = "Write THIRD_PARTY_LICENSES, the license texts of the linked modules"
-run = "scripts/third-party-licenses > THIRD_PARTY_LICENSES"
+# Through a temp file, so a failed run leaves the old file in place.
+run = "scripts/third-party-licenses > THIRD_PARTY_LICENSES.tmp && mv THIRD_PARTY_LICENSES.tmp THIRD_PARTY_LICENSES || { rm -f THIRD_PARTY_LICENSES.tmp; exit 1; }"
 
 [tasks."licenses:check"]
 description = "Fail if THIRD_PARTY_LICENSES is out of date"

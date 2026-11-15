@@ -1,12 +1,12 @@
-# An example provision recipe. It installs packages in a build VM, keeps the
-# result as <build VM>-full, and takes the reset point clean there.
+# An example provision recipe. On an Ubuntu build VM it installs packages; on
+# every build VM it keeps the result as <build VM>-full and takes the reset
+# point clean there.
 #   werft provision --recipe examples/recipe.toml <build VM>
 # Paths are relative to this file; ~/ is the home directory.
-
-# sudo in the guest, and the disk prompt of an encrypted guest, need it.
-# pass = "<entry>" reads it from pass instead.
-[guest_password]
-prompt = "Password of the guest user, for its sudo"
+#
+# werft asks for the guest password at the terminal. To read it from pass:
+#   [guest_password]
+#   pass = "<entry>"
 
 [[steps]]
 type = "reset"
@@ -25,21 +25,18 @@ type = "verify-guest-password"
 type = "detect-guest"
 
 [[steps]]
-type = "hostname"
-
-[[steps]]
 type = "sudo-grant"
 
 # Copies the helpers of werft into the guest directory, where run starts.
 [[steps]]
 type = "upload"
 
-# A fresh Ubuntu runs apt-daily right after boot; apt-get fails on its lock
-# until the helper sees it end.
+# A fresh Ubuntu runs apt-daily right after boot, and its timers can start it
+# again later: wait for it once, then let apt-get wait on the lock.
 [[steps]]
 type = "run"
 family = "ubuntu"
-command = "bash -c '. ./wait-for-package-manager.sh && wait_for_package_manager' && sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl"
+command = "bash -c '. ./wait-for-package-manager.sh && wait_for_package_manager' && sudo apt-get -o DPkg::Lock::Timeout=600 update && sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y git curl"
 
 [[steps]]
 type = "undo"
