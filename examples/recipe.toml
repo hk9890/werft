@@ -30,15 +30,16 @@ type = "hostname"
 [[steps]]
 type = "sudo-grant"
 
+# Copies the helpers of werft into the guest directory, where run starts.
+[[steps]]
+type = "upload"
+
+# A fresh Ubuntu runs apt-daily right after boot; apt-get fails on its lock
+# until the helper sees it end.
 [[steps]]
 type = "run"
 family = "ubuntu"
-command = "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl"
-
-[[steps]]
-type = "run"
-family = "omarchy"
-command = "sudo pacman -Syu --noconfirm git curl"
+command = "bash -c '. ./wait-for-package-manager.sh && wait_for_package_manager' && sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl"
 
 [[steps]]
 type = "undo"
