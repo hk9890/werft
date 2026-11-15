@@ -1,16 +1,16 @@
 # A copy of the werft provision recipe of the setup repo
-# (github.com/carlo9890/setup, tests/werft/recipe.toml), the fixture of the
+# (tests/werft/recipe.toml), with generic values, the fixture of the
 # step tests. It replays the fresh-machine bootstrap in a build VM, runs the system
 # checks, and keeps the result as <build VM>-full: what `vm provision` did.
 # Paths are relative to this file; ~/ is the home directory.
 
 # sudo in the guest, and the disk prompt of an encrypted guest, need it.
 [guest_password]
-pass = "vm/guest-password"
+pass = "werft/guest-password"
 
 # The passphrase of the GPG key on the key stick. It is typed at the terminal.
 [secrets.passphrase]
-prompt = "GPG passphrase for the key on MASTER-KEY"
+prompt = "GPG passphrase for the key on KEYSTICK"
 
 # Stage 1: bootstrap.
 [[steps]]
@@ -88,7 +88,7 @@ family = "omarchy"
 
 [[steps]]
 type = "usb-passthrough"
-label = "MASTER-KEY"
+label = "KEYSTICK"
 
 [[steps]]
 type = "sudo-grant"
@@ -100,7 +100,7 @@ secret = "passphrase"
 
 [[steps]]
 type = "run"
-command = "bash bootstrap.sh https://github.com/carlo9890/bootstrap-scripts"
+command = "bash bootstrap.sh https://github.com/example/bootstrap-scripts"
 
 [[steps]]
 type = "undo"

@@ -58,9 +58,15 @@ mise run werft -- <command>     # build, then run in your shell's directory; ver
   `c.lockedHypervisor(name)` in `cmd/werft/resetpoint.go` does both. A held lock fails with
   `conflict`.
 - **Setup recipe**: the step tests load `internal/steps/testdata/setup/recipe.toml`, a copy of
-  `tests/werft/recipe.toml` of the setup repo. A change to a step or a key that the setup recipe
-  uses needs a setup PR too. Each path the copy names needs a stub at the same relative path,
+  `tests/werft/recipe.toml` of the setup repo with generic values. A change to a step or a key
+  that the setup recipe uses needs a setup PR too. `TestExampleRecipeProvisions` runs
+  `examples/recipe.toml`, so a change that breaks the example fails there. Each path the copy names needs a stub at the same relative path,
   such as `internal/steps/testdata/system/`: the recipe load fails on a missing path.
+- **Generic values**: where a test, fixture or doc needs a stand-in for the owner's own setup,
+  use the login `tester`, the stick label `KEYSTICK`, the `pass` entry `werft/guest-password` and
+  URLs under `github.com/example/`, never the owner's real login, stick label, `pass` entry or
+  private repositories: the repository is public. Links to werft's own repository and to
+  published repositories, such as `hk9890/claude-dev-tools`, stay real.
 - **Guest assets**: put the file in `internal/guest/assets/`, add a `//go:embed` variable in
   `assets.go`, and add it to `Helpers()` when the `upload` step must copy it.
 

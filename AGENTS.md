@@ -50,7 +50,7 @@ Every route below is **mandatory, not advisory**. Load the document BEFORE the f
 
 ### Writing project docs
 
-**MUST read [docs/DOCUMENTING.md](docs/DOCUMENTING.md) and call the Skill tool with `instruction-writing:writing-project-docs` before creating or editing ANY Markdown file in this repository.** The skill carries the file-ownership contract; DOCUMENTING.md carries the local delta and what werft decided not to document.
+**MUST read [docs/DOCUMENTING.md](docs/DOCUMENTING.md) and call the Skill tool with `instruction-writing:writing-project-docs` before creating or editing ANY Markdown file in this repository.** The skill carries the file-ownership contract; DOCUMENTING.md carries the local delta.
 
 ### Issue tracking
 

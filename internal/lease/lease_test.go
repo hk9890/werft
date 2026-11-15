@@ -43,7 +43,7 @@ func record() image.Record {
 	return image.Record{
 		Name: "vm-plain-20261102", Image: "vm", Tier: "plain", Version: "20261102", Source: "vm", Label: "provision-base",
 		Pool: "werft", Disk: "vm-plain-20261102.qcow2", NVRAM: "vm-plain-20261102_VARS.qcow2",
-		User: "hans", Family: "ubuntu", Systemd: 259, Domain: stockDomain,
+		User: "tester", Family: "ubuntu", Systemd: 259, Domain: stockDomain,
 	}
 }
 
@@ -116,17 +116,17 @@ func TestStart(t *testing.T) {
 	must(t, err)
 
 	dir := e.Dir.Lease(l.ID)
-	if l.Domain != "werft-vm-plain-"+l.ID || l.Stock != "vm-plain-20261102" || l.Owner != "agent" || l.User != "hans" ||
+	if l.Domain != "werft-vm-plain-"+l.ID || l.Stock != "vm-plain-20261102" || l.Owner != "agent" || l.User != "tester" ||
 		l.Address != "vsock/3" || l.Key != filepath.Join(dir, "id_ed25519") || l.SSHConfig != filepath.Join(dir, "ssh_config") ||
 		l.SSH != "ssh -F "+l.SSHConfig+" "+l.ID || l.Expiry != e.Now().Add(lease.Lifetime) {
 		t.Errorf("lease = %+v", l)
 	}
-	if len(sh.logins) != 1 || sh.logins[0] != "hans@"+l.ID || sh.config != l.SSHConfig {
-		t.Errorf("logins %v with %s, want hans@%s with %s", sh.logins, sh.config, l.ID, l.SSHConfig)
+	if len(sh.logins) != 1 || sh.logins[0] != "tester@"+l.ID || sh.config != l.SSHConfig {
+		t.Errorf("logins %v with %s, want tester@%s with %s", sh.logins, sh.config, l.ID, l.SSHConfig)
 	}
 	config, err := os.ReadFile(l.SSHConfig)
 	must(t, err)
-	for _, line := range []string{"Host " + l.ID, "HostName vsock/3", "User hans", "IdentityFile " + l.Key} {
+	for _, line := range []string{"Host " + l.ID, "HostName vsock/3", "User tester", "IdentityFile " + l.Key} {
 		if !strings.Contains(string(config), line) {
 			t.Errorf("ssh_config lacks %q:\n%s", line, config)
 		}
@@ -163,7 +163,7 @@ func TestStart(t *testing.T) {
 	if creds["system.hostname"] != l.Domain || len(creds["system.machine_id"]) != 32 ||
 		creds["ssh.ephemeral-authorized_keys-all"] != "ssh-ed25519 AAAAlease werft\n" ||
 		creds["werft.ssh.authorized_keys"] != "\nssh-ed25519 AAAAlease werft\n" ||
-		!strings.Contains(creds["tmpfiles.extra"], "w+^ /home/hans/.ssh/authorized_keys - - - - werft.ssh.authorized_keys") ||
+		!strings.Contains(creds["tmpfiles.extra"], "w+^ /home/tester/.ssh/authorized_keys - - - - werft.ssh.authorized_keys") ||
 		creds["systemd.unit-dropin.systemd-tmpfiles-setup.service"] != "[Service]\nImportCredential=werft.*\n" {
 		t.Errorf("credentials = %q", creds)
 	}
@@ -544,7 +544,7 @@ func (noTerminal) ReadSecret(prompt string) (string, error) {
 
 func luksRecord() image.Record {
 	rec := record()
-	rec.LUKS, rec.DiskPasswordPass = true, "vm/guest-password"
+	rec.LUKS, rec.DiskPasswordPass = true, "werft/guest-password"
 	return rec
 }
 
@@ -568,7 +568,7 @@ func TestStartTypesTheDiskPasswordOnce(t *testing.T) {
 	e.H = screen{f}
 	var out bytes.Buffer
 	e.Out = &out
-	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
+	e.Secrets, e.Terminal = store{"werft/guest-password": "pw"}, noTerminal{}
 	l, err := lease.Start(e, luksRecord(), lease.Options{Owner: "agent"})
 	must(t, err)
 
@@ -618,7 +618,7 @@ func TestStartWithALockedPasswordStoreTellsWhatToDo(t *testing.T) {
 	if !failure.Is(err, failure.SecretUnavailable) {
 		t.Fatalf("Start = %v, want secret_unavailable", err)
 	}
-	for _, want := range []string{"ask the user to unlock the password store", "pass show vm/guest-password once", "then lease again", "do not print or ask for the password yourself"} {
+	for _, want := range []string{"ask the user to unlock the password store", "pass show werft/guest-password once", "then lease again", "do not print or ask for the password yourself"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want it to say %q", err, want)
 		}
@@ -628,7 +628,7 @@ func TestStartWithALockedPasswordStoreTellsWhatToDo(t *testing.T) {
 func TestStartRefusesAnUntypeablePassword(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{up: true})
-	e.Secrets, e.Terminal = store{"vm/guest-password": "pässword"}, noTerminal{}
+	e.Secrets, e.Terminal = store{"werft/guest-password": "pässword"}, noTerminal{}
 	before := len(f.Calls())
 	if _, err := lease.Start(e, luksRecord(), lease.Options{Owner: "agent"}); !failure.Is(err, failure.Usage) || strings.Contains(err.Error(), "pässword") {
 		t.Fatalf("Start = %v, want usage without the password", err)
@@ -647,7 +647,7 @@ func TestStartOfARefusedPasswordNamesNoRemovedDomain(t *testing.T) {
 	f := world(t)
 	e := env(t, f, &shell{})
 	e.H = screen{f}
-	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
+	e.Secrets, e.Terminal = store{"werft/guest-password": "pw"}, noTerminal{}
 	_, err := lease.Start(e, luksRecord(), lease.Options{Owner: "agent"})
 	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "refused the typed password") {
 		t.Fatalf("Start = %v, want a timeout that names the password", err)

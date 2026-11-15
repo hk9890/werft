@@ -16,7 +16,7 @@ func TestCleanupsRunTwice(t *testing.T) {
 	cleaners := []interface {
 		pipeline.Step
 		pipeline.Cleaner
-	}{&steps.Autologin{}, &steps.SudoGrant{}, &steps.Pinentry{Secret: "passphrase"}, &steps.UsbPassthrough{Label: "MASTER-KEY"}, steps.Viewer{}}
+	}{&steps.Autologin{}, &steps.SudoGrant{}, &steps.Pinentry{Secret: "passphrase"}, &steps.UsbPassthrough{Label: "KEYSTICK"}, steps.Viewer{}}
 	if !r.Reach("true") {
 		t.Fatal("the guest does not answer")
 	}

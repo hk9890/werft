@@ -11,13 +11,24 @@ The status of each phase is in the [roadmap](docs/PRODUCT.md#roadmap).
 
 ## Install
 
-Install a release with mise. The repository is private, so mise needs a GitHub token with the
-`repo` scope, or Contents: read for a fine-grained token. mise takes the first of `MISE_GITHUB_TOKEN`, `GITHUB_API_TOKEN`, `GITHUB_TOKEN` and
-the gh CLI login; `mise token github` shows which one it uses. [CHANGELOG.md](CHANGELOG.md) says
-what changed in each release.
+Install a release with mise, or with Go. [CHANGELOG.md](CHANGELOG.md) says what changed in each
+release.
 
 ```sh
-mise use -g github:hk9890/werft@X.Y.Z    # a version from the releases page
+mise use -g github:hk9890/werft@X.Y.Z               # a version from the releases page
+go install github.com/hk9890/werft/cmd/werft@latest   # version prints "dev"
+```
+
+To verify a release archive, download it with its `werft_X.Y.Z_checksums.txt` and
+`werft_X.Y.Z_checksums.txt.bundle`, then check the checksum, the signature (cosign 3.x) and the
+build provenance:
+
+```sh
+sha256sum --ignore-missing -c werft_X.Y.Z_checksums.txt
+cosign verify-blob --bundle werft_X.Y.Z_checksums.txt.bundle \
+  --certificate-identity https://github.com/hk9890/werft/.github/workflows/release.yml@refs/tags/vX.Y.Z \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com werft_X.Y.Z_checksums.txt
+gh attestation verify werft_X.Y.Z_linux_x64.tar.gz --repo hk9890/werft
 ```
 
 To build from source, follow [docs/CODING.md](docs/CODING.md#build-and-run-from-source).
@@ -60,8 +71,8 @@ VM whose UEFI variables are raw, because a reset point would leave them out.
 
 `werft provision` runs a recipe on a build VM and keeps the result as `<name>-full`. Point
 `~/.config/werft/config.toml` at a recipe with `recipe = "<path>"`, or pass `--recipe <path>`.
-The setup repo holds its recipe, its config, and what a run needs in
-[tests/werft](https://github.com/carlo9890/setup/tree/main/tests/werft).
+[examples/recipe.toml](examples/recipe.toml) installs packages on Ubuntu and keeps the result; the recipe
+format is in [docs/DESIGN.md, "Recipe"](docs/DESIGN.md#recipe).
 
 ```sh
 werft prepare ubuntu-26-04                   # once: werft key and your own key, hostname, provision-base
@@ -140,7 +151,10 @@ A stock image sealed before `werft lease` existed has no domain definition for l
 
 - [docs/PRODUCT.md](docs/PRODUCT.md): users, core concepts, the agent contract, the roadmap
 - [docs/DESIGN.md](docs/DESIGN.md): how werft works, exit codes, where state lives
+- [CONTRIBUTING.md](CONTRIBUTING.md): build from source and propose a change
+- [SECURITY.md](SECURITY.md): report a vulnerability
 
 ## License
 
-Private. All rights reserved.
+MIT, see [LICENSE](LICENSE). The licenses of the linked modules are in
+[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).

@@ -1,0 +1,56 @@
+# An example provision recipe. On an Ubuntu build VM it installs packages; on
+# every build VM it keeps the result as <build VM>-full and takes the reset
+# point clean there.
+#   werft provision --recipe examples/recipe.toml <build VM>
+# Paths are relative to this file; ~/ is the home directory.
+#
+# werft asks for the guest password at the terminal. To read it from pass:
+#   [guest_password]
+#   pass = "<entry>"
+
+[[steps]]
+type = "reset"
+label = "provision-base"
+
+[[steps]]
+type = "boot"
+
+[[steps]]
+type = "wait-ssh"
+
+[[steps]]
+type = "verify-guest-password"
+
+[[steps]]
+type = "detect-guest"
+
+[[steps]]
+type = "sudo-grant"
+
+# Copies the helpers of werft into the guest directory, where run starts.
+[[steps]]
+type = "upload"
+
+# A fresh Ubuntu runs apt-daily right after boot, and its timers can start it
+# again later: wait for it once, then let apt-get wait on the lock.
+[[steps]]
+type = "run"
+family = "ubuntu"
+command = "bash -c '. ./wait-for-package-manager.sh && wait_for_package_manager' && sudo apt-get -o DPkg::Lock::Timeout=600 update && sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y git curl"
+
+[[steps]]
+type = "undo"
+step = "sudo-grant"
+
+[[steps]]
+type = "poweroff"
+
+[[steps]]
+type = "clone"
+
+[[steps]]
+type = "generalize"
+
+[[steps]]
+type = "snapshot"
+label = "clean"

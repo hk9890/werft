@@ -97,14 +97,14 @@ func TestLoginPause(t *testing.T) {
 // config.
 func TestWriteHostConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ssh_config")
-	if err := guest.WriteHostConfig(path, "abc123", guest.Addr{User: "hans", Host: "vsock/7"}, "/leases/abc123/id_ed25519"); err != nil {
+	if err := guest.WriteHostConfig(path, "abc123", guest.Addr{User: "tester", Host: "vsock/7"}, "/leases/abc123/id_ed25519"); err != nil {
 		t.Fatal(err)
 	}
 	out, err := exec.Command("ssh", "-G", "-F", path, "abc123").Output()
 	if err != nil {
 		t.Skipf("no ssh -G: %v", err)
 	}
-	for _, line := range []string{"hostname vsock/7", "user hans", "identityfile /leases/abc123/id_ed25519", "identitiesonly yes",
+	for _, line := range []string{"hostname vsock/7", "user tester", "identityfile /leases/abc123/id_ed25519", "identitiesonly yes",
 		"proxycommand " + guest.SSHProxy + " %h %p", "proxyusefdpass yes"} {
 		if !strings.Contains(string(out), line+"\n") {
 			t.Errorf("ssh -G lacks %q:\n%s", line, out)

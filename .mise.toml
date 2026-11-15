@@ -31,8 +31,8 @@ description = "Validate .goreleaser.yaml"
 run = "goreleaser check"
 
 [tasks."release:snapshot"]
-description = "Build the release archives into ./dist without publishing (docs/RELEASING.md)"
-run = "goreleaser release --snapshot --clean"
+description = "Build the release archives into ./dist without publishing, signing or SBOMs (docs/RELEASING.md)"
+run = "goreleaser release --snapshot --clean --skip=sign,sbom"
 
 # ---- format / vet / lint / tidy / vuln -------------------------------------
 
@@ -63,6 +63,21 @@ run = "go mod tidy"
 [tasks."tidy:check"]
 description = "Fail if go.mod or go.sum is not tidy"
 run = "go mod tidy -diff"
+
+[tasks.licenses]
+description = "Write THIRD_PARTY_LICENSES, the license texts of the linked modules"
+# Through a temp file, so a failed run leaves the old file in place.
+run = "scripts/third-party-licenses > THIRD_PARTY_LICENSES.tmp && mv THIRD_PARTY_LICENSES.tmp THIRD_PARTY_LICENSES || { rm -f THIRD_PARTY_LICENSES.tmp; exit 1; }"
+
+[tasks."licenses:check"]
+description = "Fail if THIRD_PARTY_LICENSES is out of date"
+# Through a file, not a pipe, so a failure of the script fails the check.
+run = """
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+scripts/third-party-licenses > "$out" || exit 1
+diff -u THIRD_PARTY_LICENSES "$out" || { echo 'run: mise run licenses'; exit 1; }
+"""
 
 [tasks.vuln]
 description = "govulncheck (reaches the network; CI-only gate)"
@@ -103,8 +118,8 @@ rm -f coverage.out
 # ---- gates -----------------------------------------------------------------
 
 [tasks.quality]
-description = "Pre-commit gate: fmt + vet + lint + tidy + build + release:check + unit tests. CI runs it."
-depends = ["fmt:check", "vet", "lint", "tidy:check", "build", "release:check", "test"]
+description = "Pre-commit gate: fmt + vet + lint + tidy + licenses + build + release:check + unit tests. CI runs it."
+depends = ["fmt:check", "vet", "lint", "tidy:check", "licenses:check", "build", "release:check", "test"]
 
 [tasks."quality:full"]
 description = "Pre-handoff gate: quality, then the live tests against qemu:///system"

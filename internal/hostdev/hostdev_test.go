@@ -41,7 +41,7 @@ printf ' 4242'`,
 	for _, k := range []string{"STICK_WHOLE_DISK", "STICK_NOT_USB", "STICK_BUSY", "STICK_UNMOUNT_FAIL", "STICK_UUID"} {
 		t.Setenv(k, "")
 	}
-	t.Setenv("STICK_MOUNT", "/media/tester/MASTER-KEY")
+	t.Setenv("STICK_MOUNT", "/media/tester/KEYSTICK")
 	return log
 }
 
@@ -52,22 +52,22 @@ func calls(log string) string {
 
 func TestMountOfFindsTheLabelUnderMediaOrRunMedia(t *testing.T) {
 	stubs(t)
-	if m := hostdev.MountOf("tester", "MASTER-KEY"); m != "/media/tester/MASTER-KEY" {
+	if m := hostdev.MountOf("tester", "KEYSTICK"); m != "/media/tester/KEYSTICK" {
 		t.Errorf("MountOf = %s", m)
 	}
-	t.Setenv("STICK_MOUNT", "/run/media/tester/MASTER-KEY")
-	if m := hostdev.MountOf("tester", "MASTER-KEY"); m != "/run/media/tester/MASTER-KEY" {
+	t.Setenv("STICK_MOUNT", "/run/media/tester/KEYSTICK")
+	if m := hostdev.MountOf("tester", "KEYSTICK"); m != "/run/media/tester/KEYSTICK" {
 		t.Errorf("MountOf on Omarchy = %s", m)
 	}
 	t.Setenv("STICK_MOUNT", "/elsewhere")
-	if m := hostdev.MountOf("tester", "MASTER-KEY"); m != "/media/tester/MASTER-KEY" {
+	if m := hostdev.MountOf("tester", "KEYSTICK"); m != "/media/tester/KEYSTICK" {
 		t.Errorf("MountOf without a stick = %s, want the default to name", m)
 	}
 }
 
 func TestFind(t *testing.T) {
 	stubs(t)
-	s, err := hostdev.Find("/media/tester/MASTER-KEY")
+	s, err := hostdev.Find("/media/tester/KEYSTICK")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestFind(t *testing.T) {
 	}
 
 	t.Setenv("STICK_WHOLE_DISK", "1")
-	if s, err := hostdev.Find("/media/tester/MASTER-KEY"); err != nil || s.Device != "/dev/sdz" {
+	if s, err := hostdev.Find("/media/tester/KEYSTICK"); err != nil || s.Device != "/dev/sdz" {
 		t.Errorf("a stick without a partition table: %+v, %v", s, err)
 	}
 }
@@ -92,9 +92,9 @@ func TestFindRefusals(t *testing.T) {
 		message                 string
 	}{
 		{"nothing mounted", "/media/tester/NONE", "", "", failure.NotFound, "nothing is mounted at /media/tester/NONE; plug in the stick"},
-		{"not USB", "/media/tester/MASTER-KEY", "STICK_NOT_USB", "1", failure.Usage, "/media/tester/MASTER-KEY is not on a USB device"},
+		{"not USB", "/media/tester/KEYSTICK", "STICK_NOT_USB", "1", failure.Usage, "/media/tester/KEYSTICK is not on a USB device"},
 		// The UUID goes into a guest command line.
-		{"odd UUID", "/media/tester/MASTER-KEY", "STICK_UUID", "AB CD;x", failure.Failed, "could not identify the USB stick behind /dev/sdz1"},
+		{"odd UUID", "/media/tester/KEYSTICK", "STICK_UUID", "AB CD;x", failure.Failed, "could not identify the USB stick behind /dev/sdz1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

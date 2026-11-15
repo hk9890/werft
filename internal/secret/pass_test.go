@@ -18,7 +18,7 @@ func fakePass(t *testing.T) (stdin string) {
 	stdin = filepath.Join(dir, "stdin")
 	script := `#!/bin/sh
 cat >"` + stdin + `"
-if [ "$2" != vm/guest-password ]; then
+if [ "$2" != werft/guest-password ]; then
     echo "Error: $2 is not in the password store." >&2
     exit 1
 fi
@@ -33,7 +33,7 @@ printf '  gu3st pw  \nlogin: stub\n'
 
 func TestPassGivesTheFirstLineWithItsSpaces(t *testing.T) {
 	stdin := fakePass(t)
-	v, err := secret.Pass{}.Show("vm/guest-password")
+	v, err := secret.Pass{}.Show("werft/guest-password")
 	if err != nil || v != "  gu3st pw  " {
 		t.Fatalf("Show = %q, %v", v, err)
 	}

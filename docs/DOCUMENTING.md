@@ -10,6 +10,7 @@ conflict, this file wins.
 - Cite code by path and symbol, for example `internal/virt/libvirt/uefi_reset_live_test.go`
   and `TestUEFIResetPointRestoresNVRAMAndDisk`. Do not cite a line number.
 - Cite a command as a mise task (`mise run test:live`) when `.mise.toml` has one.
+- Use the generic values of [CODING.md, "Generic values"](CODING.md#where-code-goes) in docs too.
 
 ## Docs outside the canonical set
 
@@ -20,6 +21,8 @@ conflict, this file wins.
 - [CHANGELOG.md](../CHANGELOG.md) owns what changed for the user in each release; its section is
   the release text on GitHub. [RELEASING.md](RELEASING.md#what-goes-in-the-changelog-section)
   owns the rules for writing it.
+- [SECURITY.md](../SECURITY.md) owns how to report a vulnerability, the supported versions, and
+  the security scope.
 
 ## Decisions and work items
 
@@ -29,13 +32,6 @@ conflict, this file wins.
   "Open questions".
 - Track a work item, a plan step or a TODO as an issue ([CHANGE-WORKFLOW.md](CHANGE-WORKFLOW.md#issues)).
   The docs hold the target state, not the backlog.
-
-## What werft does not document, and why
-
-Re-open a decision here before you fill the gap in another file.
-
-- **No CONTRIBUTING.md.** werft has one user, and agents do the work. The human entry point is
-  [README.md](../README.md); the agent entry point is `AGENTS.md`.
 
 ## Before you land a doc change
 

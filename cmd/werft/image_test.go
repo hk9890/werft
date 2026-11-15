@@ -62,7 +62,7 @@ label = "provision-base"
 pool = "werft"
 disk = "ubuntu-26-04-plain-20261102.qcow2"
 nvram = "ubuntu-26-04-plain-20261102_VARS.qcow2"
-user = "hans"
+user = "tester"
 family = "ubuntu"
 systemd = 259
 `
@@ -79,7 +79,7 @@ label = "clean"
 pool = "werft"
 disk = "ubuntu-26-04-full-20261106.qcow2"
 nvram = "ubuntu-26-04-full-20261106_VARS.qcow2"
-user = "hans"
+user = "tester"
 family = "ubuntu"
 systemd = 259
 `
@@ -105,7 +105,7 @@ func TestImages(t *testing.T) {
 		t.Fatalf("images --json = %+v, %v", r, err)
 	}
 	if e := list[0]; e["image"] != "ubuntu-26-04" || e["tier"] != "plain" || e["version"] != "20261102" ||
-		e["date"] != "2026-11-02T21:00:00Z" || e["user"] != "hans" || e["systemd"] != float64(259) {
+		e["date"] != "2026-11-02T21:00:00Z" || e["user"] != "tester" || e["systemd"] != float64(259) {
 		t.Errorf("images entry = %v", e)
 	}
 	if e := list[1]; e["image"] != "ubuntu-26-04" || e["tier"] != "full" || e["source"] != "ubuntu-26-04-full" || e["label"] != "clean" {
