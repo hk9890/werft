@@ -1,8 +1,7 @@
 # werft — design
 
 How werft is built. What werft must do and for whom: [PRODUCT.md](PRODUCT.md). werft replaced the
-bash tool `vm` of the setup repo, which deleted it in roadmap phase 2. Its last version:
-[`scripts/vm/`](https://github.com/carlo9890/setup/tree/0860f2b2ecd080f3b1724ba43a53e0abb68c0d9d/scripts/vm).
+bash tool `vm` of the setup repo, which deleted it in roadmap phase 2.
 
 Status of each phase: [PRODUCT.md, "Roadmap"](PRODUCT.md#roadmap).
 
@@ -126,7 +125,7 @@ real adapters.
 | Last screen of a lease that did not boot | `~/.local/state/werft/evidence/<YYYYmmdd-HHMMSS>-<domain>.png` (UTC), the 10 newest | werft |
 | Locks | `~/.local/state/werft/locks/` | werft |
 | Config | `~/.config/werft/config.toml` | user |
-| Recipes | setup repo, `tests/werft/` | setup repo |
+| Recipes | the user's own path; the setup repo keeps its recipe in `tests/werft/`; `examples/recipe.toml` | user |
 
 werft never opens a file under `/var/lib/libvirt/` directly. Every disk operation goes through the
 storage API, because `/var/lib/libvirt/images` is `0711 root`. The one exception: `list`,
@@ -580,16 +579,16 @@ guest can reboot and the run can move on to the clone after the step ran.
 
 ### Recipe
 
-A recipe is a TOML file that lists the provision steps and their parameters. The setup repo owns
-it and the files it names, in `tests/werft/`, and its stow package `dotfiles/werft` links the
-`config.toml` that names it. Paths resolve relative to the recipe, and `~/` is the home directory. A
+A recipe is a TOML file that lists the provision steps and their parameters. The user owns it and
+the files it names; `examples/recipe.toml` is a small one. The setup repo keeps its recipe in
+`tests/werft/`, and its stow package `dotfiles/werft` links the `config.toml` that names it. Paths resolve relative to the recipe, and `~/` is the home directory. A
 step can be limited to a guest family. `config.toml` maps each build VM to its recipe (`recipe` for
 all, `[recipes]` per build VM); `--recipe` overrides it. `prepare` reads only `[guest_password]`
 from it; without a recipe it says so and asks for the guest password at the terminal.
 
 ```toml
 [guest_password]              # pass entry, else the prompt at the terminal
-pass = "vm/guest-password"
+pass = "werft/guest-password"
 
 [secrets.passphrase]          # a named secret for run and pinentry
 prompt = "GPG passphrase"
@@ -611,8 +610,8 @@ that has a cleanup. The setup recipe holds:
   `guest/bootstrap.sh`);
 - `tests/system` for the `checks` step, as `../system` from the recipe, so the checks come from
   the checkout that holds the recipe;
-- `usb-passthrough` with mount label `MASTER-KEY`, and `pinentry` with a TTY secret;
-- the guest password secret from `pass` entry `vm/guest-password`;
+- `usb-passthrough` with mount label `KEYSTICK`, and `pinentry` with a TTY secret;
+- the guest password secret from `pass` entry `werft/guest-password`;
 - for family `omarchy`: a `run` step for `omarchy update` (`OMARCHY_UPDATE_LOGGED=1`,
   `env-bootstrap`), then `reboot`;
 - `autologin` and `unlock-keyring`, because the setup writes gsettings and uses `gh`.
@@ -696,7 +695,7 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 - The user migrates one build VM at a time with `werft migrate`. A domain with a raw NVRAM, as
   `vm` left it, needs it: `snapshot`, `reset`, `prepare` and `provision` refuse it.
 - The setup repo keeps: the recipe, the bootstrap script, `tests/system`, the `pass` entry
-  `vm/guest-password`, `scripts/common/wait-for-package-manager.sh` for its own use, and the
+  `werft/guest-password`, `scripts/common/wait-for-package-manager.sh` for its own use, and the
   `~/.ssh/config` entries for build VMs. Leases need no ssh config entry; werft writes one per lease.
 
 ## Risks

@@ -1,0 +1,58 @@
+# An example provision recipe. It installs packages in a build VM, keeps the
+# result as <build VM>-full, and takes the reset point clean there.
+#   werft provision --recipe examples/recipe.toml <build VM>
+# Paths are relative to this file; ~/ is the home directory.
+
+# sudo in the guest, and the disk prompt of an encrypted guest, need it.
+# pass = "<entry>" reads it from pass instead.
+[guest_password]
+prompt = "Password of the guest user, for its sudo"
+
+[[steps]]
+type = "reset"
+label = "provision-base"
+
+[[steps]]
+type = "boot"
+
+[[steps]]
+type = "wait-ssh"
+
+[[steps]]
+type = "verify-guest-password"
+
+[[steps]]
+type = "detect-guest"
+
+[[steps]]
+type = "hostname"
+
+[[steps]]
+type = "sudo-grant"
+
+[[steps]]
+type = "run"
+family = "ubuntu"
+command = "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl"
+
+[[steps]]
+type = "run"
+family = "omarchy"
+command = "sudo pacman -Syu --noconfirm git curl"
+
+[[steps]]
+type = "undo"
+step = "sudo-grant"
+
+[[steps]]
+type = "poweroff"
+
+[[steps]]
+type = "clone"
+
+[[steps]]
+type = "generalize"
+
+[[steps]]
+type = "snapshot"
+label = "clean"
