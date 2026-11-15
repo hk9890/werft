@@ -1,0 +1,35 @@
+#!/bin/sh
+# Prints THIRD_PARTY_LICENSES: the license text of each module the werft binary
+# links, the Go standard library first, for the release archive. Versions are
+# left out, so a dependency bump changes the file only when a license changes.
+# Exits 1 when a module has no license file.
+set -eu
+
+cd "$(dirname "$0")/.."
+cat <<'EOF'
+THIRD-PARTY SOFTWARE LICENSES
+
+The werft binary statically links the Go modules listed below. Their license
+texts are reproduced in full. Every release archive holds this file.
+Regenerate it with `mise run licenses`.
+EOF
+{
+	echo "Go $(go env GOROOT)"
+	go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Dir}}{{end}}{{end}}' ./cmd/werft | sort -u
+} |
+	while read -r path dir; do
+		found=
+		for f in "$dir"/LICENSE* "$dir"/COPYING* "$dir"/NOTICE*; do
+			[ -f "$f" ] || continue
+			found=1
+			printf '\n%s\n%s (%s)\n%s\n\n' \
+				"--------------------------------------------------------------------------------" \
+				"$path" "$(basename "$f")" \
+				"--------------------------------------------------------------------------------"
+			cat "$f"
+		done
+		if [ -z "$found" ]; then
+			echo "$path has no license file in $dir" >&2
+			exit 1
+		fi
+	done

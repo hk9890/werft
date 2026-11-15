@@ -7,11 +7,19 @@ second job, the one with write access, run GoReleaser.
 
 A release holds one archive per architecture, `werft_X.Y.Z_linux_x64.tar.gz` and
 `werft_X.Y.Z_linux_arm64.tar.gz`, and `werft_X.Y.Z_checksums.txt`. mise's `github` backend picks
-the archive by these names. The release notes are the tag's `CHANGELOG.md` section, printed by
+the archive by these names. Each archive holds the binary, `LICENSE`, `THIRD_PARTY_LICENSES` and
+`README.md`. The release notes are the tag's `CHANGELOG.md` section, printed by
 `scripts/release-notes vX.Y.Z`; a tag with no section fails the run before it publishes.
 
-The release has no cosign signature, no SBOM and no build-provenance attestation. The repository
-is private and werft has one user; add them when werft goes public.
+The release also holds:
+
+- `werft_X.Y.Z_checksums.txt.bundle`: the keyless cosign signature of the checksums file.
+- `<archive>.sbom.json`: one SPDX SBOM per archive, made by syft.
+- A build-provenance attestation of each archive, stored by GitHub. GitHub refuses it in a
+  private repository, so the release job fails at its last step there.
+
+`mise run licenses` writes `THIRD_PARTY_LICENSES` after a new dependency or a license change;
+`mise run quality` fails while the file is out of date.
 
 ## Check the config
 
@@ -19,7 +27,7 @@ Run both after a change to `.goreleaser.yaml`. `mise run quality` runs `release:
 
 ```bash
 mise run release:check       # goreleaser check
-mise run release:snapshot    # archives into dist/, publishes nothing
+mise run release:snapshot    # archives into dist/, publishes nothing, skips signature and SBOMs
 ./dist/werft_linux_amd64_v1/werft version
 ```
 
@@ -67,14 +75,19 @@ mise run release:snapshot    # archives into dist/, publishes nothing
    gh run watch "$(gh run list --workflow=release.yml --branch vX.Y.Z --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
    ```
 
-6. Verify from the main checkout, after `git pull --ff-only`. Expect the two archives and the
-   checksums file, a binary that prints `werft vX.Y.Z`, and a body that is the tag's
-   `CHANGELOG.md` section: the `diff` prints nothing when they match.
+6. Verify from the main checkout, after `git pull --ff-only`. Expect the two archives, their
+   SBOMs, the checksums file and its bundle, a binary that prints `werft vX.Y.Z`, a signature and
+   an attestation that verify, and a body that is the tag's `CHANGELOG.md` section: the `diff`
+   prints nothing when they match.
 
    ```bash
    gh release view vX.Y.Z --json assets -q '.assets[].name'
-   D=$(mktemp -d) && gh release download vX.Y.Z -p '*_linux_x64.tar.gz' -D "$D" &&
+   D=$(mktemp -d) && gh release download vX.Y.Z -p '*_linux_x64.tar.gz' -p '*_checksums.txt*' -D "$D" &&
      tar -xzf "$D"/*.tar.gz -C "$D" && "$D/werft" version
+   cosign verify-blob --bundle "$D"/werft_X.Y.Z_checksums.txt.bundle \
+     --certificate-identity-regexp '^https://github.com/hk9890/werft/' \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com "$D"/werft_X.Y.Z_checksums.txt
+   gh attestation verify "$D"/werft_X.Y.Z_linux_x64.tar.gz --repo hk9890/werft
    diff <(gh release view vX.Y.Z --json body -q .body) <(scripts/release-notes vX.Y.Z; echo)
    ```
 
