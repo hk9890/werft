@@ -53,14 +53,14 @@ func TestLeaseText(t *testing.T) {
 	created := time.Date(2026, 11, 3, 10, 0, 0, 0, time.Local)
 	l := lease.Lease{
 		ID: "abc123", Domain: "werft-vm-plain-abc123", Image: "vm", Tier: "plain", Stock: "vm-plain-20261102",
-		Owner: "agent", State: "running", User: "hans", Address: "vsock/3", Key: "/s/leases/abc123/id_ed25519",
+		Owner: "agent", State: "running", User: "tester", Address: "vsock/3", Key: "/s/leases/abc123/id_ed25519",
 		SSHConfig: "/s/leases/abc123/ssh_config", SSH: "ssh -F /s/leases/abc123/ssh_config abc123",
 		Created: created, Expiry: created.Add(lease.Lifetime),
 	}
 	var out bytes.Buffer
 	writeLease(&out, l)
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	for _, want := range []string{"lease: abc123", "owner: agent", "state: running", "user: hans", "address: vsock/3", "key: /s/leases/abc123/id_ed25519",
+	for _, want := range []string{"lease: abc123", "owner: agent", "state: running", "user: tester", "address: vsock/3", "key: /s/leases/abc123/id_ed25519",
 		"ssh_config: /s/leases/abc123/ssh_config", "created: 2026-11-03 10:00", "expiry: 2026-11-03 14:00"} {
 		if !slices.ContainsFunc(lines, func(line string) bool { return strings.Join(strings.Fields(line), " ") == want }) {
 			t.Errorf("text output lacks %q:\n%s", want, out.String())
@@ -72,9 +72,9 @@ func TestLeaseText(t *testing.T) {
 }
 
 func TestLeaseOwner(t *testing.T) {
-	t.Setenv("USER", "hans")
+	t.Setenv("USER", "tester")
 	t.Setenv("WERFT_OWNER", "")
-	if got := leaseOwner(""); got != "hans" {
+	if got := leaseOwner(""); got != "tester" {
 		t.Errorf("owner without flag and $WERFT_OWNER = %q, want $USER", got)
 	}
 	t.Setenv("WERFT_OWNER", "agent-7")
@@ -224,7 +224,7 @@ func addOwnedLease(t *testing.T, lh *lifecycleHost, id, owner string, created ti
 	if err := os.MkdirAll(dir.Lease(id), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := guest.WriteHostConfig(filepath.Join(dir.Lease(id), "ssh_config"), id, guest.Addr{User: "hans", Host: "vsock/7"}, "key"); err != nil {
+	if err := guest.WriteHostConfig(filepath.Join(dir.Lease(id), "ssh_config"), id, guest.Addr{User: "tester", Host: "vsock/7"}, "key"); err != nil {
 		t.Fatal(err)
 	}
 	return name

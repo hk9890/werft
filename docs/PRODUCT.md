@@ -3,8 +3,8 @@
 werft (German for shipyard) is a VM lab on one Linux workstation. Agents and humans use it to get a
 disposable VM, test something in it, and give it back. Agents are the main users.
 
-werft replaced the bash tool `vm` of the setup repo (`carlo9890/setup`). The setup repo deleted
-`scripts/vm/` when werft reached parity.
+werft replaced the bash tool `vm` of the setup repo, the user's own repository that sets up a
+fresh machine. The setup repo deleted `scripts/vm/` when werft reached parity.
 
 Technical design: [DESIGN.md](DESIGN.md).
 

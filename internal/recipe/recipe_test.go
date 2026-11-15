@@ -32,7 +32,7 @@ func write(t *testing.T, content string) string {
 
 const valid = `
 [guest_password]
-pass = "vm/guest-password"
+pass = "werft/guest-password"
 
 [secrets.passphrase]
 prompt = "GPG passphrase"
@@ -83,7 +83,7 @@ func TestLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(path)
-	if r.GuestPassword.Pass != "vm/guest-password" || r.Secrets["passphrase"].Prompt != "GPG passphrase" {
+	if r.GuestPassword.Pass != "werft/guest-password" || r.Secrets["passphrase"].Prompt != "GPG passphrase" {
 		t.Errorf("secrets = %+v %+v", r.GuestPassword, r.Secrets)
 	}
 	if len(r.Steps) != 10 {
@@ -153,14 +153,14 @@ func TestExpandHome(t *testing.T) {
 func TestGuestPasswordReadsNothingElse(t *testing.T) {
 	path := write(t, `
 [guest_password]
-pass = "vm/guest-password"
+pass = "werft/guest-password"
 
 [[steps]]
 type = "checks"
 dir = "~/no/such/checks"
 `)
 	spec, err := recipe.GuestPassword(path)
-	if err != nil || spec.Pass != "vm/guest-password" {
+	if err != nil || spec.Pass != "werft/guest-password" {
 		t.Errorf("GuestPassword = %+v, %v", spec, err)
 	}
 	if _, err := recipe.Load(path); err == nil {

@@ -14,7 +14,7 @@ import (
 
 func TestProvisionNeedsTheStick(t *testing.T) {
 	w := newWorld(t)
-	w.host.stickErr = failure.New(failure.NotFound, "nothing is mounted at /media/tester/MASTER-KEY; plug in the stick")
+	w.host.stickErr = failure.New(failure.NotFound, "nothing is mounted at /media/tester/KEYSTICK; plug in the stick")
 	_, err := provision(t, w, true)
 	if !failure.Is(err, failure.NotFound) || !strings.Contains(err.Error(), "plug in the stick") {
 		t.Fatalf("err = %v", err)
@@ -105,7 +105,7 @@ func TestProvisionTakesTheStickAtKeyMount(t *testing.T) {
 	if err := pipeline.Execute(r, steps.FromRecipe(setupRecipe(t))); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
-	if w.index("^find stick /media/tester/BACKUP$") < 0 || w.index("^find stick /media/tester/MASTER-KEY$") >= 0 {
+	if w.index("^find stick /media/tester/BACKUP$") < 0 || w.index("^find stick /media/tester/KEYSTICK$") >= 0 {
 		t.Errorf("want the stick at --key only:\n  %s", strings.Join(w.entries(), "\n  "))
 	}
 	if out := w.out.String(); !strings.Contains(out, "Handing the stick at /media/tester/BACKUP to testvm") {

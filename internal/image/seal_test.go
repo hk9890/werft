@@ -95,7 +95,7 @@ func env(t *testing.T, f *virttest.Fake, sh guest.Shell) image.Env {
 	return image.Env{
 		Ctx: context.Background(), H: f, Shell: sh, Key: "ssh-ed25519 AAAAseal seal",
 		Pool: "werft", PoolPath: "/werft", Catalog: filepath.Join(t.TempDir(), "images.toml"),
-		User: "hans", WerftKey: "ssh-ed25519 AAAAwerft",
+		User: "tester", WerftKey: "ssh-ed25519 AAAAwerft",
 		Global: func() (func(), error) { return func() {}, nil },
 		Now:    func() time.Time { return time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC) },
 		Sleep:  func(time.Duration) {},
@@ -252,7 +252,7 @@ func TestSealWritesVolumesAndRecord(t *testing.T) {
 	want := image.Record{
 		Name: "vm-plain-20261102", Image: "vm", Tier: "plain", Version: "20261102", Date: e.Now(),
 		Source: "vm", Label: "provision-base", Pool: "werft", Disk: "vm-plain-20261102.qcow2", NVRAM: "vm-plain-20261102_VARS.qcow2",
-		User: "hans", Family: "ubuntu", Systemd: 259,
+		User: "tester", Family: "ubuntu", Systemd: 259,
 	}
 	// The stock definition is the temporary domain without its credentials.
 	if !strings.Contains(rec.Domain, "/werft/vm-plain-20261102.qcow2") || !strings.Contains(rec.Domain, "<vsock") ||
@@ -455,19 +455,19 @@ func TestSealTypesTheDiskPassword(t *testing.T) {
 	e.H = screen{f}
 	var out bytes.Buffer
 	e.Out = &out
-	e.DiskPassword = secret.Spec{Pass: "vm/guest-password", Prompt: "Disk password of vm"}
-	e.Secrets, e.Terminal = store{"vm/guest-password": "pw"}, noTerminal{}
+	e.DiskPassword = secret.Spec{Pass: "werft/guest-password", Prompt: "Disk password of vm"}
+	e.Secrets, e.Terminal = store{"werft/guest-password": "pw"}, noTerminal{}
 	s, err := image.Plan(f, "vm", "provision-base")
 	must(t, err)
 	rec, err := s.Run(e)
 	must(t, err)
 
-	if !rec.LUKS || rec.DiskPasswordPass != "vm/guest-password" {
+	if !rec.LUKS || rec.DiskPasswordPass != "werft/guest-password" {
 		t.Errorf("record = %+v, want the LUKS marker and the pass entry", rec)
 	}
 	records, err := image.Load(e.Catalog)
 	must(t, err)
-	if len(records) != 1 || !records[0].LUKS || records[0].DiskPasswordPass != "vm/guest-password" {
+	if len(records) != 1 || !records[0].LUKS || records[0].DiskPasswordPass != "werft/guest-password" {
 		t.Errorf("catalog = %+v", records)
 	}
 	// p, w, Enter: once, before the first login.
@@ -512,7 +512,7 @@ func TestSealRefusesWithoutAPasswordSource(t *testing.T) {
 func TestSealRefusesAnUntypeablePassword(t *testing.T) {
 	f := worldOf(t, luksVM)
 	e := env(t, f, &shell{f: f})
-	e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "vm/guest-password"}, store{"vm/guest-password": "pässword"}, noTerminal{}
+	e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "werft/guest-password"}, store{"werft/guest-password": "pässword"}, noTerminal{}
 	s, err := image.Plan(f, "vm", "provision-base")
 	must(t, err)
 	before := len(f.Calls())
@@ -556,7 +556,7 @@ func TestSealRefusesALUKSMarkerTheRevertChanged(t *testing.T) {
 			f := worldOf(t, tt.atResetPoint)
 			e := env(t, f, &shell{f: f})
 			e.H = redefine{f, tt.afterRevert}
-			e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "vm/guest-password"}, store{"vm/guest-password": "pw"}, noTerminal{}
+			e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "werft/guest-password"}, store{"werft/guest-password": "pw"}, noTerminal{}
 			s, err := image.Plan(f, "vm", "provision-base")
 			must(t, err)
 			if _, err := s.Run(e); !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), "LUKS marker") {
@@ -584,7 +584,7 @@ func TestSealOfARefusedPasswordNamesNoRemovedDomain(t *testing.T) {
 	f := worldOf(t, luksVM)
 	e := env(t, f, silent{})
 	e.H = screen{f}
-	e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "vm/guest-password"}, store{"vm/guest-password": "pw"}, noTerminal{}
+	e.DiskPassword, e.Secrets, e.Terminal = secret.Spec{Pass: "werft/guest-password"}, store{"werft/guest-password": "pw"}, noTerminal{}
 	s, err := image.Plan(f, "vm", "provision-base")
 	must(t, err)
 	_, err = s.Run(e)

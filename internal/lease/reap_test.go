@@ -161,7 +161,7 @@ func TestList(t *testing.T) {
 	}
 	l := leases[0]
 	if l.ID != want.ID || l.Domain != want.Domain || l.Image != "vm" || l.Tier != "plain" || l.Stock != want.Stock ||
-		l.Owner != "agent" || l.User != "hans" || l.Address != "vsock/3" || l.Key != want.Key ||
+		l.Owner != "agent" || l.User != "tester" || l.Address != "vsock/3" || l.Key != want.Key ||
 		l.SSHConfig != want.SSHConfig || l.SSH != want.SSH || !l.Created.Equal(want.Created) || !l.Expiry.Equal(want.Expiry) ||
 		l.State != "running" || want.State != "running" {
 		t.Errorf("List = %+v\nwant %+v", l, want)

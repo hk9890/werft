@@ -26,13 +26,13 @@ type term struct {
 func (t *term) ReadSecret(string) (string, error) { t.asked = true; return t.value, t.err }
 
 func TestRead(t *testing.T) {
-	spec := secret.Spec{Pass: "vm/guest-password", Prompt: "Password"}
+	spec := secret.Spec{Pass: "werft/guest-password", Prompt: "Password"}
 	var notes []string
 	note := func(s string) { notes = append(notes, s) }
 
 	tm := &term{value: "typed"}
-	v, err := secret.Read(spec, store{"vm/guest-password": "from pass"}, tm, note)
-	if err != nil || v != "from pass" || tm.asked || notes[0] != "comes from pass (vm/guest-password)" {
+	v, err := secret.Read(spec, store{"werft/guest-password": "from pass"}, tm, note)
+	if err != nil || v != "from pass" || tm.asked || notes[0] != "comes from pass (werft/guest-password)" {
 		t.Errorf("pass: %q %v asked=%v notes=%q", v, err, tm.asked, notes)
 	}
 
@@ -54,7 +54,7 @@ func TestRead(t *testing.T) {
 
 func TestAnEmptyPassEntryIsAskedFor(t *testing.T) {
 	tm := &term{value: "typed"}
-	v, err := secret.Read(secret.Spec{Pass: "vm/guest-password", Prompt: "Password"}, store{"vm/guest-password": ""}, tm, func(string) {})
+	v, err := secret.Read(secret.Spec{Pass: "werft/guest-password", Prompt: "Password"}, store{"werft/guest-password": ""}, tm, func(string) {})
 	if err != nil || v != "typed" || !tm.asked {
 		t.Errorf("Read = %q, %v, asked %v", v, err, tm.asked)
 	}

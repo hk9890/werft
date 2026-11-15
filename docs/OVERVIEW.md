@@ -29,6 +29,8 @@ internal/ansi/             strip terminal escapes for the provision log
 internal/build/            version stamp (ldflags)
 internal/livetest/         helpers for live tests (build tag live)
 scripts/release-notes      prints a CHANGELOG.md section as the release text
+scripts/third-party-licenses  prints THIRD_PARTY_LICENSES
+examples/recipe.toml       an example provision recipe
 ```
 
 Where werft keeps state on disk and in libvirt: [DESIGN.md, "Where state lives"](DESIGN.md#where-state-lives).
@@ -51,8 +53,6 @@ rg -n '^\s+\w+\(' internal/virt/virt.go                    # every call of the h
 
 | Resource | URL |
 |----------|-----|
-| `vm`, the bash tool werft replaced, at its last version | https://github.com/carlo9890/setup/tree/0860f2b2ecd080f3b1724ba43a53e0abb68c0d9d/scripts/vm |
-| The provision recipe of the setup repo | https://github.com/carlo9890/setup/tree/main/tests/werft |
 | libvirt API reference | https://libvirt.org/html/index.html |
 | libvirt domain XML format | https://libvirt.org/formatdomain.html |
 | go-libvirt (RPC client) | https://pkg.go.dev/github.com/digitalocean/go-libvirt |

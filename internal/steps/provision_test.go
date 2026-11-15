@@ -36,7 +36,7 @@ func TestProvisionUbuntu(t *testing.T) {
 		"^ssh pgrep -u .* 'gnome-shell'$", "Secret.Service Collections$", "gjs '/tmp/werft-provision/unlock-keyring.js'$", "grep -qx 'b false'$",
 		"^host unmount stick$", "^AttachDevice testvm$", "^ssh findmnt -rn -S UUID=ABCD-1234$",
 		"^ssh sudo .*NOPASSWD:ALL.*Defaults:%s verifypw=any.* sh 'tester' '/etc/sudoers.d/90-werft-provision'$",
-		"^ssh sh -c .*pinentry-program", "^ssh mkdir -p .* && bash bootstrap.sh https://github.com/carlo9890/bootstrap-scripts$",
+		"^ssh sh -c .*pinentry-program", "^ssh mkdir -p .* && bash bootstrap.sh https://github.com/example/bootstrap-scripts$",
 		"^ssh sh -c .*grep -vxF", "^ssh udisksctl unmount -b /dev/disk/by-uuid/ABCD-1234$", "^DetachDevice testvm$", "^host mount stick$",
 		"^ssh sudo .*rm -f .* sh '/etc/sudoers.d/90-werft-provision'$",
 		"systemctl poweroff", "^StartDomain testvm$", "^ssh rm -rf '/tmp/werft-provision'", "^ssh pgrep", "unlock-keyring.js'$",
@@ -92,9 +92,9 @@ func TestProvisionAsksEverythingBeforeItChangesAnything(t *testing.T) {
 		t.Fatalf("provision: %v", err)
 	}
 	w.assertSequence("checks, then questions, then secrets, then the first change",
-		"^find stick /media/tester/MASTER-KEY$", "^confirm testvm is running and will be reset",
+		"^find stick /media/tester/KEYSTICK$", "^confirm testvm is running and will be reset",
 		"^confirm testvm-full exists and will be replaced",
-		"^pass show vm/guest-password$", "^secret Password of tester", "^secret GPG passphrase",
+		"^pass show werft/guest-password$", "^secret Password of tester", "^secret GPG passphrase",
 		"^DestroyDomain testvm$", "^RevertSnapshot")
 	w.assertSequence("the old clone goes before the new one is defined",
 		"^UndefineDomain testvm-full$", "^DeleteVolume testvm-full.qcow2$", "^DeleteVolume testvm-full_VARS.qcow2$",
@@ -202,7 +202,7 @@ func TestProvisionWithoutTerminalChangesNothing(t *testing.T) {
 func TestProvisionYesWithoutTerminalNeedsASecret(t *testing.T) {
 	w := newWorld(t)
 	w.term.tty = false
-	w.pass["vm/guest-password"] = password
+	w.pass["werft/guest-password"] = password
 	_, err := provision(t, w, true)
 	if !failure.Is(err, failure.SecretUnavailable) {
 		t.Fatalf("err = %v, want secret_unavailable for the passphrase", err)
@@ -340,7 +340,7 @@ func TestProvisionOmarchy(t *testing.T) {
 func TestProvisionRefusesAnUntypeablePassword(t *testing.T) {
 	w := newWorld(t)
 	w.omarchy()
-	w.pass["vm/guest-password"] = "pässword"
+	w.pass["werft/guest-password"] = "pässword"
 	_, err := provision(t, w, true)
 	if err == nil || !strings.Contains(err.Error(), "US keyboard") || strings.Contains(err.Error(), "ä") {
 		t.Fatalf("err = %v", err)

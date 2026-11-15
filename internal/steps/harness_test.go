@@ -109,7 +109,7 @@ func newWorld(t *testing.T) *world {
 	w.shell = &shell{w: w, systemd: 259, fail: map[string]bool{}, drop: map[string]bool{}}
 	w.host = &host{w: w, display: true}
 	w.term = &terminal{w: w, tty: true, answer: true, secrets: map[string]string{
-		"GPG passphrase for the key on MASTER-KEY":          passphrase,
+		"GPG passphrase for the key on KEYSTICK":            passphrase,
 		"Password of tester in the VM testvm, for its sudo": password,
 	}}
 	must(t, w.fake.DefinePool("default", "/var/lib/libvirt/images"))
@@ -178,7 +178,7 @@ func (w *world) newRun(yes bool) *pipeline.Run {
 		Out: &w.out, Yes: yes, Sleep: func(time.Duration) {},
 		BuildVM: vm, Domain: vm, User: "tester", GuestDir: "/tmp/werft-provision",
 		SSHConfig: "/state/ssh_config", SSHKey: w.key, UserKey: w.userKey, LogPath: "/state/logs/p.log",
-		PasswordSpec: secret.Spec{Pass: "vm/guest-password", Prompt: "Password of tester in the VM testvm, for its sudo"},
+		PasswordSpec: secret.Spec{Pass: "werft/guest-password", Prompt: "Password of tester in the VM testvm, for its sudo"},
 		Addr:         guest.Addr{User: "tester"},
 	}).Init()
 }
@@ -540,7 +540,7 @@ func (w *world) count(pattern string) int {
 }
 
 // setupRecipe loads testdata/setup/recipe.toml, a copy of the recipe of the
-// setup repo.
+// setup repo with generic values.
 func setupRecipe(t *testing.T) *recipe.Recipe {
 	t.Helper()
 	rec, err := recipe.Load(filepath.Join("testdata", "setup", "recipe.toml"))
