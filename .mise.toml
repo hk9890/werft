@@ -70,7 +70,13 @@ run = "scripts/third-party-licenses > THIRD_PARTY_LICENSES"
 
 [tasks."licenses:check"]
 description = "Fail if THIRD_PARTY_LICENSES is out of date"
-run = "scripts/third-party-licenses | diff -u THIRD_PARTY_LICENSES - || { echo 'run: mise run licenses'; exit 1; }"
+# Through a file, not a pipe, so a failure of the script fails the check.
+run = """
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+scripts/third-party-licenses > "$out" || exit 1
+diff -u THIRD_PARTY_LICENSES "$out" || { echo 'run: mise run licenses'; exit 1; }
+"""
 
 [tasks.vuln]
 description = "govulncheck (reaches the network; CI-only gate)"

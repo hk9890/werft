@@ -16,7 +16,7 @@ The release also holds:
 - `werft_X.Y.Z_checksums.txt.bundle`: the keyless cosign signature of the checksums file.
 - `<archive>.sbom.json`: one SPDX SBOM per archive, made by syft.
 - A build-provenance attestation of each archive, stored by GitHub. GitHub refuses it in a
-  private repository, so the release job fails at its last step there.
+  private repository, so the release job skips it there.
 
 `mise run licenses` writes `THIRD_PARTY_LICENSES` after a new dependency or a license change;
 `mise run quality` fails while the file is out of date.
@@ -84,8 +84,9 @@ mise run release:snapshot    # archives into dist/, publishes nothing, skips sig
    gh release view vX.Y.Z --json assets -q '.assets[].name'
    D=$(mktemp -d) && gh release download vX.Y.Z -p '*_linux_x64.tar.gz' -p '*_checksums.txt*' -D "$D" &&
      tar -xzf "$D"/*.tar.gz -C "$D" && "$D/werft" version
+   (cd "$D" && sha256sum --ignore-missing -c werft_X.Y.Z_checksums.txt)
    cosign verify-blob --bundle "$D"/werft_X.Y.Z_checksums.txt.bundle \
-     --certificate-identity-regexp '^https://github.com/hk9890/werft/' \
+     --certificate-identity https://github.com/hk9890/werft/.github/workflows/release.yml@refs/tags/vX.Y.Z \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com "$D"/werft_X.Y.Z_checksums.txt
    gh attestation verify "$D"/werft_X.Y.Z_linux_x64.tar.gz --repo hk9890/werft
    diff <(gh release view vX.Y.Z --json body -q .body) <(scripts/release-notes vX.Y.Z; echo)

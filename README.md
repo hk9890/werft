@@ -19,7 +19,17 @@ mise use -g github:hk9890/werft@X.Y.Z               # a version from the release
 go install github.com/hk9890/werft/cmd/werft@latest   # version prints "dev"
 ```
 
-To verify a release archive, follow [docs/RELEASING.md](docs/RELEASING.md#cut-a-release), step 6.
+To verify a release archive, download it with its `werft_X.Y.Z_checksums.txt` and
+`werft_X.Y.Z_checksums.txt.bundle`, then check the checksum, the signature (cosign 3.x) and the
+build provenance:
+
+```sh
+sha256sum --ignore-missing -c werft_X.Y.Z_checksums.txt
+cosign verify-blob --bundle werft_X.Y.Z_checksums.txt.bundle \
+  --certificate-identity https://github.com/hk9890/werft/.github/workflows/release.yml@refs/tags/vX.Y.Z \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com werft_X.Y.Z_checksums.txt
+gh attestation verify werft_X.Y.Z_linux_x64.tar.gz --repo hk9890/werft
+```
 
 To build from source, follow [docs/CODING.md](docs/CODING.md#build-and-run-from-source).
 

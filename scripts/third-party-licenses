@@ -6,6 +6,9 @@
 set -eu
 
 cd "$(dirname "$0")/.."
+# Before any output, so a failed go list stops the script instead of an empty list.
+modules=$(go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Dir}}{{end}}{{end}}' ./cmd/werft)
+modules=$(printf '%s\n' "$modules" | sort -u)
 cat <<'EOF'
 THIRD-PARTY SOFTWARE LICENSES
 
@@ -13,10 +16,7 @@ The werft binary statically links the Go modules listed below. Their license
 texts are reproduced in full. Every release archive holds this file.
 Regenerate it with `mise run licenses`.
 EOF
-{
-	echo "Go $(go env GOROOT)"
-	go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Dir}}{{end}}{{end}}' ./cmd/werft | sort -u
-} |
+printf 'Go %s\n%s\n' "$(go env GOROOT)" "$modules" |
 	while read -r path dir; do
 		found=
 		for f in "$dir"/LICENSE* "$dir"/COPYING* "$dir"/NOTICE*; do
