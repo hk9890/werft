@@ -12,6 +12,7 @@ import (
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/pipeline"
 	"github.com/hk9890/werft/internal/resetpoint"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
@@ -124,6 +125,15 @@ func openViewer(domain string) error {
 }
 
 var guestEnsureKey = guest.EnsureKey
+
+// secretStore is the keyring and pass of the host, unless a test set
+// c.secrets.
+func (c *cli) secretStore() secret.Store {
+	if c.secrets == nil {
+		return secret.Host{}
+	}
+	return c.secrets
+}
 
 // prompter asks at the terminal of the cli.
 type prompter struct{ c *cli }

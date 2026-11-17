@@ -292,6 +292,34 @@ func TestStartWithoutTheDiskPasswordLeavesItToThePerson(t *testing.T) {
 	}
 }
 
+func TestStartRefusesAnUntypeableDiskPasswordBeforeTheStart(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	lh.secrets, lh.screen = keyring("pä"), true
+	r := lh.run("start", "vm1")
+	if r.code != 2 || strings.Contains(r.stdout+r.stderr, "pä") {
+		t.Errorf("start with an untypeable password = %+v, want usage without the password", r)
+	}
+	for _, c := range lh.fake.Calls() {
+		if strings.HasPrefix(c, "StartDomain") || strings.HasPrefix(c, "SendKey") {
+			t.Errorf("start with an untypeable password called %s", c)
+		}
+	}
+}
+
+func TestStartNamesTheConsoleWhenTypingFails(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	lh.secrets, lh.screen = keyring("kr"), true
+	lh.fake.FailOn("SendKey", errors.New("test: no keys"))
+	r := lh.run("--json", "start", "vm1")
+	if r.code == 0 || !strings.Contains(r.stdout, "vm1 runs; look at its console") || !strings.Contains(r.stdout, "virt-viewer") {
+		t.Errorf("start whose typing fails = %+v, want an error that names the console", r)
+	}
+}
+
 func TestStop(t *testing.T) {
 	lh := newLifecycleHost(t)
 	if r := lh.run("stop", "vm1"); r.code != 0 || r.stdout != "vm1 is already shut off\n" {

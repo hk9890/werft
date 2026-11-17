@@ -34,13 +34,6 @@ type cli struct {
 	secrets secret.Store
 }
 
-func (c *cli) secretStore() secret.Store {
-	if c.secrets == nil {
-		return secret.Host{}
-	}
-	return c.secrets
-}
-
 type command struct {
 	name    string
 	args    string
