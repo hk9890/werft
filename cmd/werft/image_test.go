@@ -33,7 +33,7 @@ func TestDiskPasswordSpecReadsTheRecipeOfTheImage(t *testing.T) {
 		{BuildVM: "omarchy-4-0", Image: "omarchy-4-0", Tier: "plain"},
 		{BuildVM: "omarchy-4-0-full", Image: "omarchy-4-0", Tier: "full"},
 	} {
-		spec, err := diskPasswordSpec(cfg, "", s)
+		spec, err := diskPasswordSpec(cfg, "", s.Image, s.BuildVM)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,11 +41,11 @@ func TestDiskPasswordSpecReadsTheRecipeOfTheImage(t *testing.T) {
 			t.Errorf("spec of %s = %+v, want pass x/y and a prompt that names it", s.BuildVM, spec)
 		}
 	}
-	spec, err := diskPasswordSpec(config.Config{}, "", &image.Seal{BuildVM: "vm", Image: "vm", Tier: "plain"})
+	spec, err := diskPasswordSpec(config.Config{}, "", "vm", "vm")
 	if err != nil || spec.Pass != "" || spec.Prompt == "" {
 		t.Errorf("spec without a recipe = %+v, %v, want a prompt only", spec, err)
 	}
-	spec, err = diskPasswordSpec(cfg, global, &image.Seal{BuildVM: "omarchy-4-0", Image: "omarchy-4-0", Tier: "plain"})
+	spec, err = diskPasswordSpec(cfg, global, "omarchy-4-0", "omarchy-4-0")
 	if err != nil || spec.Pass != "global" {
 		t.Errorf("spec with --recipe = %+v, %v, want pass global over the configured recipe", spec, err)
 	}

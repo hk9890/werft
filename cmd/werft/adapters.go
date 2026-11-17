@@ -12,7 +12,6 @@ import (
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/pipeline"
 	"github.com/hk9890/werft/internal/resetpoint"
-	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
@@ -69,7 +68,7 @@ func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run,
 		Shell:     guest.OpenSSH{Config: dir.SSHConfig()},
 		KeyShell:  guest.OpenSSH{Config: dir.SSHConfig(), KeyOnly: true},
 		Host:      steps.System{User: u.Username, Out: out},
-		Secrets:   secret.Pass{},
+		Secrets:   c.secretStore(),
 		Prompter:  prompter{c},
 		Out:       out,
 		Yes:       yes,

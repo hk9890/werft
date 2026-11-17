@@ -4,8 +4,10 @@
 #   werft provision --recipe examples/recipe.toml <build VM>
 # Paths are relative to this file; ~/ is the home directory.
 #
-# werft asks for the guest password at the terminal. To read it from pass:
+# werft asks for the guest password at the terminal. To read it from a
+# keyring item, else from pass:
 #   [guest_password]
+#   keyring = { service = "<service>", username = "<name>" }
 #   pass = "<entry>"
 
 [[steps]]

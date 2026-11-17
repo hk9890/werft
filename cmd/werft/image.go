@@ -54,7 +54,7 @@ func (c *cli) cmdSeal(args []string) error {
 	}
 	var spec secret.Spec
 	if s.LUKS {
-		if spec, err = diskPasswordSpec(cfg, *recipePath, s); err != nil {
+		if spec, err = diskPasswordSpec(cfg, *recipePath, s.Image, s.BuildVM); err != nil {
 			return err
 		}
 	}
@@ -77,7 +77,7 @@ func (c *cli) cmdSeal(args []string) error {
 		Pool: cfg.Pool, PoolPath: cfg.PoolPath(), Catalog: dir.Images(),
 		User: u.Username, WerftKey: publicKey(dir.SSHKey() + ".pub"),
 		Global:       globalLock(dir),
-		DiskPassword: spec, Secrets: secret.Pass{}, Terminal: prompter{c},
+		DiskPassword: spec, Secrets: c.secretStore(), Terminal: prompter{c},
 		Now: time.Now, Out: c.stderr,
 	})
 	if err != nil {
@@ -89,13 +89,14 @@ func (c *cli) cmdSeal(args []string) error {
 	return nil
 }
 
-// diskPasswordSpec says where the disk password of the LUKS build VM of s
-// comes from: guest_password of the recipe at path, else of the recipe of its
-// image, as provision reads it, else the terminal.
-func diskPasswordSpec(cfg config.Config, path string, s *image.Seal) (secret.Spec, error) {
+// diskPasswordSpec says where the disk password of the LUKS build VM vm
+// comes from: guest_password of the recipe at path, else of the recipe of
+// imageName, its build VM without -full, as provision reads it, else the
+// terminal.
+func diskPasswordSpec(cfg config.Config, path, imageName, vm string) (secret.Spec, error) {
 	var spec secret.Spec
 	if path == "" {
-		path = cfg.RecipeFor(s.Image)
+		path = cfg.RecipeFor(imageName)
 	}
 	if path != "" {
 		var err error
@@ -104,7 +105,7 @@ func diskPasswordSpec(cfg config.Config, path string, s *image.Seal) (secret.Spe
 		}
 	}
 	if spec.Prompt == "" {
-		spec.Prompt = "Disk password of " + s.BuildVM
+		spec.Prompt = "Disk password of " + vm
 	}
 	return spec, nil
 }

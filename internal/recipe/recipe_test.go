@@ -106,7 +106,7 @@ func TestLoadRejects(t *testing.T) {
 		{"no steps", "", "no steps"},
 		{"unknown top key", "bogus = 1\n" + steps("[[steps]]\ntype = \"boot\"\n"), "unknown keys: bogus"},
 		{"unknown secret key", "[secrets.x]\nprompt = \"x\"\nfile = \"y\"\n[[steps]]\ntype = \"boot\"\n", "unknown keys: secrets.x.file"},
-		{"empty secret", "[secrets.x]\n[[steps]]\ntype = \"boot\"\n", "secret x needs pass or prompt"},
+		{"empty secret", "[secrets.x]\n[[steps]]\ntype = \"boot\"\n", "secret x needs keyring, pass or prompt"},
 		{"no type", steps("[[steps]]\nlabel = \"x\"\n"), "step 1: needs a type"},
 		{"unknown type", steps("[[steps]]\ntype = \"bogus\"\n"), `unknown type "bogus"`},
 		{"key of another type", steps("[[steps]]\ntype = \"boot\"\nlabel = \"x\"\n"), `boot takes no key "label"`},
@@ -153,6 +153,7 @@ func TestExpandHome(t *testing.T) {
 func TestGuestPasswordReadsNothingElse(t *testing.T) {
 	path := write(t, `
 [guest_password]
+keyring = { service = "werft", username = "tester" }
 pass = "werft/guest-password"
 
 [[steps]]
@@ -160,7 +161,7 @@ type = "checks"
 dir = "~/no/such/checks"
 `)
 	spec, err := recipe.GuestPassword(path)
-	if err != nil || spec.Pass != "werft/guest-password" {
+	if err != nil || spec.Pass != "werft/guest-password" || spec.Keyring["username"] != "tester" {
 		t.Errorf("GuestPassword = %+v, %v", spec, err)
 	}
 	if _, err := recipe.Load(path); err == nil {

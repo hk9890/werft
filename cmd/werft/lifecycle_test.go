@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/virt"
 	"github.com/hk9890/werft/internal/virttest"
 )
@@ -32,6 +38,10 @@ type lifecycleHost struct {
 	viewErr  error
 	// lease is the DHCP lease the guest takes during the first wait.
 	lease *virt.DHCPLease
+	// secrets is the keyring and pass of the host; screen shows a console
+	// with a prompt, so start can type a disk password.
+	secrets secret.Store
+	screen  bool
 }
 
 func newLifecycleHost(t *testing.T) *lifecycleHost {
@@ -47,7 +57,7 @@ func newLifecycleHost(t *testing.T) *lifecycleHost {
 	if _, err := f.DefineDomain(lifecycleVM(dir)); err != nil {
 		t.Fatal(err)
 	}
-	return &lifecycleHost{fake: f, nvramDir: dir}
+	return &lifecycleHost{fake: f, nvramDir: dir, secrets: keyring("")}
 }
 
 func (lh *lifecycleHost) setLUKS(t *testing.T) {
@@ -61,7 +71,13 @@ func (lh *lifecycleHost) run(args ...string) result {
 	var out, errOut bytes.Buffer
 	c := &cli{
 		stdin: strings.NewReader(""), stdout: &out, stderr: &errOut,
-		dial: func() (virt.Hypervisor, error) { return lh.fake, nil },
+		dial: func() (virt.Hypervisor, error) {
+			if lh.screen {
+				return promptScreen{lh.fake}, nil
+			}
+			return lh.fake, nil
+		},
+		secrets: lh.secrets,
 		sleep: func(time.Duration) {
 			if lh.lease != nil {
 				lh.fake.AddDHCPLease("default", *lh.lease)
@@ -180,6 +196,7 @@ func TestStartWithoutAddressOrViewerStillSucceeds(t *testing.T) {
 }
 
 func TestStartTellsAboutTheDiskPassword(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	lh := newLifecycleHost(t)
 	lh.setLUKS(t)
 	r := lh.run("start", "vm1")
@@ -197,6 +214,81 @@ func TestStartTellsAboutTheDiskPassword(t *testing.T) {
 	r = lh.run("start", "--view", "vm1")
 	if r.code != 0 || !strings.Contains(r.stderr, "Type it in the open viewer window") || strings.Contains(r.stderr, "werft start --view") {
 		t.Errorf("start --view of a LUKS VM = %+v", r)
+	}
+}
+
+// promptScreen shows a console that is not blank: the disk password prompt.
+type promptScreen struct{ *virttest.Fake }
+
+func (s promptScreen) Screenshot(domain string, w io.Writer) (string, error) {
+	if _, err := s.Fake.Screenshot(domain, io.Discard); err != nil {
+		return "", err
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	img.Set(1, 1, color.White)
+	return "image/png", png.Encode(w, img)
+}
+
+// keyring is a keyring with one item, service=werft username=tester, and an
+// empty pass. An empty keyring gives nothing, so no test reads the host's.
+type keyring string
+
+func (k keyring) Lookup(attributes map[string]string) (string, error) {
+	if k != "" && secret.Attributes(attributes) == "service=werft username=tester" {
+		return string(k), nil
+	}
+	return "", failure.New(failure.SecretUnavailable, "no item")
+}
+
+func (keyring) Show(entry string) (string, error) {
+	return "", failure.New(failure.SecretUnavailable, "pass show %s failed", entry)
+}
+
+// writeRecipe makes the recipe of every build VM name its guest password
+// in the keyring.
+func writeRecipe(t *testing.T) {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "werft")
+	recipe := filepath.Join(dir, "recipe.toml")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recipe, []byte("[guest_password]\nkeyring = { service = \"werft\", username = \"tester\" }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("recipe = \""+recipe+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartTypesTheDiskPasswordFromTheKeyring(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	lh.secrets, lh.screen = keyring("kr"), true
+	r := lh.run("start", "vm1")
+	// k, r, Enter: once.
+	if keys := lh.fake.SentKeys("vm1"); r.code != 0 || len(keys) != 3 || keys[0][0] != 37 || keys[2][0] != 28 {
+		t.Errorf("start of a LUKS VM = %+v, keys %v; want the password and Enter once", r, keys)
+	}
+	if !strings.Contains(r.stderr, "comes from the keyring (service=werft username=tester)") || strings.Contains(r.stderr, "werft does not type it") || strings.Contains(r.stderr, "kr") {
+		t.Errorf("start of a LUKS VM = %+v", r)
+	}
+
+	if r := lh.run("start", "vm1"); r.code != 0 || len(lh.fake.SentKeys("vm1")) != 3 {
+		t.Errorf("start of a running LUKS VM = %+v; it is unlocked already", r)
+	}
+}
+
+func TestStartWithoutTheDiskPasswordLeavesItToThePerson(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	r := lh.run("start", "vm1")
+	if r.code != 0 || !strings.Contains(r.stderr, "werft cannot read the disk password of vm1") ||
+		!strings.Contains(r.stderr, "Type it in the viewer: werft start --view vm1") || len(lh.fake.SentKeys("vm1")) != 0 {
+		t.Errorf("start of a LUKS VM without its password = %+v", r)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/virt"
 )
 
@@ -29,6 +30,15 @@ type cli struct {
 	// openViewer opens a detached viewer window on a domain.
 	openViewer func(domain string) error
 	sleep      func(time.Duration)
+	// secrets is the keyring and pass; nil means those of the host.
+	secrets secret.Store
+}
+
+func (c *cli) secretStore() secret.Store {
+	if c.secrets == nil {
+		return secret.Host{}
+	}
+	return c.secrets
 }
 
 type command struct {

@@ -27,7 +27,8 @@ Rules:
   with SSH and nothing more. Tier "full" is the user's full setup, with the
   user's secrets; use it only when the task needs that setup. An entry with
   "luks": true has an encrypted disk: its lease reads the disk password
-  from pass, so it needs the user's GPG agent unlocked.
+  from the user's keyring or from pass, so it needs the keyring or the
+  user's GPG agent unlocked.
 
 2. Lease a VM
 
@@ -179,11 +180,10 @@ Exit codes:
   8   checks_failed       the provision checks failed
   9   unsupported         the image cannot be leased; take another image
   10  secret_unavailable  a secret is not available without a terminal; an
-                          encrypted image needs its disk password from pass:
-                          ask the user to unlock the password store, for
-                          example by running pass show <entry> once (the
-                          error names the entry), then lease again; never
-                          print the password or ask for it yourself
+                          encrypted image needs its disk password from the
+                          keyring or pass: ask the user to unlock what the
+                          error names, then lease again; never print the
+                          password or ask for it yourself
 
 On error, the --json document is:
   {"error": {"kind": "<kind>", "message": "<text>"}}

@@ -214,24 +214,38 @@ func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 }
 
 // diskPassword reads the disk password of a LUKS stock image before the
-// lease changes anything: from the pass entry of the record, else at the
-// terminal. An agent has no terminal, so its lease needs the pass entry and
-// an unlocked GPG agent; else it fails with secret_unavailable.
+// lease changes anything: from the keyring item or the pass entry of the
+// record, else at the terminal. An agent has no terminal, so its lease needs
+// an unlocked keyring that holds the item, or the pass entry and an unlocked
+// GPG agent; else it fails with secret_unavailable.
 func diskPassword(e Env, rec image.Record) (string, error) {
 	if !rec.LUKS {
 		return "", nil
 	}
-	spec := secret.Spec{Pass: rec.DiskPasswordPass, Prompt: "Disk password of " + rec.Name}
+	spec := secret.Spec{Keyring: rec.DiskPasswordKeyring, Pass: rec.DiskPasswordPass, Prompt: "Disk password of " + rec.Name}
 	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
 		e.printf("The disk password of %s %s", rec.Name, note)
 	})
-	if err != nil && rec.DiskPasswordPass == "" {
-		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no pass entry, so only a terminal gives the password; seal it again with guest_password.pass in the recipe of %s", rec.Name, rec.Image)
+	if err != nil && len(rec.DiskPasswordKeyring) == 0 && rec.DiskPasswordPass == "" {
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no keyring item and no pass entry, so only a terminal gives the password; seal it again with guest_password.keyring or guest_password.pass in the recipe of %s", rec.Name, rec.Image)
 	}
 	if err != nil {
-		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and pass gives its password only when the GPG agent is unlocked; ask the user to unlock the password store, for example by running pass show %s once, then lease again; do not print or ask for the password yourself", rec.Name, rec.DiskPasswordPass)
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk; %s; then lease again; do not print or ask for the password yourself", rec.Name, unlockHint(rec))
 	}
 	return v, console.Typeable(v)
+}
+
+// unlockHint tells an agent what the user unlocks so a lease can read the
+// disk password of rec.
+func unlockHint(rec image.Record) string {
+	var hints []string
+	if len(rec.DiskPasswordKeyring) > 0 {
+		hints = append(hints, "the keyring gives its password only when it is unlocked and holds the item "+secret.Attributes(rec.DiskPasswordKeyring)+"; ask the user to unlock the login keyring, for example by logging in to the desktop")
+	}
+	if rec.DiskPasswordPass != "" {
+		hints = append(hints, "pass gives its password only when the GPG agent is unlocked; ask the user to unlock the password store, for example by running pass show "+rec.DiskPasswordPass+" once")
+	}
+	return strings.Join(hints, ", else ")
 }
 
 // reserve makes the lease directory with its key pair, the overlay, and the

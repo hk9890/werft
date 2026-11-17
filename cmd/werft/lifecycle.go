@@ -1,13 +1,21 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"text/tabwriter"
 
+	"github.com/hk9890/werft/internal/console"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/lifecycle"
+	"github.com/hk9890/werft/internal/resetpoint"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
@@ -95,6 +103,16 @@ func (c *cli) cmdStart(args []string) error {
 	}
 	defer func() { _ = h.Close() }()
 
+	found, err := lifecycle.Inspect(h, name)
+	if err != nil {
+		return err
+	}
+	var password string
+	if found.LUKS && !found.AlreadyRunning {
+		if password, err = c.startDiskPassword(name); err != nil {
+			return err
+		}
+	}
 	started, err := lifecycle.Start(h, name)
 	if err != nil {
 		return err
@@ -113,7 +131,13 @@ func (c *cli) cmdStart(args []string) error {
 			c.progress("virt-viewer attached: Shift+F11 fullscreen, Shift+F12 release cursor")
 		}
 	}
-	if started.LUKS && !started.AlreadyRunning {
+	if started.LUKS && !started.AlreadyRunning && password != "" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := steps.TypeDiskPassword(ctx, h, name, password, c.sleep, c.stderr); err != nil {
+			return failure.Wrap(failure.KindOf(err), err, "%s runs; look at its console, and type the disk password there if it asks: %s", name, steps.ViewerCommand(name))
+		}
+	} else if started.LUKS && !started.AlreadyRunning {
 		if viewerOpen {
 			c.progress("The disk of %s asks for its password at the console; werft does not type it. Type it in the open viewer window", name)
 		} else {
@@ -173,4 +197,31 @@ var stopResults = map[lifecycle.Stopped]struct{ json, text string }{
 // keeps only the result.
 func (c *cli) progress(format string, args ...any) {
 	_, _ = fmt.Fprintf(c.stderr, format+"\n", args...)
+}
+
+// startDiskPassword reads the disk password of the LUKS build VM name before
+// start boots it, from guest_password of the recipe of its build VM, as seal
+// does. When no source gives it, start boots anyway and leaves the password
+// to the person at the console: empty.
+func (c *cli) startDiskPassword(name string) (string, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", err
+	}
+	buildVM, _ := strings.CutSuffix(name, resetpoint.FullSuffix)
+	spec, err := diskPasswordSpec(cfg, "", buildVM, name)
+	if err != nil {
+		return "", err
+	}
+	v, err := secret.Read(spec, c.secretStore(), prompter{c}, func(note string) {
+		c.progress("The disk password of %s %s", name, note)
+	})
+	if failure.Is(err, failure.SecretUnavailable) {
+		c.progress("werft cannot read the disk password of %s: %v", name, err)
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return v, console.Typeable(v)
 }

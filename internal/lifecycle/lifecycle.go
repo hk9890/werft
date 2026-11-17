@@ -140,7 +140,7 @@ func Address(h virt.Hypervisor, name string) string {
 // Started says what Start found and did.
 type Started struct {
 	AlreadyRunning bool
-	// LUKS is set when the disk asks for its password at the console; start
+	// LUKS is set when the disk asks for its password at the console; Start
 	// does not type it.
 	LUKS bool
 	// Leases are the DHCP leases libvirt held before the start; WaitAddress
@@ -151,6 +151,16 @@ type Started struct {
 // Start starts the domain unless it runs already. A paused domain is a
 // conflict. No viewer opens.
 func Start(h virt.Hypervisor, name string) (Started, error) {
+	s, err := Inspect(h, name)
+	if err != nil || s.AlreadyRunning {
+		return s, err
+	}
+	return s, h.StartDomain(name)
+}
+
+// Inspect says what Start finds, and changes nothing: a caller reads the
+// disk password before the start.
+func Inspect(h virt.Hypervisor, name string) (Started, error) {
 	state, err := domainState(h, name)
 	if err != nil {
 		return Started{}, err
@@ -169,7 +179,7 @@ func Start(h virt.Hypervisor, name string) (Started, error) {
 	if s.Leases, err = virt.DomainLeases(h, name); err != nil {
 		return Started{}, err
 	}
-	return s, h.StartDomain(name)
+	return s, nil
 }
 
 // WaitAddress waits up to AddressTimeout for the guest to take a DHCP lease
