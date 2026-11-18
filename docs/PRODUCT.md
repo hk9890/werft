@@ -127,8 +127,8 @@ Requirements:
 - A lease of an encrypted image (Omarchy) boots like any other: werft types the disk password. The
   agent never sees it. werft reads it from the user's keyring, else from `pass`, so the keyring or
   the GPG agent of the user must be unlocked; else the lease fails with `secret_unavailable`.
-  `seal` and `start` type the password in the same way. `start` asks at the terminal only when
-  the keyring item or `pass` entry of the recipe fails.
+  `seal` and `start` read the password from the same keyring item and `pass` entry. `start` asks
+  at the terminal only when every source the recipe names fails.
 
 ## What carries over from `vm`
 

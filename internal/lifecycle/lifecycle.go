@@ -166,8 +166,8 @@ type Env struct {
 	DiskPassword func() (secret.Spec, error)
 	Secrets      secret.Store
 	Terminal     secret.Terminal
-	// TTY is set when a person at the terminal answers the prompt: a refused
-	// or interrupted prompt then ends Start before the boot.
+	// TTY is set when a person at the terminal answers the prompt: an
+	// interrupted prompt then ends Start before the boot.
 	TTY bool
 	// Lock takes the domain lock, so Start does not type at a console that
 	// provision or reset also types at.
@@ -223,13 +223,13 @@ func Start(e Env, name string) (Started, error) {
 
 // errAtConsole is an empty answer at the prompt: the person types the disk
 // password at the console.
-var errAtConsole = errors.New("the disk password is left to the console")
+var errAtConsole = failure.New(failure.SecretUnavailable, "the disk password is left to the console")
 
 // consoleAnswer is the Terminal of Start: an empty answer gives errAtConsole.
 type consoleAnswer struct{ secret.Terminal }
 
 func (t consoleAnswer) ReadSecret(prompt string) (string, error) {
-	v, err := t.Terminal.ReadSecret(prompt + " (Enter: type it at the console)")
+	v, err := t.Terminal.ReadSecret(prompt)
 	if err == nil && v == "" {
 		return "", errAtConsole
 	}
@@ -240,8 +240,8 @@ func (t consoleAnswer) ReadSecret(prompt string) (string, error) {
 // recipe names no keyring item and no pass entry, the person answers the
 // prompt with Enter alone, or nothing gives a password werft can type, Start
 // boots anyway and leaves the password to the person at the console: empty.
-// Only a named source that fails asks, and only an interrupt of the prompt
-// ends Start.
+// Start asks only when every source the recipe names fails, and only an
+// interrupt of the prompt ends Start.
 func diskPassword(e Env, name string) (string, error) {
 	leave := func(err error) (string, error) {
 		e.printf("werft cannot read the disk password of %s: %v", name, err)
@@ -254,8 +254,11 @@ func diskPassword(e Env, name string) (string, error) {
 	if err != nil {
 		return leave(err)
 	}
-	if !spec.HasSource() {
+	if !spec.HasStoredSource() {
 		return "", nil
+	}
+	if e.TTY {
+		spec.Prompt += " (Enter: type it at the console)"
 	}
 	v, err := secret.Read(spec, e.Secrets, consoleAnswer{e.Terminal}, func(note string) {
 		e.printf("The disk password of %s %s", name, note)

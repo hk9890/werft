@@ -299,7 +299,7 @@ func TestStartWithoutTheDiskPasswordLeavesItToThePerson(t *testing.T) {
 	lh.setLUKS(t)
 	writeRecipe(t)
 	r := lh.run("start", "vm1")
-	if r.code != 0 || !strings.Contains(r.stderr, "werft cannot read the disk password of vm1") ||
+	if r.code != 0 || !strings.Contains(r.stderr, "werft cannot read the disk password of vm1") || strings.Contains(r.stderr, "Enter:") ||
 		!strings.Contains(r.stderr, "Type it in the viewer: werft start --view vm1") || len(lh.fake.SentKeys("vm1")) != 0 {
 		t.Errorf("start of a LUKS VM without its password = %+v", r)
 	}
@@ -328,10 +328,10 @@ func TestStartWithAnUnreadableRecipeStillStarts(t *testing.T) {
 	}
 }
 
-// TestStartEndsWhenThePersonRefusesThePrompt: the keyring item of the
+// TestStartEndsWhenThePersonInterruptsThePrompt: the keyring item of the
 // recipe fails, so start asks; an interrupt at the prompt ends start before
 // the boot.
-func TestStartEndsWhenThePersonRefusesThePrompt(t *testing.T) {
+func TestStartEndsWhenThePersonInterruptsThePrompt(t *testing.T) {
 	lh := newLifecycleHost(t)
 	lh.setLUKS(t)
 	writeRecipe(t)
@@ -347,7 +347,8 @@ func TestStartEndsWhenThePersonRefusesThePrompt(t *testing.T) {
 }
 
 // TestStartTypesTheAnswerWhenTheSourceFails: the keyring item of the recipe
-// fails, so start asks, and types the answer under the domain lock.
+// fails, so start asks, and types the answer; another werft that holds the
+// domain lock makes it a conflict.
 func TestStartTypesTheAnswerWhenTheSourceFails(t *testing.T) {
 	lh := newLifecycleHost(t)
 	lh.setLUKS(t)
@@ -357,8 +358,8 @@ func TestStartTypesTheAnswerWhenTheSourceFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := lh.run("start", "vm1"); r.code == 0 || len(lh.fake.SentKeys("vm1")) != 0 {
-		t.Errorf("start while another werft holds the lock = %+v, want conflict", r)
+	if r := lh.run("start", "vm1"); r.code != 4 || len(lh.fake.SentKeys("vm1")) != 0 {
+		t.Errorf("start while another werft holds the lock = %+v, want conflict (4)", r)
 	}
 	release()
 	r := lh.run("start", "vm1")
@@ -375,7 +376,7 @@ func TestStartBootsOnAnEmptyAnswer(t *testing.T) {
 	writeRecipe(t)
 	lh.screen, lh.tty = true, true
 	r := lh.run("start", "vm1")
-	if r.code != 0 || !strings.Contains(r.stderr, "vm1 started") || !strings.Contains(r.stderr, "werft does not type it") || len(lh.fake.SentKeys("vm1")) != 0 {
+	if r.code != 0 || !strings.Contains(r.stderr, "cannot give it, so it is asked for") || !strings.Contains(r.stderr, "vm1 started") || !strings.Contains(r.stderr, "werft does not type it") || len(lh.fake.SentKeys("vm1")) != 0 {
 		t.Errorf("start after an empty answer = %+v, want a boot that leaves the password to the person", r)
 	}
 }
