@@ -16,14 +16,16 @@ Each section is also the text of its release on the
   open an unlock dialog for it. To let leases of an encrypted (LUKS) image
   read the item, seal the image again with `guest_password.keyring` in its
   recipe.
-- **Action required: at a terminal, `werft start` of an encrypted (LUKS)
-  build VM asks for the disk password, and types it at the console.**
-  Answer the prompt, or let the keyring or `pass` give the password through
-  `guest_password` of the recipe that `config.toml` names for the build VM.
-  Before, start never asked, and you typed the password at the console. An
-  empty or interrupted answer now ends start before the boot. Without a
-  terminal, start boots anyway and leaves the password to you, as before.
-  With `--view`, the viewer opens after werft has typed the password.
+- **`werft start` of an encrypted (LUKS) build VM types the disk password
+  at the console.** It reads the password from the keyring item or `pass`
+  entry that `guest_password` names, in the recipe that `config.toml` names
+  for the build VM. Before, you always typed the password at the console.
+  When the recipe names neither, start boots and leaves the password to
+  you, as before. When each source it names fails, start asks at the
+  terminal: press Enter alone to type the password at the
+  console yourself, or Ctrl-C to end start before the boot. Without a
+  terminal, start then boots and leaves the password to you. With `--view`, the
+  viewer opens after werft has typed the password.
 
 ## v0.6.0
 
