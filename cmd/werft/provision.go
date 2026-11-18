@@ -109,7 +109,7 @@ func (c *cli) cmdPrepare(args []string) error {
 	}
 	var spec secret.Spec
 	if path == "" {
-		c.progress("No recipe for %s, so no pass entry for the guest password; it is asked for at the terminal", name)
+		c.progress("No recipe for %s, so no keyring item or pass entry for the guest password; it is asked for at the terminal", name)
 	} else if spec, err = recipe.GuestPassword(path); err != nil {
 		return err
 	}

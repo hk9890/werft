@@ -33,8 +33,8 @@ Agents come first. The agent commands (`guide`, `images`, `lease`, `extend`, `le
 `start`, `stop`, `reset`, `snapshot`, `snapshots`) work without a TTY and give machine-readable
 output. `prepare` and `provision` need a person at the host: `prepare` waits for the sshd install
 and the disk password, and `provision` needs the physical key stick and a passphrase typed at a
-TTY. The open question "Scripted secrets" in [DESIGN.md](DESIGN.md#open-questions) can change this
-for `provision`.
+TTY. That passphrase is never stored, so `provision` keeps that need
+([DESIGN.md, "Recipe"](DESIGN.md#recipe)).
 Humans come second. They use the same commands and get readable output.
 
 | Job | Who | What they get |
@@ -125,8 +125,9 @@ Requirements:
   commands, the lease JSON fields, the exit codes and the rules. `werft help` lists it. It is part
   of the binary, so it matches the installed version.
 - A lease of an encrypted image (Omarchy) boots like any other: werft types the disk password. The
-  agent never sees it. werft reads it from `pass`, so the GPG agent of the user must be unlocked;
-  else the lease fails with `secret_unavailable`. `seal` types the password in the same way.
+  agent never sees it. werft reads it from the user's keyring, else from `pass`, so the keyring or
+  the GPG agent of the user must be unlocked; else the lease fails with `secret_unavailable`.
+  `seal` and `start` type the password in the same way.
 
 ## What carries over from `vm`
 

@@ -66,8 +66,13 @@ real adapters.
   files in a listing of the NVRAM directory, as `vm` did, and not through the storage pool: `vm`
   wrote them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
   The address is `vsock/<cid>`, else the IPv4 DHCP lease (`virt.DomainAddresses`, the same rule
-  that `prepare` and `provision` use). `start` opens no viewer without `--view`, does not type a
-  disk password, and waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
+  that `prepare` and `provision` use). `start` opens no viewer without `--view`. On a LUKS domain
+  that does not run, `werft start` reads the disk password before the start, as `seal` does,
+  takes the domain lock, and types the password once at the console; `--view` opens the viewer
+  only after that, so a person does not type the password too. When the config, the recipe or
+  the sources give no password werft can type, it starts anyway and leaves the password to the
+  person at the console; a person who refuses or interrupts the prompt ends it before the start.
+  It waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
   it expires, also after the domain stopped. It gives the address only when a lease came; no lease
   is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.
 - **`internal/resetpoint`**, **`internal/image`**, **`internal/lease`** — Reset points, raw-NVRAM
@@ -78,8 +83,11 @@ real adapters.
 - **`internal/ansi`** — A writer that strips terminal escape sequences, for the provision log.
 - **`internal/recipe`** — Loads and validates a recipe (TOML, `github.com/BurntSushi/toml` as in
   revier). A recipe error fails before any step runs.
-- **`internal/secret`** — Reads a secret from `pass`, else a TTY prompt, else fails with
-  `secret_unavailable`. Holds it in memory only and gives it to steps as stdin data.
+- **`internal/secret`** — Reads a secret from a keyring item, else `pass`, else a TTY prompt,
+  else fails with `secret_unavailable`. Holds it in memory only and gives it to steps as stdin
+  data. It asks the keyring only when `busctl` shows the Secret Service running with its default
+  collection unlocked: `secret-tool` on a locked keyring opens an unlock dialog that an agent
+  cannot answer.
 - **`internal/hostdev`** — Host side of USB passthrough: `findmnt`, `udevadm`, `fuser`,
   `udisksctl`. Finds the stick, makes sure no host process uses it, and unmounts and releases it.
 - **`internal/config`**, **`internal/state`**, **`internal/build`** — `config.toml` (pool,
@@ -118,7 +126,7 @@ real adapters.
 | Lease NVRAM | libvirt per-domain NVRAM, filled from the stock vars template at first start | libvirt |
 | LUKS marker | domain description line, same format as `vm` wrote | libvirt |
 | Guest systemd version of a build VM | domain description line `werft: the guest has systemd <N>`, written by `detect-guest`; a reset point holds the line of its time | libvirt |
-| Image records (user, guest family, systemd version, versions, the domain definition leases start from, the LUKS marker and the `pass` entry of the disk password), and the names of the pruned versions | `~/.local/state/werft/images.toml`, written by `seal` and `images --prune` | werft |
+| Image records (user, guest family, systemd version, versions, the domain definition leases start from, the LUKS marker and the keyring item and `pass` entry of the disk password), and the names of the pruned versions | `~/.local/state/werft/images.toml`, written by `seal` and `images --prune` | werft |
 | Lease key pair, lease `ssh_config` | `~/.local/state/werft/leases/<id>/`: `id_ed25519`, `id_ed25519.pub`, `ssh_config` | werft, removed on release |
 | werft key for build VMs (installed by `prepare`), build VM `ssh_config` | `~/.local/state/werft/id_ed25519`, `~/.local/state/werft/ssh_config` | werft |
 | Provision logs | `~/.local/state/werft/logs/provision-<name>-<YYYYmmdd-HHMMSS>.log` | werft |
@@ -164,9 +172,9 @@ and fails with `usage` outside these bounds:
    `<maxMemory>` fails with `unsupported`. `--cpus` also fails with `unsupported` when the
    `<cputune>` of the definition names vCPU ids (`vcpupin`, `vcpusched`, `cachetune`,
    `memorytune`). When the record carries the LUKS marker, read the disk password now, before any
-   change: from the `pass` entry the record names, else at a TTY. An agent has no TTY, so its
-   lease needs that entry and an unlocked GPG agent. Without both, the lease fails with
-   `secret_unavailable`.
+   change: from the keyring item the record names, else its `pass` entry, else at a TTY. An
+   agent has no TTY, so its lease needs an unlocked keyring that holds the item, or the `pass`
+   entry and an unlocked GPG agent. Without either, the lease fails with `secret_unavailable`.
 2. **Admit.** Take the global lock. Find the stock record in `images.toml` again; a version that
    `werft images --prune` deleted after step 1 fails with `not_found` (`lease.stillThere`). Fail
    (`lease.admit`) with `no_capacity` when host memory less committed memory less the `<memory>`
@@ -402,9 +410,9 @@ Both tiers run the same steps:
    login of step 5 cannot work, so seal stops before the revert and before any copy. A reset point
    without that line (taken before `detect-guest` recorded it) is not checked, and seal runs. Then
    confirm: the revert loses what the build VM wrote since the label. With the LUKS marker, read
-   the disk password before the revert, as `provision` reads the guest password: from the `pass`
-   entry of `guest_password` in the recipe of `--recipe`, else in the one that `config.toml` gives
-   the image, else at a TTY.
+   the disk password before the revert, as `provision` reads the guest password: from
+   `guest_password` in the recipe of `--recipe`, else in the one that `config.toml` gives the
+   image (keyring item, else `pass` entry), else at a TTY.
    Without both, seal fails with `secret_unavailable` and changes nothing.
 2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
    from the checked definition fails the run before anything is copied.
@@ -437,15 +445,15 @@ Both tiers run the same steps:
    Undefine the temporary domain, keep the volumes under the stock name, and append the record to
    `images.toml` under the global lock. The record keeps the definition of the temporary domain
    without its credentials; leases start from it, so they do not depend on the build VM. With the
-   LUKS marker, the record also keeps the marker and the name of the `pass` entry of the disk
-   password, never the password.
+   LUKS marker, the record also keeps the marker, the attributes of the keyring item and the name of
+   the `pass` entry of the disk password, never the password.
 
 A failed run removes the temporary domain and both volumes. When that removal fails, the error
 names what is left.
 
 `werft images --json` gives every field of each record but the domain definition: name, image,
 tier, version, date, source build VM and label, pool, volumes, user, guest family, systemd
-version, the LUKS marker and the `pass` entry of the disk password. The text table shows name, image, tier, version, date and user.
+version, the LUKS marker, and the keyring item and `pass` entry of the disk password. The text table shows name, image, tier, version, date and user.
 
 `TestSealLive` in `cmd/werft/image_live_test.go` proves the result. It reads the stock disk with
 `debugfs` and finds no host keys, no hostname and an empty machine-id. It boots two overlays of the
@@ -510,7 +518,7 @@ version that the lease chose before the lock cannot go in between
   on the desktop. That command changes nothing; `werft start --view` would start the VM.
 
 The runner catches SIGINT and SIGTERM only after preflight and the secrets. An interrupt during a
-question, a secret prompt or `pass` ends werft before any change. After that, the runner checks
+question, a secret prompt, the keyring or `pass` ends werft before any change. After that, the runner checks
 for an interrupt before each step, and an interrupt ends every wait of a step at once.
 
 Steps share one run context (domain, address, guest family, secrets, log writer). On failure the
@@ -587,7 +595,8 @@ all, `[recipes]` per build VM); `--recipe` overrides it. `prepare` reads only `[
 from it; without a recipe it says so and asks for the guest password at the terminal.
 
 ```toml
-[guest_password]              # pass entry, else the prompt at the terminal
+[guest_password]              # keyring item, else pass entry, else the prompt at the terminal
+keyring = { service = "werft", username = "tester" }
 pass = "werft/guest-password"
 
 [secrets.passphrase]          # a named secret for run and pinentry
@@ -611,13 +620,21 @@ that has a cleanup. The setup recipe holds:
 - `tests/system` for the `checks` step, as `../system` from the recipe, so the checks come from
   the checkout that holds the recipe;
 - `usb-passthrough` with the mount label of the key stick, and `pinentry` with a TTY secret;
-- the guest password secret from a `pass` entry;
+- the guest password secret from a keyring item, with a `pass` entry as fallback;
 - for family `omarchy`: a `run` step for `omarchy update` (`OMARCHY_UPDATE_LOGGED=1`,
   `env-bootstrap`), then `reboot`;
 - `autologin` and `unlock-keyring`, because the setup writes gsettings and uses `gh`.
 
-Secrets come from `pass` or a TTY prompt. The positional stdin contract of `vm` (passphrase on
-line 1, guest password on line 2) goes away.
+A secret comes from a keyring item (`keyring`, the attributes of a Secret Service item), else a
+`pass` entry (`pass`), else a TTY prompt (`prompt`). The first line of the item or entry is the
+value. The positional stdin contract of `vm` (passphrase on line 1, guest password on line 2) goes
+away.
+
+The guest password belongs in the keyring: every process of the user can already reach the build
+VMs and leases it unlocks. The setup recipe keeps the GPG passphrase of the key stick a TTY
+prompt (`prompt` only): it must never go to the keyring, `pass` or any file. werft cannot tell
+that secret from another, so the recipe owns this rule. So `provision` with the setup recipe
+needs a person at a TTY; an agent runs it only with that person present.
 
 ## Agent interface
 
@@ -670,7 +687,7 @@ Exit codes are part of the contract:
 | 7 | `timeout` | no SSH, no lease address, no shutdown in time |
 | 8 | `checks_failed` | the provision checks failed |
 | 9 | `unsupported` | raw-NVRAM guard, libvirt version |
-| 10 | `secret_unavailable` | `pass` failed and no TTY |
+| 10 | `secret_unavailable` | the keyring and `pass` gave nothing, and no TTY |
 
 ## Concurrency and locking
 
@@ -695,7 +712,7 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 - The user migrates one build VM at a time with `werft migrate`. A domain with a raw NVRAM, as
   `vm` left it, needs it: `snapshot`, `reset`, `prepare` and `provision` refuse it.
 - The setup repo keeps: the recipe, the bootstrap script, `tests/system`, the `pass` entry of the
-  guest password, `scripts/common/wait-for-package-manager.sh` for its own use, and the
+  guest password and its keyring copy in `secrets.map`, `scripts/common/wait-for-package-manager.sh` for its own use, and the
   `~/.ssh/config` entries for build VMs. Leases need no ssh config entry; werft writes one per lease.
 
 ## Risks
@@ -723,6 +740,4 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
 
 ## Open questions
 
-- **Scripted secrets.** Is `pass` plus TTY enough, or does an unattended `provision` need a secret
-  file or file descriptor? Can an agent run `provision` without a TTY at all, given the key stick
-  and the `pinentry` secret?
+None open.

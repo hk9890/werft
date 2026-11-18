@@ -484,6 +484,10 @@ func (t *terminal) ReadSecret(prompt string) (string, error) {
 
 type passStore struct{ w *world }
 
+func (p passStore) Lookup(attributes map[string]string) (string, error) {
+	return "", fmt.Errorf("no keyring item %s", secret.Attributes(attributes))
+}
+
 func (p passStore) Show(entry string) (string, error) {
 	p.w.add("pass show " + entry)
 	if v, ok := p.w.pass[entry]; ok {

@@ -136,8 +136,8 @@ func (r *Recipe) parse(f file, md toml.MetaData) error {
 		r.GuestPassword = *f.GuestPassword
 	}
 	for name, s := range r.Secrets {
-		if s.Pass == "" && s.Prompt == "" {
-			return fmt.Errorf("secret %s needs pass or prompt", name)
+		if len(s.Keyring) == 0 && s.Pass == "" && s.Prompt == "" {
+			return fmt.Errorf("secret %s needs keyring, pass or prompt", name)
 		}
 	}
 	if len(f.Steps) == 0 {

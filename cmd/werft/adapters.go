@@ -69,7 +69,7 @@ func (c *cli) buildVMRun(name string, yes bool, out io.Writer) (r *pipeline.Run,
 		Shell:     guest.OpenSSH{Config: dir.SSHConfig()},
 		KeyShell:  guest.OpenSSH{Config: dir.SSHConfig(), KeyOnly: true},
 		Host:      steps.System{User: u.Username, Out: out},
-		Secrets:   secret.Pass{},
+		Secrets:   c.secretStore(),
 		Prompter:  prompter{c},
 		Out:       out,
 		Yes:       yes,
@@ -125,6 +125,15 @@ func openViewer(domain string) error {
 }
 
 var guestEnsureKey = guest.EnsureKey
+
+// secretStore is the keyring and pass of the host, unless a test set
+// c.secrets.
+func (c *cli) secretStore() secret.Store {
+	if c.secrets == nil {
+		return secret.Host{}
+	}
+	return c.secrets
+}
 
 // prompter asks at the terminal of the cli.
 type prompter struct{ c *cli }

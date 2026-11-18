@@ -22,6 +22,7 @@ import (
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/lease"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/virt"
 	"github.com/hk9890/werft/internal/virttest"
@@ -528,6 +529,11 @@ func (s screen) Screenshot(domain string, w io.Writer) (string, error) {
 // store is pass with one entry.
 type store map[string]string
 
+// Lookup finds a keyring item under its attributes as one key.
+func (s store) Lookup(attributes map[string]string) (string, error) {
+	return s.Show(secret.Attributes(attributes))
+}
+
 func (s store) Show(entry string) (string, error) {
 	if v, ok := s[entry]; ok {
 		return v, nil
@@ -607,6 +613,48 @@ func TestStartWithoutTheDiskPassword(t *testing.T) {
 				t.Errorf("Start without the password made %s: %v", e.Dir.Leases(), err)
 			}
 		})
+	}
+}
+
+func TestStartReadsTheDiskPasswordFromTheKeyring(t *testing.T) {
+	f := world(t)
+	sh := &keyShell{f: f}
+	e := env(t, f, &sh.shell)
+	e.Shell = func(string) guest.Shell { return sh }
+	e.H = screen{f}
+	var out bytes.Buffer
+	e.Out = &out
+	e.Secrets, e.Terminal = store{"service=werft username=tester": "kr"}, noTerminal{}
+	rec := luksRecord()
+	rec.DiskPasswordKeyring = map[string]string{"service": "werft", "username": "tester"}
+	l, err := lease.Start(e, rec, lease.Options{Owner: "agent"})
+	must(t, err)
+	// k, r, Enter: the keyring item, not the pass entry.
+	if keys := f.SentKeys(l.Domain); len(keys) != 3 || keys[0][0] != 37 {
+		t.Errorf("keys = %v, want the keyring password and Enter", keys)
+	}
+	if !strings.Contains(out.String(), "comes from the keyring (service=werft username=tester)") {
+		t.Errorf("output = %s, want the source of the password", out.String())
+	}
+}
+
+func TestStartWithALockedKeyringTellsWhatToDo(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	e.Secrets, e.Terminal = store{}, noTerminal{}
+	rec := luksRecord()
+	rec.DiskPasswordKeyring, rec.DiskPasswordPass = map[string]string{"service": "werft", "username": "tester"}, ""
+	_, err := lease.Start(e, rec, lease.Options{Owner: "agent"})
+	if !failure.Is(err, failure.SecretUnavailable) {
+		t.Fatalf("Start = %v, want secret_unavailable", err)
+	}
+	for _, want := range []string{"ask the user to unlock the login keyring", "service=werft username=tester", "then lease again", "do not print or ask for the password yourself"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to say %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "pass show") {
+		t.Errorf("error = %q names pass, but the record has no pass entry", err)
 	}
 }
 

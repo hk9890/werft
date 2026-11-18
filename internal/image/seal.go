@@ -265,8 +265,9 @@ func (s *Seal) Run(e Env) (rec Record, err error) {
 }
 
 // diskPassword reads the disk password of a LUKS build VM, before anything
-// changes; empty when the disk asks for none. Without a pass entry and
-// without a terminal, it fails with secret_unavailable.
+// changes; empty when the disk asks for none. Without a keyring item or
+// pass entry that gives it, and without a terminal, it fails with
+// secret_unavailable.
 func (s *Seal) diskPassword(e Env) (string, error) {
 	if !s.LUKS {
 		return "", nil
@@ -275,7 +276,7 @@ func (s *Seal) diskPassword(e Env) (string, error) {
 		e.printf("The disk password of %s %s", s.BuildVM, note)
 	})
 	if err != nil {
-		return "", failure.Wrap(failure.KindOf(err), err, "the disk of %s asks for a password at boot; seal reads it from the pass entry guest_password.pass of its recipe, else at a terminal", s.BuildVM)
+		return "", failure.Wrap(failure.KindOf(err), err, "the disk of %s asks for a password at boot; seal reads it from guest_password.keyring or guest_password.pass of its recipe, else at a terminal", s.BuildVM)
 	}
 	return v, console.Typeable(v)
 }
@@ -332,7 +333,7 @@ func (s *Seal) reserve(e Env) (Record, error) {
 		Source: s.BuildVM, Label: s.Label, Pool: e.Pool, Disk: name + ".qcow2", NVRAM: name + "_VARS.qcow2", User: e.User,
 	}
 	if s.LUKS {
-		rec.LUKS, rec.DiskPasswordPass = true, e.DiskPassword.Pass
+		rec.LUKS, rec.DiskPasswordKeyring, rec.DiskPasswordPass = true, e.DiskPassword.Keyring, e.DiskPassword.Pass
 	}
 	if rec.Domain, err = s.defineTemporary(e, rec, dir); err != nil {
 		return Record{}, err

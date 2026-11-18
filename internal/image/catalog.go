@@ -36,11 +36,13 @@ type Record struct {
 	User    string `toml:"user" json:"user"`
 	Family  string `toml:"family" json:"family"`
 	Systemd int    `toml:"systemd" json:"systemd"`
-	// LUKS is set when the disk asks for a password at boot.
-	// DiskPasswordPass is the pass entry a lease reads that password from;
-	// empty means the terminal only. It names the entry, never the password.
-	LUKS             bool   `toml:"luks,omitempty" json:"luks"`
-	DiskPasswordPass string `toml:"disk_password_pass,omitempty" json:"disk_password_pass,omitempty"`
+	// LUKS is set when the disk asks for a password at boot. A lease reads
+	// that password from the keyring item with the attributes
+	// DiskPasswordKeyring, else from the pass entry DiskPasswordPass, else
+	// at the terminal. Both name where the password is, never the password.
+	LUKS                bool              `toml:"luks,omitempty" json:"luks"`
+	DiskPasswordKeyring map[string]string `toml:"disk_password_keyring,omitempty" json:"disk_password_keyring,omitempty"`
+	DiskPasswordPass    string            `toml:"disk_password_pass,omitempty" json:"disk_password_pass,omitempty"`
 	// Domain is the domain XML a lease of the image starts from: the build
 	// VM on the stock volumes, without credentials. JSON leaves it out.
 	Domain string `toml:"domain" json:"-"`

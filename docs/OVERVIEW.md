@@ -20,7 +20,7 @@ internal/steps/            built-in steps and their assembly
 internal/recipe/           recipe TOML load and validation
 internal/guest/            guest port, OpenSSH adapter, embedded guest scripts
 internal/console/          boot-console typing: screenshot, key codes
-internal/secret/           secrets from pass or a TTY prompt
+internal/secret/           secrets from the keyring, pass or a TTY prompt
 internal/hostdev/          host side of USB passthrough
 internal/config/           ~/.config/werft/config.toml
 internal/state/            paths and locks under ~/.local/state/werft/

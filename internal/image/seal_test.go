@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"io"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -260,7 +261,7 @@ func TestSealWritesVolumesAndRecord(t *testing.T) {
 		t.Errorf("stock definition = %s", rec.Domain)
 	}
 	want.Domain = rec.Domain
-	if rec != want {
+	if !reflect.DeepEqual(rec, want) {
 		t.Errorf("record = %+v, want %+v", rec, want)
 	}
 	if _, err := f.Domain(rec.Name); !failure.Is(err, failure.NotFound) {
@@ -287,7 +288,7 @@ func TestSealWritesVolumesAndRecord(t *testing.T) {
 	}
 	records, err := image.Load(e.Catalog)
 	must(t, err)
-	if len(records) != 1 || records[0] != want {
+	if len(records) != 1 || !reflect.DeepEqual(records[0], want) {
 		t.Errorf("catalog = %+v", records)
 	}
 
@@ -419,6 +420,11 @@ func (s screen) Screenshot(domain string, w io.Writer) (string, error) {
 // store is pass with one entry.
 type store map[string]string
 
+// Lookup finds a keyring item under its attributes as one key.
+func (s store) Lookup(attributes map[string]string) (string, error) {
+	return s.Show(secret.Attributes(attributes))
+}
+
 func (s store) Show(entry string) (string, error) {
 	if v, ok := s[entry]; ok {
 		return v, nil
@@ -455,19 +461,20 @@ func TestSealTypesTheDiskPassword(t *testing.T) {
 	e.H = screen{f}
 	var out bytes.Buffer
 	e.Out = &out
-	e.DiskPassword = secret.Spec{Pass: "werft/guest-password", Prompt: "Disk password of vm"}
-	e.Secrets, e.Terminal = store{"werft/guest-password": "pw"}, noTerminal{}
+	keyring := map[string]string{"service": "werft", "username": "tester"}
+	e.DiskPassword = secret.Spec{Keyring: keyring, Pass: "werft/guest-password", Prompt: "Disk password of vm"}
+	e.Secrets, e.Terminal = store{"service=werft username=tester": "pw"}, noTerminal{}
 	s, err := image.Plan(f, "vm", "provision-base")
 	must(t, err)
 	rec, err := s.Run(e)
 	must(t, err)
 
-	if !rec.LUKS || rec.DiskPasswordPass != "werft/guest-password" {
-		t.Errorf("record = %+v, want the LUKS marker and the pass entry", rec)
+	if !rec.LUKS || rec.DiskPasswordPass != "werft/guest-password" || !reflect.DeepEqual(rec.DiskPasswordKeyring, keyring) {
+		t.Errorf("record = %+v, want the LUKS marker, the keyring item and the pass entry", rec)
 	}
 	records, err := image.Load(e.Catalog)
 	must(t, err)
-	if len(records) != 1 || !records[0].LUKS || records[0].DiskPasswordPass != "werft/guest-password" {
+	if len(records) != 1 || !records[0].LUKS || records[0].DiskPasswordPass != "werft/guest-password" || !reflect.DeepEqual(records[0].DiskPasswordKeyring, keyring) {
 		t.Errorf("catalog = %+v", records)
 	}
 	// p, w, Enter: once, before the first login.
