@@ -67,7 +67,7 @@ real adapters.
   wrote them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
   The address is `vsock/<cid>`, else the IPv4 DHCP lease (`virt.DomainAddresses`, the same rule
   that `prepare` and `provision` use). `start` opens no viewer without `--view`. On a LUKS domain
-  that does not run, `werft start` reads the disk password before the start, as `seal` does,
+  that does not run, `werft start` reads the disk password before the start,
   takes the domain lock, and types the password once at the console; `--view` opens the viewer
   only after that, so a person does not type the password too. It asks at the terminal only when
   the keyring item or `pass` entry of the recipe fails. When the recipe names neither, or nothing

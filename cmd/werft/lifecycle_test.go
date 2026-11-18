@@ -335,7 +335,6 @@ func TestStartEndsWhenThePersonRefusesThePrompt(t *testing.T) {
 	lh := newLifecycleHost(t)
 	lh.setLUKS(t)
 	writeRecipe(t)
-	lh.secrets = keyring("")
 	lh.tty, lh.answerErr = true, errors.New("interrupted by interrupt")
 	if r := lh.run("start", "vm1"); r.code == 0 || !strings.Contains(r.stderr, "cannot give it, so it is asked for") {
 		t.Errorf("start after an interrupted prompt = %+v, want a failure", r)
@@ -344,6 +343,27 @@ func TestStartEndsWhenThePersonRefusesThePrompt(t *testing.T) {
 		if strings.HasPrefix(c, "StartDomain") {
 			t.Errorf("start after an interrupted prompt called %s", c)
 		}
+	}
+}
+
+// TestStartTypesTheAnswerWhenTheSourceFails: the keyring item of the recipe
+// fails, so start asks, and types the answer under the domain lock.
+func TestStartTypesTheAnswerWhenTheSourceFails(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	lh.screen, lh.tty, lh.answer = true, true, "kr"
+	release, err := lockDomain("vm1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := lh.run("start", "vm1"); r.code == 0 || len(lh.fake.SentKeys("vm1")) != 0 {
+		t.Errorf("start while another werft holds the lock = %+v, want conflict", r)
+	}
+	release()
+	r := lh.run("start", "vm1")
+	if keys := lh.fake.SentKeys("vm1"); r.code != 0 || len(keys) != 3 || keys[0][0] != 37 || keys[2][0] != 28 || strings.Contains(r.stdout+r.stderr, "kr") {
+		t.Errorf("start with an answered prompt = %+v, keys %v; want the answer and Enter once", r, keys)
 	}
 }
 

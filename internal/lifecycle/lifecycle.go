@@ -159,8 +159,9 @@ type Env struct {
 	// Ctx ends the wait for the disk password prompt.
 	Ctx context.Context
 	H   virt.Hypervisor
-	// DiskPassword says where the disk password comes from; nil, or an
-	// error, leaves the password to the person at the console.
+	// DiskPassword says where the disk password comes from; nil, an error,
+	// or a spec without a keyring item and a pass entry leaves the password
+	// to the person at the console.
 	DiskPassword func() (secret.Spec, error)
 	Secrets      secret.Store
 	Terminal     secret.Terminal
@@ -182,8 +183,7 @@ func (e Env) printf(format string, args ...any) {
 
 // Start starts the domain unless it runs already. A paused domain is a
 // conflict. No viewer opens. On a LUKS domain, Start reads the disk password
-// before the start, as seal does, and types it once at the console under
-// the domain lock.
+// before the start and types it once at the console under the domain lock.
 func Start(e Env, name string) (Started, error) {
 	s, err := inspect(e.H, name)
 	if err != nil {
@@ -236,7 +236,7 @@ func diskPassword(e Env, name string) (string, error) {
 	if err != nil {
 		return leave(err)
 	}
-	if len(spec.Keyring) == 0 && spec.Pass == "" {
+	if !spec.HasSource() {
 		return "", nil
 	}
 	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
