@@ -220,9 +220,10 @@ func Start(e Env, name string) (Started, error) {
 	return s, nil
 }
 
-// diskPassword reads the disk password of the LUKS domain name. When nothing
-// gives a password werft can type, Start boots anyway and leaves the
-// password to the person at the console: empty.
+// diskPassword reads the disk password of the LUKS domain name. When the
+// recipe names no keyring item and no pass entry, or nothing gives a
+// password werft can type, Start boots anyway and leaves the password to the
+// person at the console: empty. Only a named source that fails asks.
 func diskPassword(e Env, name string) (string, error) {
 	leave := func(err error) (string, error) {
 		e.printf("werft cannot read the disk password of %s: %v", name, err)
@@ -234,6 +235,9 @@ func diskPassword(e Env, name string) (string, error) {
 	spec, err := e.DiskPassword()
 	if err != nil {
 		return leave(err)
+	}
+	if len(spec.Keyring) == 0 && spec.Pass == "" {
+		return "", nil
 	}
 	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
 		e.printf("The disk password of %s %s", name, note)

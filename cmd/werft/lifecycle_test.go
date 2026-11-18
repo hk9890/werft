@@ -204,10 +204,13 @@ func TestStartWithoutAddressOrViewerStillSucceeds(t *testing.T) {
 	}
 }
 
+// TestStartTellsAboutTheDiskPassword: without a recipe source, start asks
+// nothing, also at a terminal, and leaves the password to the person.
 func TestStartTellsAboutTheDiskPassword(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	lh := newLifecycleHost(t)
 	lh.setLUKS(t)
+	lh.tty, lh.answerErr = true, errors.New("test: start asked")
 	r := lh.run("start", "vm1")
 	if r.code != 0 || !strings.Contains(r.stderr, "werft does not type it. Type it in the viewer: werft start --view vm1") || len(lh.fake.SentKeys("vm1")) != 0 {
 		t.Errorf("start of a LUKS VM = %+v", r)
@@ -325,14 +328,16 @@ func TestStartWithAnUnreadableRecipeStillStarts(t *testing.T) {
 	}
 }
 
-// TestStartEndsWhenThePersonRefusesThePrompt: an interrupt at the prompt
-// ends start before the boot.
+// TestStartEndsWhenThePersonRefusesThePrompt: the keyring item of the
+// recipe fails, so start asks; an interrupt at the prompt ends start before
+// the boot.
 func TestStartEndsWhenThePersonRefusesThePrompt(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	lh := newLifecycleHost(t)
 	lh.setLUKS(t)
+	writeRecipe(t)
+	lh.secrets = keyring("")
 	lh.tty, lh.answerErr = true, errors.New("interrupted by interrupt")
-	if r := lh.run("start", "vm1"); r.code == 0 {
+	if r := lh.run("start", "vm1"); r.code == 0 || !strings.Contains(r.stderr, "cannot give it, so it is asked for") {
 		t.Errorf("start after an interrupted prompt = %+v, want a failure", r)
 	}
 	for _, c := range lh.fake.Calls() {
