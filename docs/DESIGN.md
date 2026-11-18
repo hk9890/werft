@@ -72,7 +72,8 @@ real adapters.
   only after that, so a person does not type the password too. It asks at the terminal only when
   the keyring item or `pass` entry of the recipe fails. When the recipe names neither, or nothing
   gives a password werft can type, it starts anyway and leaves the password to the person at the
-  console; a person who refuses or interrupts the prompt ends it before the start.
+  console, also when the person answers the prompt with Enter alone; a person who interrupts the
+  prompt ends it before the start.
   It waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
   it expires, also after the domain stopped. It gives the address only when a lease came; no lease
   is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.

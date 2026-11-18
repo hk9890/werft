@@ -367,6 +367,19 @@ func TestStartTypesTheAnswerWhenTheSourceFails(t *testing.T) {
 	}
 }
 
+// TestStartBootsOnAnEmptyAnswer: Enter alone at the prompt leaves the
+// password to the person at the console, and start boots.
+func TestStartBootsOnAnEmptyAnswer(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	lh.screen, lh.tty = true, true
+	r := lh.run("start", "vm1")
+	if r.code != 0 || !strings.Contains(r.stderr, "vm1 started") || !strings.Contains(r.stderr, "werft does not type it") || len(lh.fake.SentKeys("vm1")) != 0 {
+		t.Errorf("start after an empty answer = %+v, want a boot that leaves the password to the person", r)
+	}
+}
+
 // TestStartOpensTheViewerAfterTyping: a person who sees the prompt in the
 // viewer would type the password, and werft would then type it again into
 // the next still screen.

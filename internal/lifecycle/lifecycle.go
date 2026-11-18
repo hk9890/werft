@@ -5,6 +5,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -220,10 +221,27 @@ func Start(e Env, name string) (Started, error) {
 	return s, nil
 }
 
+// errAtConsole is an empty answer at the prompt: the person types the disk
+// password at the console.
+var errAtConsole = errors.New("the disk password is left to the console")
+
+// consoleAnswer is the Terminal of Start: an empty answer gives errAtConsole.
+type consoleAnswer struct{ secret.Terminal }
+
+func (t consoleAnswer) ReadSecret(prompt string) (string, error) {
+	v, err := t.Terminal.ReadSecret(prompt + " (Enter: type it at the console)")
+	if err == nil && v == "" {
+		return "", errAtConsole
+	}
+	return v, err
+}
+
 // diskPassword reads the disk password of the LUKS domain name. When the
-// recipe names no keyring item and no pass entry, or nothing gives a
-// password werft can type, Start boots anyway and leaves the password to the
-// person at the console: empty. Only a named source that fails asks.
+// recipe names no keyring item and no pass entry, the person answers the
+// prompt with Enter alone, or nothing gives a password werft can type, Start
+// boots anyway and leaves the password to the person at the console: empty.
+// Only a named source that fails asks, and only an interrupt of the prompt
+// ends Start.
 func diskPassword(e Env, name string) (string, error) {
 	leave := func(err error) (string, error) {
 		e.printf("werft cannot read the disk password of %s: %v", name, err)
@@ -239,9 +257,12 @@ func diskPassword(e Env, name string) (string, error) {
 	if !spec.HasSource() {
 		return "", nil
 	}
-	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
+	v, err := secret.Read(spec, e.Secrets, consoleAnswer{e.Terminal}, func(note string) {
 		e.printf("The disk password of %s %s", name, note)
 	})
+	if errors.Is(err, errAtConsole) {
+		return "", nil
+	}
 	if err != nil && e.TTY {
 		return "", err
 	}
