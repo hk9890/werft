@@ -6,6 +6,21 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.7.0
+
+- **`guest_password` in a recipe can name a keyring item:
+  `keyring = { service = "werft", username = "tester" }`.** werft reads the
+  item first, then the `pass` entry, then asks at the terminal. Before, only
+  `pass` and the terminal gave the password. werft reads the item only while
+  the login keyring is unlocked, so an agent never gets an unlock dialog.
+  To let leases of an encrypted (LUKS) image read the item, seal the image
+  again with the key in its recipe.
+- **`werft start` types the disk password of an encrypted (LUKS) build VM.**
+  It reads the password from `guest_password` of the recipe of the build VM,
+  as `seal` does. Before, you typed it at the console. When no source gives
+  the password, start boots anyway and leaves it to you, as before. With
+  `--view`, the viewer opens after werft has typed the password.
+
 ## v0.6.0
 
 - **werft is open source under the MIT license, and mise installs it
