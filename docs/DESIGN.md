@@ -70,10 +70,10 @@ real adapters.
   that does not run, `werft start` reads the disk password before the start,
   takes the domain lock, and types the password once at the console; `--view` opens the viewer
   only after that, so a person does not type the password too. It asks at the terminal only when
-  the keyring item or `pass` entry of the recipe fails. When the recipe names neither, or nothing
-  gives a password werft can type, it starts anyway and leaves the password to the person at the
-  console, also when the person answers the prompt with Enter alone; a person who interrupts the
-  prompt ends it before the start.
+  the keyring item or `pass` entry of the recipe fails. When the recipe names neither, or no
+  source gives a password werft can type, `start` boots anyway. The person then types the
+  password at the console. An empty answer at the prompt does the same. An interrupt at the
+  prompt ends `start` before the boot.
   It waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
   it expires, also after the domain stopped. It gives the address only when a lease came; no lease
   is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.
