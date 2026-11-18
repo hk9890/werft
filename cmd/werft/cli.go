@@ -63,7 +63,7 @@ func init() {
 		{name: "seal", args: "[--yes] [--recipe file] <build-vm> <label>", summary: "make a new stock image version from a reset point of a build VM; provision-base gives the plain tier, clean on <x>-full the full tier", run: (*cli).cmdSeal},
 		{name: "snapshot", args: "[--replace] <name> [label]", summary: "take a reset point of a shut-off VM (default label: clean-install); --replace retakes one", run: (*cli).cmdSnapshot},
 		{name: "snapshots", args: "<name>", summary: "list the reset points of a VM, and those vm keeps", run: (*cli).cmdSnapshots},
-		{name: "start", args: "[--view] <name>", summary: "start a VM headless and wait for its address; --view also opens virt-viewer", run: (*cli).cmdStart},
+		{name: "start", args: "[--view] <name>", summary: "start a VM headless, type the disk password of an encrypted one, and wait for its address; --view also opens virt-viewer", run: (*cli).cmdStart},
 		{name: "stop", args: "[--force] <name>", summary: "ACPI shutdown and wait; --force forces the VM off at once", run: (*cli).cmdStop},
 		{name: "version", summary: "print the werft version", run: (*cli).cmdVersion},
 	}

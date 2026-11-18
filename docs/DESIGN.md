@@ -67,9 +67,12 @@ real adapters.
   wrote them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
   The address is `vsock/<cid>`, else the IPv4 DHCP lease (`virt.DomainAddresses`, the same rule
   that `prepare` and `provision` use). `start` opens no viewer without `--view`. On a LUKS domain
-  that does not run, it reads the disk password before the start, as `seal` does, and types it
-  once at the console; when no source gives the password, it starts anyway and leaves the
-  password to the person at the console. It waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
+  that does not run, `werft start` reads the disk password before the start, as `seal` does,
+  takes the domain lock, and types the password once at the console; `--view` opens the viewer
+  only after that, so a person does not type the password too. When the config, the recipe or
+  the sources give no password werft can type, it starts anyway and leaves the password to the
+  person at the console; a person who refuses or interrupts the prompt ends it before the start.
+  It waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
   it expires, also after the domain stopped. It gives the address only when a lease came; no lease
   is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.
 - **`internal/resetpoint`**, **`internal/image`**, **`internal/lease`** — Reset points, raw-NVRAM
@@ -628,9 +631,10 @@ value. The positional stdin contract of `vm` (passphrase on line 1, guest passwo
 away.
 
 The guest password belongs in the keyring: every process of the user can already reach the build
-VMs and leases it unlocks. The GPG passphrase of the key stick never goes to the keyring, `pass`
-or any file: it stays a TTY prompt. So `provision`, which needs it, needs a person at a TTY; an
-agent runs it only with that person present.
+VMs and leases it unlocks. The setup recipe keeps the GPG passphrase of the key stick a TTY
+prompt (`prompt` only): it must never go to the keyring, `pass` or any file. werft cannot tell
+that secret from another, so the recipe owns this rule. So `provision` with the setup recipe
+needs a person at a TTY; an agent runs it only with that person present.
 
 ## Agent interface
 

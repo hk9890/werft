@@ -16,6 +16,7 @@ import (
 	"github.com/hk9890/werft/internal/lifecycle"
 	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/secret"
+	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
@@ -113,6 +114,13 @@ func (c *cli) cmdStart(args []string) error {
 			return err
 		}
 	}
+	release := func() {}
+	if password != "" {
+		if release, err = lockDomain(name); err != nil {
+			return err
+		}
+	}
+	defer func() { release() }()
 	started, err := lifecycle.Start(h, name)
 	if err != nil {
 		return err
@@ -122,6 +130,13 @@ func (c *cli) cmdStart(args []string) error {
 	} else {
 		c.progress("%s started (headless, no window)", name)
 	}
+	typing := started.LUKS && !started.AlreadyRunning && password != ""
+	if typing {
+		if err := c.typeDiskPassword(h, name, password); err != nil {
+			return failure.Wrap(failure.KindOf(err), err, "%s runs; look at its console, and type the disk password there if it asks: %s", name, steps.ViewerCommand(name))
+		}
+	}
+	release()
 	viewerOpen := false
 	if *view {
 		if err := c.openViewer(name); err != nil {
@@ -131,13 +146,7 @@ func (c *cli) cmdStart(args []string) error {
 			c.progress("virt-viewer attached: Shift+F11 fullscreen, Shift+F12 release cursor")
 		}
 	}
-	if started.LUKS && !started.AlreadyRunning && password != "" {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		if err := steps.TypeDiskPassword(ctx, h, name, password, c.sleep, c.stderr); err != nil {
-			return failure.Wrap(failure.KindOf(err), err, "%s runs; look at its console, and type the disk password there if it asks: %s", name, steps.ViewerCommand(name))
-		}
-	} else if started.LUKS && !started.AlreadyRunning {
+	if started.LUKS && !started.AlreadyRunning && !typing {
 		if viewerOpen {
 			c.progress("The disk of %s asks for its password at the console; werft does not type it. Type it in the open viewer window", name)
 		} else {
@@ -201,27 +210,56 @@ func (c *cli) progress(format string, args ...any) {
 
 // startDiskPassword reads the disk password of the LUKS build VM name before
 // start boots it, from guest_password of the recipe of its build VM, as seal
-// does. When no source gives it, start boots anyway and leaves the password
-// to the person at the console: empty.
+// does. When nothing gives a password werft can type, start boots anyway and
+// leaves the password to the person at the console: empty. A person at the
+// terminal who refuses or interrupts the prompt ends start before the boot.
 func (c *cli) startDiskPassword(name string) (string, error) {
+	leave := func(err error) (string, error) {
+		c.progress("werft cannot read the disk password of %s: %v", name, err)
+		return "", nil
+	}
 	cfg, err := loadConfig()
 	if err != nil {
-		return "", err
+		return leave(err)
 	}
 	buildVM, _ := strings.CutSuffix(name, resetpoint.FullSuffix)
 	spec, err := diskPasswordSpec(cfg, "", buildVM, name)
 	if err != nil {
-		return "", err
+		return leave(err)
 	}
 	v, err := secret.Read(spec, c.secretStore(), prompter{c}, func(note string) {
 		c.progress("The disk password of %s %s", name, note)
 	})
-	if failure.Is(err, failure.SecretUnavailable) {
-		c.progress("werft cannot read the disk password of %s: %v", name, err)
-		return "", nil
-	}
-	if err != nil {
+	if err != nil && c.tty {
 		return "", err
 	}
-	return v, console.Typeable(v)
+	if err != nil {
+		return leave(err)
+	}
+	if err := console.Typeable(v); err != nil {
+		return leave(err)
+	}
+	return v, nil
+}
+
+// typeDiskPassword types password at the disk prompt of the started domain.
+// SIGINT and SIGTERM end the wait for the prompt, and only that wait.
+func (c *cli) typeDiskPassword(h virt.Hypervisor, name, password string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return steps.TypeDiskPassword(ctx, h, name, password, c.sleep, c.stderr)
+}
+
+// lockDomain takes the domain lock of name, so start does not type at a
+// console that provision or reset also types at.
+func lockDomain(name string) (func(), error) {
+	dir, err := state.Root()
+	if err != nil {
+		return nil, err
+	}
+	lock, err := dir.LockDomain(name)
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = lock.Release() }, nil
 }

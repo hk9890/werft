@@ -44,7 +44,7 @@ func TestPrepareRecipe(t *testing.T) {
 	t.Cleanup(func() { guestEnsureKey = saved })
 
 	r := rh.run("", false, "prepare", "vm")
-	if r.code != 10 || !strings.Contains(r.stderr, "No recipe for vm, so no pass entry for the guest password") {
+	if r.code != 10 || !strings.Contains(r.stderr, "No recipe for vm, so no keyring item or pass entry for the guest password") {
 		t.Errorf("prepare without a recipe = %+v", r)
 	}
 	r = rh.run("", false, "prepare", "--recipe", "/none.toml", "vm")

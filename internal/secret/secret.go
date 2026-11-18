@@ -4,11 +4,12 @@
 package secret
 
 import (
-	"bytes"
+	"context"
 	"maps"
 	"os/exec"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hk9890/werft/internal/failure"
 )
@@ -93,7 +94,8 @@ func Read(spec Spec, store Store, term Terminal, note func(string)) (string, err
 type Host struct{}
 
 // Lookup asks only an unlocked keyring: secret-tool on a locked one opens an
-// unlock dialog, and an agent cannot answer it.
+// unlock dialog, and an agent cannot answer it. toolTimeout ends a dialog
+// that opens anyway.
 func (Host) Lookup(attributes map[string]string) (string, error) {
 	if !keyringUnlocked() {
 		return "", failure.New(failure.SecretUnavailable, "the keyring is locked or does not run")
@@ -129,10 +131,15 @@ func firstLine(name string, args ...string) (string, error) {
 	return first, nil
 }
 
+// toolTimeout bounds each call of busctl, secret-tool and pass: a keyring
+// can open a dialog that nobody answers, also past the unlock check, for an
+// item in another, locked collection.
+var toolTimeout = 30 * time.Second
+
+// output runs name with stdin closed and gives its stdout.
 func output(name string, args ...string) (string, error) {
-	var out bytes.Buffer
-	c := exec.Command(name, args...)
-	c.Stdout = &out
-	err := c.Run()
-	return out.String(), err
+	ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	return string(out), err
 }

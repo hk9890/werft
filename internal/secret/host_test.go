@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/secret"
@@ -115,9 +116,13 @@ func TestKeyringGivesTheItem(t *testing.T) {
 // an unlock dialog, and a call to a Secret Service that does not run starts
 // one that stays locked.
 func TestKeyringNotUnlockedIsNotAsked(t *testing.T) {
-	for name, running := range map[string]bool{"locked": true, "not running": false} {
+	for name, c := range map[string]struct{ running, locked bool }{
+		"locked":                  {true, true},
+		"not running":             {false, true},
+		"not running, not locked": {false, false},
+	} {
 		t.Run(name, func(t *testing.T) {
-			stdin := fakeKeyring(t, running, true)
+			stdin := fakeKeyring(t, c.running, c.locked)
 			_, err := secret.Host{}.Lookup(map[string]string{"service": "werft", "username": "tester"})
 			if !failure.Is(err, failure.SecretUnavailable) {
 				t.Errorf("Lookup = %v, want secret_unavailable", err)
@@ -126,5 +131,20 @@ func TestKeyringNotUnlockedIsNotAsked(t *testing.T) {
 				t.Error("secret-tool ran on a keyring that is not unlocked")
 			}
 		})
+	}
+}
+
+// TestKeyringDialogTimesOut: a lookup that waits for a dialog nobody
+// answers ends after the tool timeout.
+func TestKeyringDialogTimesOut(t *testing.T) {
+	fakeKeyring(t, true, false)
+	dir := onPath(t)
+	fakeTool(t, dir, "secret-tool", "exec sleep 5\n")
+	defer func(d time.Duration) { *secret.ToolTimeout = d }(*secret.ToolTimeout)
+	*secret.ToolTimeout = 100 * time.Millisecond
+	start := time.Now()
+	_, err := secret.Host{}.Lookup(map[string]string{"service": "werft", "username": "tester"})
+	if !failure.Is(err, failure.SecretUnavailable) || time.Since(start) > 3*time.Second {
+		t.Errorf("Lookup = %v after %v, want secret_unavailable after the timeout", err, time.Since(start))
 	}
 }

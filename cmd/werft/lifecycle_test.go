@@ -42,6 +42,12 @@ type lifecycleHost struct {
 	// with a prompt, so start can type a disk password.
 	secrets secret.Store
 	screen  bool
+	// tty makes stdin a terminal whose answer is answer, else answerErr.
+	tty       bool
+	answer    string
+	answerErr error
+	// keysAtView is the number of keys sent before each viewer opened.
+	keysAtView []int
 }
 
 func newLifecycleHost(t *testing.T) *lifecycleHost {
@@ -84,7 +90,10 @@ func (lh *lifecycleHost) run(args ...string) result {
 				lh.lease = nil
 			}
 		},
+		tty:        lh.tty,
+		readSecret: func() (string, error) { return lh.answer, lh.answerErr },
 		openViewer: func(domain string) error {
+			lh.keysAtView = append(lh.keysAtView, len(lh.fake.SentKeys(domain)))
 			lh.viewed = append(lh.viewed, domain)
 			return lh.viewErr
 		},
@@ -249,6 +258,7 @@ func (keyring) Show(entry string) (string, error) {
 func writeRecipe(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "werft")
 	recipe := filepath.Join(dir, "recipe.toml")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -292,19 +302,72 @@ func TestStartWithoutTheDiskPasswordLeavesItToThePerson(t *testing.T) {
 	}
 }
 
-func TestStartRefusesAnUntypeableDiskPasswordBeforeTheStart(t *testing.T) {
+func TestStartLeavesAnUntypeableDiskPasswordToThePerson(t *testing.T) {
 	lh := newLifecycleHost(t)
 	lh.setLUKS(t)
 	writeRecipe(t)
 	lh.secrets, lh.screen = keyring("pä"), true
 	r := lh.run("start", "vm1")
-	if r.code != 2 || strings.Contains(r.stdout+r.stderr, "pä") {
-		t.Errorf("start with an untypeable password = %+v, want usage without the password", r)
+	if r.code != 0 || strings.Contains(r.stdout+r.stderr, "pä") || !strings.Contains(r.stderr, "werft does not type it") || len(lh.fake.SentKeys("vm1")) != 0 {
+		t.Errorf("start with an untypeable password = %+v, want a start that leaves the password to the person, without the password", r)
+	}
+}
+
+func TestStartWithAnUnreadableRecipeStillStarts(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	if err := os.Remove(filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "werft", "recipe.toml")); err != nil {
+		t.Fatal(err)
+	}
+	if r := lh.run("start", "vm1"); r.code != 0 || !strings.Contains(r.stderr, "werft cannot read the disk password of vm1") {
+		t.Errorf("start with a missing recipe = %+v, want a start with a warning", r)
+	}
+}
+
+// TestStartEndsWhenThePersonRefusesThePrompt: an interrupt at the prompt
+// ends start before the boot.
+func TestStartEndsWhenThePersonRefusesThePrompt(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	lh.tty, lh.answerErr = true, errors.New("interrupted by interrupt")
+	if r := lh.run("start", "vm1"); r.code == 0 {
+		t.Errorf("start after an interrupted prompt = %+v, want a failure", r)
 	}
 	for _, c := range lh.fake.Calls() {
-		if strings.HasPrefix(c, "StartDomain") || strings.HasPrefix(c, "SendKey") {
-			t.Errorf("start with an untypeable password called %s", c)
+		if strings.HasPrefix(c, "StartDomain") {
+			t.Errorf("start after an interrupted prompt called %s", c)
 		}
+	}
+}
+
+// TestStartOpensTheViewerAfterTyping: a person who sees the prompt in the
+// viewer would type the password, and werft would then type it again into
+// the next still screen.
+func TestStartOpensTheViewerAfterTyping(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	lh.secrets, lh.screen = keyring("kr"), true
+	if r := lh.run("start", "--view", "vm1"); r.code != 0 || len(lh.keysAtView) != 1 || lh.keysAtView[0] != 3 {
+		t.Errorf("start --view = %+v, keys at view %v; want the viewer after the password and Enter", r, lh.keysAtView)
+	}
+}
+
+func TestStartTakesTheDomainLockToType(t *testing.T) {
+	lh := newLifecycleHost(t)
+	lh.setLUKS(t)
+	writeRecipe(t)
+	lh.secrets, lh.screen = keyring("kr"), true
+	release, err := lockDomain("vm1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := lh.run("start", "vm1")
+	release()
+	if r.code == 0 || len(lh.fake.SentKeys("vm1")) != 0 {
+		t.Errorf("start while another werft holds the lock = %+v, want conflict", r)
 	}
 }
 
