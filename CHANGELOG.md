@@ -11,17 +11,19 @@ Each section is also the text of its release on the
 - **A secret in a recipe, `guest_password` included, can name a keyring
   item: `keyring = { service = "werft", username = "tester" }`.** werft reads the
   item first, then the `pass` entry, then asks at the terminal. Before, only
-  `pass` and the terminal gave a secret. werft reads the item only while
-  the login keyring is unlocked, so an agent never gets an unlock dialog.
-  To let leases of an encrypted (LUKS) image read the item, seal the image
-  again with the key in its recipe.
-- **`werft start` types the disk password of an encrypted (LUKS) build VM.**
-  It reads the password from `guest_password` of the recipe of the build VM,
-  as `seal` does. Before, you typed it at the console. At a terminal, start
-  asks for the password when the keyring and `pass` give none; an empty or
-  interrupted answer ends start before the boot. Without a terminal, start
-  boots anyway and leaves the password to you, as before. With
-  `--view`, the viewer opens after werft has typed the password.
+  `pass` and the terminal gave a secret. werft skips the keyring while its
+  default collection, normally the login keyring, is locked, so it does not
+  open an unlock dialog for it. To let leases of an encrypted (LUKS) image
+  read the item, seal the image again with `guest_password.keyring` in its
+  recipe.
+- **Action required: at a terminal, `werft start` of an encrypted (LUKS)
+  build VM asks for the disk password, and types it at the console.**
+  Answer the prompt, or let the keyring or `pass` give the password through
+  `guest_password` of the recipe that `config.toml` names for the build VM.
+  Before, start never asked, and you typed the password at the console. An
+  empty or interrupted answer now ends start before the boot. Without a
+  terminal, start boots anyway and leaves the password to you, as before.
+  With `--view`, the viewer opens after werft has typed the password.
 
 ## v0.6.0
 
