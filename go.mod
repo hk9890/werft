@@ -1,6 +1,6 @@
 module github.com/hk9890/werft
 
-go 1.27
+go 1.27.4
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -10,6 +10,6 @@ require (
 )
 
 require (
-	golang.org/x/crypto v0.48.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 )
