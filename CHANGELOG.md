@@ -6,6 +6,35 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.7.0
+
+- **A secret in a recipe, `guest_password` included, can name a keyring
+  item: `keyring = { service = "werft", username = "tester" }`.** werft reads the
+  item with `secret-tool` first, then the `pass` entry, then asks at the
+  terminal. Before, only `pass` and the terminal gave a secret. werft skips
+  the keyring while its default collection, normally the login keyring, is
+  locked, so it does not open an unlock dialog for it. To let leases of an
+  encrypted (LUKS) image read the item, seal the image again with
+  `guest_password.keyring` in its recipe.
+- **werft stops `pass` and the keyring after 30 s.** Before, it waited
+  without a limit, for example for a pinentry of the GPG key. Answer the
+  pinentry within 30 s, else werft goes on as when `pass` cannot give the
+  secret.
+- **`werft start` of an encrypted (LUKS) build VM types the disk password
+  at the console.** It reads the password from the keyring item or `pass`
+  entry that `guest_password` names, in the recipe that `config.toml` names
+  for the build VM. Before, you always typed the password at the console.
+  When no recipe names a keyring item or `pass` entry, start boots and
+  leaves the password to you, as before. When each source it names fails,
+  start asks at the terminal. Press Enter alone to type the password at the
+  console yourself. Press Ctrl-C to end start before the boot. Without a
+  terminal, start then boots and leaves the password to you. With `--view`,
+  the viewer opens after werft has typed the password.
+- **`werft start` of an encrypted build VM can now fail.** It fails with
+  `conflict` when another werft command works on the VM. It fails when werft
+  cannot type the password; the VM then runs, and the error names the viewer
+  command to type it yourself.
+
 ## v0.6.0
 
 - **werft is open source under the MIT license, and mise installs it
