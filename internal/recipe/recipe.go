@@ -136,7 +136,7 @@ func (r *Recipe) parse(f file, md toml.MetaData) error {
 		r.GuestPassword = *f.GuestPassword
 	}
 	for name, s := range r.Secrets {
-		if len(s.Keyring) == 0 && s.Pass == "" && s.Prompt == "" {
+		if !s.HasStoredSource() && s.Prompt == "" {
 			return fmt.Errorf("secret %s needs keyring, pass or prompt", name)
 		}
 	}

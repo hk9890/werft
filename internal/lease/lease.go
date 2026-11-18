@@ -226,7 +226,7 @@ func diskPassword(e Env, rec image.Record) (string, error) {
 	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
 		e.printf("The disk password of %s %s", rec.Name, note)
 	})
-	if err != nil && len(rec.DiskPasswordKeyring) == 0 && rec.DiskPasswordPass == "" {
+	if err != nil && !spec.HasStoredSource() {
 		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no keyring item and no pass entry, so only a terminal gives the password; seal it again with guest_password.keyring or guest_password.pass in the recipe of %s", rec.Name, rec.Image)
 	}
 	if err != nil {

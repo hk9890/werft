@@ -45,6 +45,11 @@ func Attributes(attrs map[string]string) string {
 	return strings.Join(pairs, " ")
 }
 
+// HasStoredSource says whether spec names a keyring item or a pass entry.
+func (s Spec) HasStoredSource() bool {
+	return len(s.Keyring) > 0 || s.Pass != ""
+}
+
 type source struct {
 	name string
 	read func() (string, error)
