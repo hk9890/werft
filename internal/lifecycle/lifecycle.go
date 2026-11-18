@@ -4,6 +4,7 @@
 package lifecycle
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"slices"
@@ -12,10 +13,13 @@ import (
 
 	"libvirt.org/go/libvirtxml"
 
+	"github.com/hk9890/werft/internal/console"
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/resetpoint"
+	"github.com/hk9890/werft/internal/secret"
+	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
 )
 
@@ -140,27 +144,114 @@ func Address(h virt.Hypervisor, name string) string {
 // Started says what Start found and did.
 type Started struct {
 	AlreadyRunning bool
-	// LUKS is set when the disk asks for its password at the console; Start
-	// does not type it.
+	// LUKS is set when the disk asks for its password at the console.
 	LUKS bool
+	// Typed is set when Start typed the disk password.
+	Typed bool
 	// Leases are the DHCP leases libvirt held before the start; WaitAddress
 	// waits for a newer one.
 	Leases []virt.DHCPLease
 }
 
-// Start starts the domain unless it runs already. A paused domain is a
-// conflict. No viewer opens.
-func Start(h virt.Hypervisor, name string) (Started, error) {
-	s, err := Inspect(h, name)
-	if err != nil || s.AlreadyRunning {
-		return s, err
-	}
-	return s, h.StartDomain(name)
+// Env is what Start needs. Only a LUKS domain that does not run needs more
+// than H: the disk password and the domain lock.
+type Env struct {
+	// Ctx ends the wait for the disk password prompt.
+	Ctx context.Context
+	H   virt.Hypervisor
+	// DiskPassword says where the disk password comes from; nil, or an
+	// error, leaves the password to the person at the console.
+	DiskPassword func() (secret.Spec, error)
+	Secrets      secret.Store
+	Terminal     secret.Terminal
+	// TTY is set when a person at the terminal answers the prompt: a refused
+	// or interrupted prompt then ends Start before the boot.
+	TTY bool
+	// Lock takes the domain lock, so Start does not type at a console that
+	// provision or reset also types at.
+	Lock  func(domain string) (release func(), err error)
+	Sleep func(time.Duration)
+	Out   io.Writer
 }
 
-// Inspect says what Start finds, and changes nothing: a caller reads the
-// disk password before the start.
-func Inspect(h virt.Hypervisor, name string) (Started, error) {
+func (e Env) printf(format string, args ...any) {
+	if e.Out != nil {
+		_, _ = fmt.Fprintf(e.Out, format+"\n", args...)
+	}
+}
+
+// Start starts the domain unless it runs already. A paused domain is a
+// conflict. No viewer opens. On a LUKS domain, Start reads the disk password
+// before the start, as seal does, and types it once at the console under
+// the domain lock.
+func Start(e Env, name string) (Started, error) {
+	s, err := inspect(e.H, name)
+	if err != nil {
+		return s, err
+	}
+	if s.AlreadyRunning {
+		e.printf("%s is already running", name)
+		return s, nil
+	}
+	var password string
+	if s.LUKS {
+		if password, err = diskPassword(e, name); err != nil {
+			return s, err
+		}
+	}
+	if password != "" {
+		release, err := e.Lock(name)
+		if err != nil {
+			return s, err
+		}
+		defer release()
+	}
+	if err := e.H.StartDomain(name); err != nil {
+		return s, err
+	}
+	e.printf("%s started (headless, no window)", name)
+	if password == "" {
+		return s, nil
+	}
+	if err := steps.TypeDiskPassword(e.Ctx, e.H, name, password, e.Sleep, e.Out); err != nil {
+		return s, failure.Wrap(failure.KindOf(err), err, "%s runs; look at its console, and type the disk password there if it asks: %s", name, steps.ViewerCommand(name))
+	}
+	s.Typed = true
+	return s, nil
+}
+
+// diskPassword reads the disk password of the LUKS domain name. When nothing
+// gives a password werft can type, Start boots anyway and leaves the
+// password to the person at the console: empty.
+func diskPassword(e Env, name string) (string, error) {
+	leave := func(err error) (string, error) {
+		e.printf("werft cannot read the disk password of %s: %v", name, err)
+		return "", nil
+	}
+	if e.DiskPassword == nil {
+		return "", nil
+	}
+	spec, err := e.DiskPassword()
+	if err != nil {
+		return leave(err)
+	}
+	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
+		e.printf("The disk password of %s %s", name, note)
+	})
+	if err != nil && e.TTY {
+		return "", err
+	}
+	if err != nil {
+		return leave(err)
+	}
+	if err := console.Typeable(v); err != nil {
+		return leave(err)
+	}
+	return v, nil
+}
+
+// inspect says what Start finds, and changes nothing.
+func inspect(h virt.Hypervisor, name string) (Started, error) {
 	state, err := domainState(h, name)
 	if err != nil {
 		return Started{}, err

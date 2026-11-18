@@ -111,7 +111,7 @@ func TestListSkipsADomainThatGoesAway(t *testing.T) {
 
 func TestStart(t *testing.T) {
 	f := host(t)
-	s, err := lifecycle.Start(f, "ubuntu")
+	s, err := lifecycle.Start(lifecycle.Env{H: f}, "ubuntu")
 	must(t, err)
 	if s.AlreadyRunning || !s.LUKS || len(s.Leases) != 0 {
 		t.Errorf("Start = %+v", s)
@@ -119,12 +119,12 @@ func TestStart(t *testing.T) {
 	if st, _ := f.DomainState("ubuntu"); st != virt.StateRunning {
 		t.Errorf("state = %v", st)
 	}
-	s, err = lifecycle.Start(f, "ubuntu")
+	s, err = lifecycle.Start(lifecycle.Env{H: f}, "ubuntu")
 	must(t, err)
 	if !s.AlreadyRunning {
 		t.Error("second Start did not see the running domain")
 	}
-	_, err = lifecycle.Start(f, "none")
+	_, err = lifecycle.Start(lifecycle.Env{H: f}, "none")
 	if !failure.Is(err, failure.NotFound) || !strings.Contains(err.Error(), "werft list") {
 		t.Errorf("Start of an unknown domain = %v", err)
 	}
@@ -160,7 +160,7 @@ func TestWaitAddress(t *testing.T) {
 func TestWaitAddressIgnoresALeaseFromBeforeTheStart(t *testing.T) {
 	f := host(t)
 	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5", Expiry: 100})
-	s, err := lifecycle.Start(f, "ubuntu")
+	s, err := lifecycle.Start(lifecycle.Env{H: f}, "ubuntu")
 	must(t, err)
 	if len(s.Leases) != 1 {
 		t.Fatalf("Start kept leases %v, want the one from before the start", s.Leases)
@@ -179,7 +179,7 @@ func TestWaitAddressIgnoresALeaseFromBeforeTheStart(t *testing.T) {
 func TestWaitAddressGivesTheNewLease(t *testing.T) {
 	f := host(t)
 	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.5", Expiry: 100})
-	s, err := lifecycle.Start(f, "ubuntu")
+	s, err := lifecycle.Start(lifecycle.Env{H: f}, "ubuntu")
 	must(t, err)
 	f.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.9", Expiry: 200})
 	if got := lifecycle.WaitAddress(f, "ubuntu", s.Leases, noSleep); got != "192.168.122.9" {
@@ -192,7 +192,7 @@ func TestWaitAddressGivesTheNewLease(t *testing.T) {
 func TestStartFailsWhenTheLeasesCannotBeRead(t *testing.T) {
 	f := host(t)
 	f.FailOn("DHCPLeases", failure.New(failure.Failed, "network lookup failed"))
-	if _, err := lifecycle.Start(f, "ubuntu"); err == nil {
+	if _, err := lifecycle.Start(lifecycle.Env{H: f}, "ubuntu"); err == nil {
 		t.Fatal("Start succeeded")
 	}
 	if st, _ := f.DomainState("ubuntu"); st == virt.StateRunning {
