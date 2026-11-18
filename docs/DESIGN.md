@@ -67,11 +67,13 @@ real adapters.
   wrote them outside the pool API, and libvirt refreshes a pool only on request. It needs no root.
   The address is `vsock/<cid>`, else the IPv4 DHCP lease (`virt.DomainAddresses`, the same rule
   that `prepare` and `provision` use). `start` opens no viewer without `--view`. On a LUKS domain
-  that does not run, `werft start` reads the disk password before the start, as `seal` does,
+  that does not run, `werft start` reads the disk password before the start,
   takes the domain lock, and types the password once at the console; `--view` opens the viewer
-  only after that, so a person does not type the password too. When the config, the recipe or
-  the sources give no password werft can type, it starts anyway and leaves the password to the
-  person at the console; a person who refuses or interrupts the prompt ends it before the start.
+  only after that, so a person does not type the password too. It asks at the terminal only when
+  every keyring item and `pass` entry the recipe names fails. When the recipe names neither, or no
+  source gives a password werft can type, `start` boots anyway. The person then types the
+  password at the console. An empty answer at the prompt does the same. An interrupt at the
+  prompt ends `start` before the boot.
   It waits 60 s for a DHCP lease newer than the start: libvirt keeps a lease until
   it expires, also after the domain stopped. It gives the address only when a lease came; no lease
   is no error. `stop` waits 120 s for the ACPI shutdown, then fails with `timeout`.

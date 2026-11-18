@@ -5,6 +5,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -159,13 +160,14 @@ type Env struct {
 	// Ctx ends the wait for the disk password prompt.
 	Ctx context.Context
 	H   virt.Hypervisor
-	// DiskPassword says where the disk password comes from; nil, or an
-	// error, leaves the password to the person at the console.
+	// DiskPassword says where the disk password comes from; nil, an error,
+	// or a spec without a keyring item and a pass entry leaves the password
+	// to the person at the console.
 	DiskPassword func() (secret.Spec, error)
 	Secrets      secret.Store
 	Terminal     secret.Terminal
-	// TTY is set when a person at the terminal answers the prompt: a refused
-	// or interrupted prompt then ends Start before the boot.
+	// TTY is set when a person at the terminal answers the prompt: an
+	// interrupted prompt then ends Start before the boot.
 	TTY bool
 	// Lock takes the domain lock, so Start does not type at a console that
 	// provision or reset also types at.
@@ -182,8 +184,7 @@ func (e Env) printf(format string, args ...any) {
 
 // Start starts the domain unless it runs already. A paused domain is a
 // conflict. No viewer opens. On a LUKS domain, Start reads the disk password
-// before the start, as seal does, and types it once at the console under
-// the domain lock.
+// before the start and types it once at the console under the domain lock.
 func Start(e Env, name string) (Started, error) {
 	s, err := inspect(e.H, name)
 	if err != nil {
@@ -220,9 +221,27 @@ func Start(e Env, name string) (Started, error) {
 	return s, nil
 }
 
-// diskPassword reads the disk password of the LUKS domain name. When nothing
-// gives a password werft can type, Start boots anyway and leaves the
-// password to the person at the console: empty.
+// errAtConsole is an empty answer at the prompt: the person types the disk
+// password at the console.
+var errAtConsole = failure.New(failure.SecretUnavailable, "the disk password is left to the console")
+
+// consoleAnswer is the Terminal of Start: an empty answer gives errAtConsole.
+type consoleAnswer struct{ secret.Terminal }
+
+func (t consoleAnswer) ReadSecret(prompt string) (string, error) {
+	v, err := t.Terminal.ReadSecret(prompt)
+	if err == nil && v == "" {
+		return "", errAtConsole
+	}
+	return v, err
+}
+
+// diskPassword reads the disk password of the LUKS domain name. When the
+// recipe names no keyring item and no pass entry, the person answers the
+// prompt with Enter alone, or nothing gives a password werft can type, Start
+// boots anyway and leaves the password to the person at the console: empty.
+// Start asks only when every source the recipe names fails, and only an
+// interrupt of the prompt ends Start.
 func diskPassword(e Env, name string) (string, error) {
 	leave := func(err error) (string, error) {
 		e.printf("werft cannot read the disk password of %s: %v", name, err)
@@ -235,9 +254,18 @@ func diskPassword(e Env, name string) (string, error) {
 	if err != nil {
 		return leave(err)
 	}
-	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
+	if !spec.HasStoredSource() {
+		return "", nil
+	}
+	if e.TTY {
+		spec.Prompt += " (Enter: type it at the console)"
+	}
+	v, err := secret.Read(spec, e.Secrets, consoleAnswer{e.Terminal}, func(note string) {
 		e.printf("The disk password of %s %s", name, note)
 	})
+	if errors.Is(err, errAtConsole) {
+		return "", nil
+	}
 	if err != nil && e.TTY {
 		return "", err
 	}
