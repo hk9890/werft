@@ -121,6 +121,11 @@ Requirements:
   host memory that no VM and no lease holds would drop below a configured budget.
 - A lease runs headless: the guest desktop runs, but no viewer window opens on the host. `--view`
   opens one.
+- An agent that tests a desktop app gets a logged-in desktop with no person at the host:
+  `werft lease --desktop` logs the image's user in to the desktop and unlocks the login keyring
+  with the guest password. werft reads that password as it reads the disk password of an
+  encrypted image; the agent never sees it. Without `--desktop`, an Ubuntu lease stops at the
+  login screen, and the lease reads no guest password.
 - `werft guide` tells an agent with no prior knowledge how to lease, use and release a VM: the
   commands, the lease JSON fields, the exit codes and the rules. `werft help` lists it. It is part
   of the binary, so it matches the installed version.

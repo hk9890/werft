@@ -12,10 +12,13 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/hk9890/werft/internal/config"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/lease"
+	"github.com/hk9890/werft/internal/recipe"
+	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/steps"
 	"github.com/hk9890/werft/internal/virt"
@@ -34,8 +37,8 @@ var clock = time.Now
 func (c *cli) leaseEnv(h virt.Hypervisor, dir state.Dir) lease.Env {
 	return lease.Env{
 		Ctx: context.Background(), H: h, Dir: dir, Prefix: leasePrefix,
-		Shell:   func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
-		NewKey:  guestEnsureKey,
+		Shell:  func(config string) guest.Shell { return guest.OpenSSH{Config: config} },
+		NewKey: guestEnsureKey, GuestDir: guestDir,
 		Secrets: c.secretStore(), Terminal: prompter{c},
 		Global: globalLock(dir),
 		Now:    clock, Sleep: c.sleep, Out: c.stderr,
@@ -67,6 +70,7 @@ func (c *cli) cmdLease(args []string) error {
 	tier := fs.String("tier", image.Plain, "the tier of the stock image: plain or full; with --stock, the tier of that version")
 	owner := fs.String("owner", "", "the owner werft leases shows (default $WERFT_OWNER, else $USER)")
 	view := fs.Bool("view", false, "also open a virt-viewer window")
+	desktop := fs.Bool("desktop", false, "log the user in to the desktop and unlock the keyring with the guest password")
 	stock := fs.String("stock", "", "the stock version, such as ubuntu-26-04-plain-20261102 (default the newest)")
 	memory := fs.Uint64("memory", 0, "the memory of the VM in MiB, at least 256 (default that of the stock image)")
 	cpus := fs.Uint("cpus", 0, "the vCPUs of the VM (default those of the stock image)")
@@ -98,6 +102,9 @@ func (c *cli) cmdLease(args []string) error {
 	}
 	if *lifetime < lease.MinLifetime || *lifetime > lease.MaxLifetime {
 		return failure.New(failure.Usage, "--for is a duration from 15m to 24h, such as 2h, not %v", *lifetime)
+	}
+	if *desktop && *lifetime < lease.MinDesktopLifetime {
+		return failure.New(failure.Usage, "--for is at least 30m with --desktop, not %v", *lifetime)
 	}
 	dir, err := state.Root()
 	if err != nil {
@@ -132,12 +139,29 @@ func (c *cli) cmdLease(args []string) error {
 			}
 		}
 	}
-	l, err := lease.Start(env, rec, lease.Options{Owner: leaseOwner(*owner), Memory: *memory << 20, CPUs: *cpus, Lifetime: *lifetime})
+	opts := lease.Options{Owner: leaseOwner(*owner), Memory: *memory << 20, CPUs: *cpus, Lifetime: *lifetime, Desktop: *desktop}
+	if *desktop && !rec.LUKS {
+		if opts.GuestPassword, err = guestPasswordSpec(cfg, rec.Image); err != nil {
+			return err
+		}
+	}
+	l, err := lease.Start(env, rec, opts)
 	if err != nil {
 		return err
 	}
 	c.output(l, func(w io.Writer) { writeLease(w, l) })
 	return nil
+}
+
+// guestPasswordSpec says where the guest password of a lease of image
+// comes from: guest_password of the recipe config.toml gives the image, its
+// build VM, as provision reads it; else the terminal.
+func guestPasswordSpec(cfg config.Config, image string) (secret.Spec, error) {
+	path := cfg.RecipeFor(image)
+	if path == "" {
+		return secret.Spec{}, nil
+	}
+	return recipe.GuestPassword(path)
 }
 
 // writeLease is the text output of werft lease: every field of the JSON

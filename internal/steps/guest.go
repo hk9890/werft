@@ -48,6 +48,39 @@ func exited(err error) bool {
 	return errors.As(err, &exit)
 }
 
+// sessionProcess is the process of the desktop session of each guest family.
+var sessionProcess = map[string]string{"ubuntu": "gnome-shell", "omarchy": "Hyprland"}
+
+// HasDesktop says whether Desktop knows the guest family.
+func HasDesktop(family string) bool { return sessionProcess[family] != "" }
+
+// Desktop logs the user of a lease in to the desktop and unlocks the default
+// keyring with the guest password, which the caller set in r. Ubuntu gets
+// GDM automatic login, and it stays on: the lease is thrown away. Omarchy
+// logs in by itself after the disk password. The steps are those of
+// provision, run without its runner: a lease keeps nothing to clean up.
+func Desktop(r *pipeline.Run) error {
+	r.SessionProcess = sessionProcess[r.Family]
+	if r.SessionProcess == "" {
+		return failure.New(failure.Unsupported, "%s is a %q guest; werft logs in to the desktop only of an ubuntu or omarchy guest", r.Domain, r.Family)
+	}
+	entries := []pipeline.Entry{
+		{Name: "autologin", Family: "ubuntu", Step: &Autologin{}},
+		{Name: "upload", Step: Upload{}},
+		{Name: "wait-session", Step: WaitSession{}},
+		{Name: "unlock-keyring", Step: UnlockKeyring{}},
+	}
+	for _, e := range entries {
+		if e.Family != "" && e.Family != r.Family {
+			continue
+		}
+		if err := e.Step.Run(r); err != nil {
+			return failure.Wrap(failure.KindOf(err), err, "log in to the desktop: %s", e.Name)
+		}
+	}
+	return nil
+}
+
 // systemdVersion prints the major systemd version of the guest.
 const systemdVersion = `systemctl --version | sed -n '1s/^systemd \([0-9]*\).*/\1/p'`
 
@@ -59,10 +92,11 @@ type DetectGuest struct{}
 func (DetectGuest) Check(*pipeline.Run) error { return nil }
 
 func (DetectGuest) Run(r *pipeline.Run) error {
-	r.Family, r.SessionProcess = "ubuntu", "gnome-shell"
+	r.Family = "ubuntu"
 	if r.Probe("[ -d /usr/share/omarchy ]") {
-		r.Family, r.SessionProcess = "omarchy", "Hyprland"
+		r.Family = "omarchy"
 	}
+	r.SessionProcess = sessionProcess[r.Family]
 	out, err := r.Output(systemdVersion, nil)
 	if err != nil {
 		return failure.Wrap(failure.Failed, err, "could not read the systemd version of %s", r.Domain)

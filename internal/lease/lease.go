@@ -38,6 +38,9 @@ const (
 	// together, so the reap pass of another werft run does not release a
 	// lease that still boots.
 	MinLifetime = 15 * time.Minute
+	// MinDesktopLifetime is MinLifetime for a lease with Desktop: its
+	// session and keyring waits come after the SSH wait.
+	MinDesktopLifetime = 30 * time.Minute
 	// MaxLifetime caps the lifetime at lease time; werft extend adds more.
 	MaxLifetime = 24 * time.Hour
 	// MinMemory is the least memory werft lease --memory gives a VM. It
@@ -94,7 +97,10 @@ type Env struct {
 	Global func() (release func(), err error)
 	// View opens a viewer on the domain; nil opens none.
 	View func(domain string)
-	// Secrets and Terminal read the disk password of a LUKS stock image.
+	// GuestDir is where a desktop login copies its helpers in the guest.
+	GuestDir string
+	// Secrets and Terminal read the disk password of a LUKS stock image,
+	// and the guest password of a desktop login.
 	Secrets  secret.Store
 	Terminal secret.Terminal
 	Now      func() time.Time
@@ -112,6 +118,12 @@ type Options struct {
 	Memory   uint64
 	CPUs     uint
 	Lifetime time.Duration
+	// Desktop logs the user in to the desktop and unlocks the keyring.
+	Desktop bool
+	// GuestPassword says where the guest password of a Desktop lease of a
+	// stock image without LUKS comes from; a LUKS image gives it with its
+	// disk password.
+	GuestPassword secret.Spec
 }
 
 // Resolve is the stock version stock of image and tier in the images.toml
@@ -162,9 +174,18 @@ func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 	if o.Lifetime == 0 {
 		o.Lifetime = Lifetime
 	}
+	if o.Desktop && !steps.HasDesktop(rec.Family) {
+		return Lease{}, failure.New(failure.Unsupported, "%s is a %q guest; --desktop logs in only to an ubuntu or omarchy guest", rec.Name, rec.Family)
+	}
 	password, err := diskPassword(e, rec)
 	if err != nil {
 		return Lease{}, err
+	}
+	guestPassword := password
+	if o.Desktop && !rec.LUKS {
+		if guestPassword, err = desktopPassword(e, rec, o.GuestPassword); err != nil {
+			return Lease{}, err
+		}
 	}
 	l, err = reserve(e, rec, o, tmpl)
 	if err != nil {
@@ -210,7 +231,33 @@ func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 	if rec.LUKS && failure.Is(err, failure.Timeout) {
 		err = failure.Wrap(failure.Timeout, err, "the disk can have refused the typed password, and nothing types it twice; check the disk password of %s", rec.Image)
 	}
-	return l, err
+	if err != nil || !o.Desktop {
+		return l, err
+	}
+	e.printf("Logging %s in to the desktop of %s", l.User, l.Domain)
+	r.H, r.Shell, r.Out = e.H, shell, e.Out
+	r.Domain, r.User, r.Family, r.GuestDir = l.Domain, l.User, rec.Family, e.GuestDir
+	r.Addr = guest.Addr{User: l.User, Host: l.ID}
+	r.SetSecret(pipeline.GuestPassword, guestPassword)
+	return l, steps.Desktop(r)
+}
+
+// desktopPassword reads the guest password of a desktop lease of rec, an
+// image without LUKS, as spec says, before the lease changes anything.
+func desktopPassword(e Env, rec image.Record, spec secret.Spec) (string, error) {
+	if spec.Prompt == "" {
+		spec.Prompt = "Guest password of " + rec.Name
+	}
+	v, err := secret.Read(spec, e.Secrets, e.Terminal, func(note string) {
+		e.printf("The guest password of %s %s", rec.Name, note)
+	})
+	if err != nil && !spec.HasStoredSource() {
+		return "", failure.Wrap(failure.KindOf(err), err, "--desktop unlocks the keyring with the guest password, and no recipe names a keyring item or pass entry for it, so only a terminal gives it; add guest_password.keyring or guest_password.pass to the recipe config.toml gives %s", rec.Image)
+	}
+	if err != nil {
+		return "", failure.Wrap(failure.KindOf(err), err, "--desktop unlocks the keyring with the guest password of %s; %s; then lease again; do not print or ask for the password yourself", rec.Name, unlockHint(spec))
+	}
+	return v, nil
 }
 
 // diskPassword reads the disk password of a LUKS stock image before the
@@ -230,20 +277,20 @@ func diskPassword(e Env, rec image.Record) (string, error) {
 		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk, and its record names no keyring item and no pass entry, so only a terminal gives the password; seal it again with guest_password.keyring or guest_password.pass in the recipe of %s", rec.Name, rec.Image)
 	}
 	if err != nil {
-		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk; %s; then lease again; do not print or ask for the password yourself", rec.Name, unlockHint(rec))
+		return "", failure.Wrap(failure.KindOf(err), err, "%s has an encrypted disk; %s; then lease again; do not print or ask for the password yourself", rec.Name, unlockHint(spec))
 	}
 	return v, console.Typeable(v)
 }
 
 // unlockHint tells an agent what the user unlocks so a lease can read the
-// disk password of rec.
-func unlockHint(rec image.Record) string {
+// password that spec names.
+func unlockHint(spec secret.Spec) string {
 	var hints []string
-	if len(rec.DiskPasswordKeyring) > 0 {
-		hints = append(hints, "the keyring gives its password only when it is unlocked and holds the item "+secret.Attributes(rec.DiskPasswordKeyring)+"; ask the user to unlock the login keyring, for example by logging in to the desktop")
+	if len(spec.Keyring) > 0 {
+		hints = append(hints, "the keyring gives its password only when it is unlocked and holds the item "+secret.Attributes(spec.Keyring)+"; ask the user to unlock the login keyring, for example by logging in to the desktop")
 	}
-	if rec.DiskPasswordPass != "" {
-		hints = append(hints, "pass gives its password only when the GPG agent is unlocked; ask the user to unlock the password store, for example by running pass show "+rec.DiskPasswordPass+" once")
+	if spec.Pass != "" {
+		hints = append(hints, "pass gives its password only when the GPG agent is unlocked; ask the user to unlock the password store, for example by running pass show "+spec.Pass+" once")
 	}
 	return strings.Join(hints, ", else ")
 }

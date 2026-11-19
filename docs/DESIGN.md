@@ -151,8 +151,8 @@ the questions: a check and the plans of `migrate` and `seal` change nothing (`vi
 ## Lease lifecycle
 
 `werft lease <image> [--tier plain|full] [--stock name] [--memory mib] [--cpus n] [--for duration]
-[--owner o] [--view]` runs these steps (`lease.Start` in `internal/lease/lease.go`). The flags can
-stand before or after the image.
+[--owner o] [--desktop] [--view]` runs these steps (`lease.Start` in `internal/lease/lease.go`). The
+flags can stand before or after the image.
 
 `cmdLease` in `cmd/werft/lease.go` checks the flags before it reads `images.toml` or calls libvirt,
 and fails with `usage` outside these bounds:
@@ -162,7 +162,9 @@ and fails with `usage` outside these bounds:
 - `--cpus` is at least 1. libvirt checks the upper bound when it defines or starts the domain.
 - `--for` is from 15 minutes (`lease.MinLifetime`) to 24 hours (`lease.MaxLifetime`). The address
   and SSH waits of steps 7 and 8 take up to 10 minutes, and the reap pass of another werft run must
-  not release a lease that still boots. `werft extend` adds time past 24 hours.
+  not release a lease that still boots. With `--desktop` it is at least 30 minutes
+  (`lease.MinDesktopLifetime`): the session and keyring waits of step 8 add up to 6 minutes.
+  `werft extend` adds time past 24 hours.
 
 1. **Resolve.** Image and tier give the newest stock version in `images.toml`. `--stock` gives the
    version of that name: `not_found` when `images.toml` has none, `usage` when it is of another
@@ -228,6 +230,14 @@ and fails with `usage` outside these bounds:
    Write the lease `ssh_config`: `Host <id>` with that address, the image's user and the lease key.
 8. **Ready.** Probe SSH through the lease `ssh_config` until it answers or the boot timeout (5
    minutes) ends. Few attempts, with growing intervals.
+   With `--desktop`, then log the user in to the desktop (`steps.Desktop`): the provision steps
+   `autologin` (Ubuntu only; Omarchy logs in by itself after the disk password), `upload`,
+   `wait-session` and `unlock-keyring`, run without the pipeline runner. No cleanup runs:
+   autologin stays on in the lease, which release destroys. The guest password comes before any
+   change, in step 1: a LUKS image gives it with its disk password, read once; else
+   `guest_password` of the recipe that `config.toml` gives the image, as `provision` reads it
+   (keyring item, else `pass` entry, else a TTY). A family other than `ubuntu` or `omarchy` fails
+   with `unsupported` before any secret is read.
 9. **Hand over.** Print the lease ID, domain, stock version, owner, SSH user, address, key path, a
    ready `ssh` command (`ssh -F <ssh_config> <id>`), the path of the lease `ssh_config`, the
    creation time and the expiry.
@@ -665,7 +675,8 @@ needs a person at a TTY; an agent runs it only with that person present.
   session ends, the hook releases the leases with owner `claude-<session id>`.
 
   The hook keeps its own copy of these forms. These werft changes need a plugin release too: a
-  change to the list of agent commands, a new flag that only the user may give, a new form of
+  change to the list of agent commands, a new flag of an agent command (the hook refuses a
+  call with a flag it does not know), a new flag that only the user may give, a new form of
   the `ssh`, `scp` or `tar` calls in `cmd/werft/guide.txt`, and a change to the `id`, `owner` or
   `ssh_config` field of `werft --json leases`.
 - `werft completion zsh` prints a zsh completion script generated from `commands` in
