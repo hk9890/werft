@@ -39,7 +39,8 @@ Rules:
   5 minutes for an address and then up to 5 minutes for SSH, plus the time
   of each attempt and the wait for the lock of other lease calls. Give the
   call a timeout of at least 20 minutes, 30 minutes with --desktop, or run
-  it in the background and wait for it. The id comes only in the JSON document at the end.
+  it in the background and wait for it. The id comes only in the JSON
+  document at the end.
 
   If the call was killed or its output is lost, find your lease by its
   owner in the output of werft --json leases and release it.
@@ -64,9 +65,9 @@ Rules:
     werft --json lease ubuntu-26-04 --owner <your-name> --desktop
 
   With it, the lease logs the user in to the desktop and unlocks the
-  user's keyring in the VM, so apps that store secrets ask for no password. It
-  reads the guest password from the user's keyring or pass, as for an
-  encrypted disk; you never see it. The lease takes up to 6 minutes more,
+  user's keyring in the VM, so apps that store secrets ask for no
+  password. It reads the guest password from the user's keyring or pass,
+  as for an encrypted disk; you never see it. The lease takes up to 6 minutes more,
   and --for is at least 30m. After a reboot, an Ubuntu VM logs the user in
   again, but leaves the keyring locked.
 
@@ -195,8 +196,8 @@ Exit codes:
   10  secret_unavailable  a secret is not available without a terminal; an
                           encrypted image or --desktop needs the guest
                           password from the keyring or pass: ask the
-                          user to unlock what the
-                          error names, then lease again; never print the
+                          user to unlock what the error names, then
+                          lease again; never print the
                           password or ask for it yourself
 
 On error, the --json document is:
