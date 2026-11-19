@@ -13,7 +13,8 @@ Each section is also the text of its release on the
   desktop app with no person at the host, and apps that store secrets ask
   for no keyring password. Without the flag, an Ubuntu lease stops at the
   login screen, as before.
-- **The lease reads the guest password before it creates anything.** For
+- **A `--desktop` lease reads the guest password before it creates
+  anything.** For
   an encrypted (LUKS) image it is the disk password, read once. Else it is
   the keyring item or `pass` entry that `guest_password` names in the
   recipe `config.toml` gives the image. Without one of them, and without
