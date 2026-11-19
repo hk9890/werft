@@ -6,6 +6,28 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.8.0
+
+- **`werft lease --desktop` gives a VM with its user logged in to the
+  desktop and the login keyring unlocked.** An agent can then test a
+  desktop app with no person at the host, and apps that store secrets ask
+  for no keyring password. Without the flag, an Ubuntu lease stops at the
+  login screen, as before.
+- **A `--desktop` lease reads the guest password before it creates
+  anything.** For
+  an encrypted (LUKS) image it is the disk password, read once. Else it is
+  the keyring item or `pass` entry that `guest_password` names in the
+  recipe `config.toml` gives the image. Without one of them, and without
+  a terminal, the lease fails with `secret_unavailable` and says what to
+  unlock. The agent never sees the password.
+- **With `--desktop`, `--for` is at least 30 minutes, and the lease takes
+  up to 6 minutes more.** Give the lease call a timeout of at least 30
+  minutes, as `werft guide` says. After a reboot, an Ubuntu VM logs the
+  user in again but leaves the keyring locked.
+- **With the `werft` Claude Code plugin, `werft lease --desktop` asks for
+  permission until the plugin allows the flag.** The plugin release that
+  allows it follows this release.
+
 ## v0.7.0
 
 - **A secret in a recipe, `guest_password` included, can name a keyring
