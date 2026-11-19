@@ -206,3 +206,7 @@ func (r *Run) readSecrets() error {
 
 // Secret is the value of a declared secret, empty before it is read.
 func (r *Run) Secret(name string) string { return r.values[name] }
+
+// SetSecret gives the secret name the value v, for a caller that runs steps
+// without Execute and read the secret itself, before any change.
+func (r *Run) SetSecret(name, v string) { r.values[name] = v }
