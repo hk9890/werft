@@ -1,6 +1,7 @@
 package image_test
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -178,5 +179,36 @@ func TestSealNeverReusesAPrunedName(t *testing.T) {
 	must(t, err)
 	if rec.Name != "vm-plain-20261102-4" {
 		t.Errorf("seal after prune = %s, want vm-plain-20261102-4", rec.Name)
+	}
+}
+
+// TestPruneRefusesACatalogWithUnknownKeys: images.toml with a key that a
+// newer werft wrote loads, but prune changes nothing.
+func TestPruneRefusesACatalogWithUnknownKeys(t *testing.T) {
+	f := world(t)
+	must(t, virt.EnsurePool(f, "werft", "/werft"))
+	catalog := filepath.Join(t.TempDir(), "images.toml")
+	stock(t, f, catalog, "vm-plain-20261101", "vm-plain-20261102")
+	old, err := os.ReadFile(catalog)
+	must(t, err)
+	content := append(old, "newer_field = \"x\"\n"...)
+	must(t, os.WriteFile(catalog, content, 0o600))
+
+	records, err := image.Load(catalog)
+	if err != nil || !slices.Equal(names(records), []string{"vm-plain-20261101", "vm-plain-20261102"}) {
+		t.Fatalf("Load = %v, %v", names(records), err)
+	}
+	e := pruneEnv(f, catalog)
+	planned, err := image.Prunable(e)
+	must(t, err)
+	_, err = image.Prune(e, planned)
+	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "image.newer_field") {
+		t.Errorf("Prune = %v, want unsupported naming image.newer_field", err)
+	}
+	if got, _ := os.ReadFile(catalog); !bytes.Equal(got, content) {
+		t.Errorf("images.toml changed:\n%s", got)
+	}
+	if _, err := f.VolumePath("werft", "vm-plain-20261101.qcow2"); err != nil {
+		t.Errorf("prune deleted a volume: %v", err)
 	}
 }

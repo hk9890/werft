@@ -190,11 +190,13 @@ func TestProvisionWithoutTerminalChangesNothing(t *testing.T) {
 	w := newWorld(t)
 	must(t, w.fake.StartDomain(vm))
 	w.term.tty = false
+	w.pass["werft/guest-password"] = password
 	_, err := provision(t, w, false)
-	if !failure.Is(err, failure.NeedsConfirmation) {
-		t.Fatalf("err = %v, want needs_confirmation", err)
+	if !failure.Is(err, failure.SecretUnavailable) || !strings.Contains(err.Error(), "pass --yes for: testvm is running") ||
+		!strings.Contains(err.Error(), "and a terminal for: GPG passphrase") {
+		t.Fatalf("err = %v, want secret_unavailable that names the question and the passphrase", err)
 	}
-	if i := w.index("^(DestroyDomain|RevertSnapshot|StartDomain|ssh )"); i >= 0 {
+	if i := w.index("^(pass show|confirm|secret|DestroyDomain|RevertSnapshot|StartDomain|ssh )"); i >= 0 {
 		t.Errorf("provision changed something: %q", w.entries()[i])
 	}
 }
@@ -209,6 +211,9 @@ func TestProvisionYesWithoutTerminalNeedsASecret(t *testing.T) {
 	}
 	if w.index("^(RevertSnapshot|StartDomain)") >= 0 {
 		t.Error("provision changed something without its secrets")
+	}
+	if w.index("^pass show") >= 0 {
+		t.Error("provision read pass before it knew a prompt cannot be answered")
 	}
 }
 

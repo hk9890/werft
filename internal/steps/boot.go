@@ -5,6 +5,7 @@ package steps
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -95,9 +96,11 @@ func shutOff(r *pipeline.Run) bool {
 
 // Boot starts the domain. An encrypted guest takes no address before its
 // disk is open, so the password is typed first, once: keys sent before the
-// prompt are lost, and cryptsetup allows few tries. A domain that runs
-// already gets no keys: its screen can be a desktop, and the password would
-// go to the window that has focus.
+// prompt are lost, and cryptsetup allows few tries. While it waits for the
+// prompt it probes SSH: a person can open the disk in a viewer, and a
+// desktop that moves never holds still. A domain that runs already gets no
+// keys: its screen can be a desktop, and the password would go to the
+// window that has focus.
 type Boot struct{}
 
 func (Boot) Check(r *pipeline.Run) error {
@@ -108,7 +111,11 @@ func (Boot) Check(r *pipeline.Run) error {
 func (Boot) Run(r *pipeline.Run) error { return boot(r) }
 
 func boot(r *pipeline.Run) error {
-	if r.Running() {
+	running, err := r.Running()
+	if err != nil {
+		return err
+	}
+	if running {
 		r.LUKS = false
 		if hasLUKSMarker(r, r.Domain) {
 			r.Printf("%s runs already, so werft types no disk password; if its console asks for it, type it there: %s", r.Domain, ViewerCommand(r.Domain))
@@ -123,9 +130,17 @@ func boot(r *pipeline.Run) error {
 	if !r.LUKS {
 		return nil
 	}
-	err := TypeDiskPassword(r.Ctx, r.H, r.Domain, r.Secret(pipeline.GuestPassword), r.Sleep, r.Out)
-	if failure.Is(err, failure.Timeout) {
-		return failure.Wrap(failure.Timeout, err, "look at its console: %s", ViewerCommand(r.Domain))
+	if r.Host.EarlierViewer(r.Domain) {
+		r.Printf("warning: a viewer from an earlier run is open on %s; type nothing in it while werft waits for the disk prompt", r.Domain)
+	}
+	err = typeDiskPassword(r.Ctx, r.H, r.Domain, r.Secret(pipeline.GuestPassword), r.Sleep, r.Out, func() bool { return r.Reach("true") })
+	switch {
+	case errors.Is(err, console.ErrOpened):
+		r.LUKS = false
+		r.Printf("The disk of %s was opened already, by hand; werft typed nothing", r.Domain)
+		return nil
+	case failure.Is(err, failure.Timeout):
+		return failure.Wrap(failure.Timeout, err, "look at its console: %s; if the console shows a desktop, the disk was opened by hand; close the old viewer windows and run again", ViewerCommand(r.Domain))
 	}
 	return err
 }
@@ -136,9 +151,17 @@ func boot(r *pipeline.Run) error {
 // gets progress, never the password. The error names no viewer: seal and
 // lease remove the domain after a failure.
 func TypeDiskPassword(ctx context.Context, h virt.Hypervisor, domain, password string, sleep func(time.Duration), out io.Writer) error {
+	return typeDiskPassword(ctx, h, domain, password, sleep, out, nil)
+}
+
+// typeDiskPassword is TypeDiskPassword that also asks opened, when set,
+// whether the disk is open already, and then types nothing and returns
+// console.ErrOpened.
+func typeDiskPassword(ctx context.Context, h virt.Hypervisor, domain, password string, sleep func(time.Duration), out io.Writer, opened func() bool) error {
 	_, _ = fmt.Fprintf(out, "Waiting for the disk password prompt of %s\n", domain)
 	p := console.DefaultPrompt
 	p.Sleep = sleep
+	p.Opened = opened
 	if err := console.WaitForPrompt(ctx, h, domain, p); err != nil {
 		return err
 	}
@@ -156,7 +179,7 @@ func (WaitSSH) Run(r *pipeline.Run) error { return waitSSH(r) }
 func waitSSH(r *pipeline.Run) error {
 	err := r.PollLogin(sshTimeout, "no SSH answer from "+r.Domain, func() bool { return r.Reach("true") })
 	if err != nil && r.LUKS {
-		return failure.Wrap(failure.KindOf(err), err, "if its console asks for the disk password again, the disk refused it; nothing types it twice (%s)", ViewerCommand(r.Domain))
+		return failure.Wrap(failure.KindOf(err), err, "look at its console (%s): an empty disk password prompt means the password went to a screen before the prompt; a prompt again after a 'wrong' or 'No key available' line means the disk refused it; nothing types it twice", ViewerCommand(r.Domain))
 	}
 	if err == nil {
 		r.Printf("SSH answers in %s at %s", r.Domain, r.Addr.Host)

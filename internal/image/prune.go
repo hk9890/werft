@@ -100,6 +100,13 @@ func Prune(e PruneEnv, planned []Record) ([]Record, error) {
 		return nil, err
 	}
 	defer release()
+	c, err := load(e.Catalog)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.writable(e.Catalog); err != nil {
+		return nil, err
+	}
 	now, err := Prunable(e)
 	if err != nil {
 		return nil, err

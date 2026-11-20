@@ -196,6 +196,8 @@ func TestProvisionUsage(t *testing.T) {
 		{[]string{"provision", "-y"}, "provision takes one build VM name"},
 		{[]string{"prepare", "-y"}, "prepare takes one build VM name"},
 		{[]string{"migrate", "-y"}, "migrate takes one build VM name"},
+		{[]string{"provision", "ubuntu-26-04", "--key", "/media/tester/KEYSTICK"}, "flags go before the name: werft provision [flags] <name>"},
+		{[]string{"prepare", "omarchy", "-y"}, "flags go before the name: werft prepare [flags] <name>"},
 	}
 	for _, tt := range tests {
 		r := runCLI("", false, tt.args...)

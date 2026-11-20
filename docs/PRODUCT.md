@@ -39,7 +39,7 @@ Humans come second. They use the same commands and get readable output.
 
 | Job | Who | What they get |
 |---|---|---|
-| Rehearse a full install | human or agent | A build VM reset to its `provision-base` point, the bootstrap run in it, checks run, and the result kept as the `-full` build VM. |
+| Rehearse a full install | human; an agent can prepare the command | A build VM reset to its `provision-base` point, the bootstrap run in it, checks run, and the result kept as the `-full` build VM. |
 | Get a plain VM | agent, human | A lease from a `plain` stock image: the vendor install with SSH access and nothing else installed. |
 | Get a fully installed VM | agent, human | A lease from a `full` stock image: the state after the bootstrap, secrets included. |
 | Test own software | agent | A lease. The agent installs its software, runs its tests, and gives the lease back. The stock image does not change. |

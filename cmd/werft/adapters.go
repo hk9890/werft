@@ -140,6 +140,8 @@ type prompter struct{ c *cli }
 
 func (p prompter) Confirm(question string) error { return p.c.confirm(false, question) }
 
+func (p prompter) HasTerminal() bool { return p.c.tty }
+
 func (p prompter) ReadSecret(prompt string) (string, error) {
 	if !p.c.tty {
 		return "", failure.New(failure.SecretUnavailable, "%s: stdin is no terminal to ask on", prompt)

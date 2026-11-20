@@ -69,7 +69,12 @@ type inspector struct{ cleaning }
 
 func (*inspector) KeepOnFailure() {}
 
-type prompter struct{ log *[]string }
+type prompter struct {
+	log   *[]string
+	noTTY bool
+}
+
+func (p prompter) HasTerminal() bool { return !p.noTTY }
 
 func (p prompter) Confirm(q string) error { *p.log = append(*p.log, "confirm "+q); return nil }
 
@@ -81,7 +86,7 @@ func (p prompter) ReadSecret(prompt string) (string, error) {
 func newRun(log *[]string) *pipeline.Run {
 	f := virttest.New()
 	_, _ = f.DefineDomain("<domain type='kvm'><name>vm</name></domain>")
-	return (&pipeline.Run{H: f, Out: &bytes.Buffer{}, Prompter: prompter{log}, Domain: "vm", BuildVM: "vm"}).Init()
+	return (&pipeline.Run{H: f, Out: &bytes.Buffer{}, Prompter: prompter{log: log}, Domain: "vm", BuildVM: "vm"}).Init()
 }
 
 func TestChecksAndSecretsComeBeforeAnyRun(t *testing.T) {
@@ -281,5 +286,134 @@ func TestPollLoginPausesGrow(t *testing.T) {
 	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 5 * time.Second}
 	if !slices.Equal(pauses, want) {
 		t.Errorf("pauses = %v, want %v", pauses, want)
+	}
+}
+
+func TestFailureLeavesARunningDomainForInspection(t *testing.T) {
+	var log []string
+	r := newRun(&log)
+	if err := r.H.StartDomain("vm"); err != nil {
+		t.Fatal(err)
+	}
+	err := pipeline.Execute(r, []pipeline.Entry{{Name: "a", Step: &stub{name: "a", log: &log, failRun: true}}})
+	if !strings.Contains(err.Error(), "vm is left running for inspection") {
+		t.Errorf("err = %v, want the inspection hint", err)
+	}
+}
+
+// A lost libvirt connection fails every call: the domain may still run.
+func TestFailureSaysWhenTheStateIsUnknown(t *testing.T) {
+	var log []string
+	r := newRun(&log)
+	r.H.(*virttest.Fake).FailOn("DomainState", errors.New("lost the connection to libvirt"))
+	err := pipeline.Execute(r, []pipeline.Entry{{Name: "a", Step: &stub{name: "a", log: &log, failRun: true}}})
+	want := "vm: could not read its state (lost the connection to libvirt); it may still run"
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v (%s), want the timeout and %q", err, failure.KindOf(err), want)
+	}
+}
+
+func TestFailureOfARemovedDomainHasNoStateHint(t *testing.T) {
+	var log []string
+	r := newRun(&log)
+	r.Domain = "gone"
+	err := pipeline.Execute(r, []pipeline.Entry{{Name: "a", Step: &stub{name: "a", log: &log, failRun: true}}})
+	if err.Error() != "a: a broke" {
+		t.Errorf("err = %q, want only the step error", err)
+	}
+}
+
+func TestRunningReportsAStateError(t *testing.T) {
+	r := newRun(new([]string))
+	r.H.(*virttest.Fake).FailOn("DomainState", failure.New(failure.Failed, "lost the connection to libvirt"))
+	running, err := r.Running()
+	if running || err == nil || err.Error() != "could not read the state of vm: lost the connection to libvirt" {
+		t.Errorf("Running = %v, %v", running, err)
+	}
+	r.H.(*virttest.Fake).FailOn("DomainState", nil)
+	if running, err := r.Running(); running || err != nil {
+		t.Errorf("Running of a stopped domain = %v, %v", running, err)
+	}
+}
+
+type store struct{ log *[]string }
+
+func (s store) Lookup(map[string]string) (string, error) { return "", errors.New("no keyring item") }
+
+func (s store) Show(entry string) (string, error) {
+	*s.log = append(*s.log, "pass "+entry)
+	return "v-" + entry, nil
+}
+
+type declaring struct {
+	stub
+	spec secret.Spec
+}
+
+func (d *declaring) Check(r *pipeline.Run) error {
+	r.Declare(d.name, d.spec)
+	return d.stub.Check(r)
+}
+
+func noTerminalRun(log *[]string) *pipeline.Run {
+	r := newRun(log)
+	r.Prompter = prompter{log: log, noTTY: true}
+	r.Secrets = store{log}
+	return r
+}
+
+func TestNoTerminalNamesEveryNeedAtOnce(t *testing.T) {
+	var log []string
+	r := noTerminalRun(&log)
+	err := pipeline.Execute(r, []pipeline.Entry{
+		{Name: "a", Step: &declaring{stub: stub{name: "a", log: &log, ask: "Retake the base?"}, spec: secret.Spec{Pass: "werft/guest-password"}}},
+		{Name: "b", Step: &stub{name: "b", log: &log, ask: "Replace the clone?", declare: "GPG passphrase"}},
+	})
+	want := "needs a terminal: stdin is no terminal; pass --yes for: Retake the base?; Replace the clone?; and a terminal for: GPG passphrase"
+	if !failure.Is(err, failure.SecretUnavailable) || err == nil || err.Error() != want {
+		t.Fatalf("err = %v (%s)\nwant  %q", err, failure.KindOf(err), want)
+	}
+	if want := []string{"check a", "check b"}; !slices.Equal(log, want) {
+		t.Errorf("log = %q, want only the checks: no question, no secret, no run", log)
+	}
+}
+
+func TestNoTerminalWithOnlyQuestionsNeedsConfirmation(t *testing.T) {
+	var log []string
+	r := noTerminalRun(&log)
+	err := pipeline.Execute(r, []pipeline.Entry{{Name: "a", Step: &stub{name: "a", log: &log, ask: "Retake the base?"}}})
+	want := "needs a terminal: stdin is no terminal; pass --yes for: Retake the base?"
+	if !failure.Is(err, failure.NeedsConfirmation) || err == nil || err.Error() != want {
+		t.Fatalf("err = %v (%s)\nwant  %q", err, failure.KindOf(err), want)
+	}
+}
+
+func TestNoTerminalWithYesNamesOnlyThePrompts(t *testing.T) {
+	var log []string
+	r := noTerminalRun(&log)
+	r.Yes = true
+	err := pipeline.Execute(r, []pipeline.Entry{{Name: "a", Step: &stub{name: "a", log: &log, ask: "Retake the base?", declare: "GPG passphrase"}}})
+	want := "needs a terminal: stdin is no terminal to ask for: GPG passphrase"
+	if !failure.Is(err, failure.SecretUnavailable) || err == nil || err.Error() != want {
+		t.Fatalf("err = %v (%s)\nwant  %q", err, failure.KindOf(err), want)
+	}
+}
+
+func TestNoTerminalWithYesAndStoredSecretsRuns(t *testing.T) {
+	var log []string
+	r := noTerminalRun(&log)
+	r.Yes = true
+	err := pipeline.Execute(r, []pipeline.Entry{
+		{Name: "a", Step: &declaring{stub: stub{name: "a", log: &log, ask: "Retake the base?"}, spec: secret.Spec{Pass: "werft/guest-password", Prompt: "Guest password"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"check a", "pass werft/guest-password", "run a "}
+	if !slices.Equal(log, want) {
+		t.Errorf("log = %q\nwant  %q", log, want)
+	}
+	if got := r.Secret("a"); got != "v-werft/guest-password" {
+		t.Errorf("secret a = %q", got)
 	}
 }

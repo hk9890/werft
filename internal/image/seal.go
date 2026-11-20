@@ -259,7 +259,7 @@ func (s *Seal) Run(e Env) (rec Record, err error) {
 	}
 	defer release()
 	if err = add(e.Catalog, rec); err != nil {
-		return rec, failure.Wrap(failure.Failed, err, "write %s", e.Catalog)
+		return rec, failure.Wrap(failure.KindOf(err), err, "write %s", e.Catalog)
 	}
 	return rec, nil
 }
@@ -315,6 +315,9 @@ func (s *Seal) reserve(e Env) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	if err := c.writable(e.Catalog); err != nil {
+		return Record{}, err
+	}
 	volumes, err := e.H.Volumes(e.Pool)
 	if err != nil {
 		return Record{}, err
@@ -323,13 +326,13 @@ func (s *Seal) reserve(e Env) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	now := e.Now()
+	now := e.Now().UTC()
 	name, version := nextName(s.Image, s.Tier, now, c.held(), func(name string) bool {
 		_, err := e.H.Domain(name)
 		return err == nil || slices.Contains(volumes, name+".qcow2") || slices.Contains(volumes, name+"_VARS.qcow2")
 	})
 	rec := Record{
-		Name: name, Image: s.Image, Tier: s.Tier, Version: version, Date: now.UTC().Truncate(time.Second),
+		Name: name, Image: s.Image, Tier: s.Tier, Version: version, Date: now.Truncate(time.Second),
 		Source: s.BuildVM, Label: s.Label, Pool: e.Pool, Disk: name + ".qcow2", NVRAM: name + "_VARS.qcow2", User: e.User,
 	}
 	if s.LUKS {

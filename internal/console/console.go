@@ -80,7 +80,18 @@ type Prompt struct {
 	// Sleep pauses between two screenshots. When nil, the wait sleeps on
 	// its own and ends early when the context ends.
 	Sleep func(time.Duration)
+	// Opened, when set, reports whether the disk is open already, as when a
+	// person typed the password in a viewer: a desktop that moves never
+	// holds still. A probe can take seconds, so the wait asks it at every
+	// openedEvery-th screenshot and at the timeout, not at each.
+	Opened func() bool
 }
+
+const openedEvery = 5
+
+// ErrOpened is the error of WaitForPrompt when Prompt.Opened reports the disk
+// open before a prompt showed.
+var ErrOpened = failure.New(failure.Failed, "the disk is open already; nothing was typed")
 
 // DefaultPrompt waits for a screen that holds still for 40 s. The prompt
 // waits as long as it takes; the firmware screen of Omarchy held still for
@@ -103,17 +114,21 @@ func (p Prompt) sleep(ctx context.Context) {
 // WaitForPrompt returns once the console shows something other than black
 // and holds still: the prompt waits, the boot stages before it move on. A
 // screenshot that matches either of the two before it counts as still, so a
-// blinking cursor cannot keep the prompt from settling. It stops when ctx
-// ends, as on SIGINT.
+// blinking cursor cannot keep the prompt from settling. It returns ErrOpened
+// when p.Opened reports the disk open. It stops when ctx ends, as on SIGINT.
 func WaitForPrompt(ctx context.Context, h virt.Hypervisor, domain string, p Prompt) error {
 	var last, before [32]byte
 	still := 0
 	// lit keeps the verdict of blank per screen, so a still screen is
 	// decoded once, not on each of its screenshots.
 	lit := map[[32]byte]bool{}
-	for waited := time.Duration(0); ; waited += p.Interval {
+	for shot, waited := 0, time.Duration(0); ; shot, waited = shot+1, waited+p.Interval {
 		if err := ctx.Err(); err != nil {
 			return failure.Wrap(failure.Failed, err, "interrupted while waiting for the prompt of %s; nothing was typed", domain)
+		}
+		probe := shot > 0 && (shot%openedEvery == 0 || waited >= p.Timeout)
+		if probe && p.Opened != nil && p.Opened() {
+			return ErrOpened
 		}
 		var buf bytes.Buffer
 		if _, err := h.Screenshot(domain, &buf); err == nil {

@@ -175,6 +175,7 @@ type noHost struct{}
 
 func (noHost) HasDisplay() bool                        { return false }
 func (noHost) OpenViewer(string, bool) (func(), error) { return func() {}, nil }
+func (noHost) EarlierViewer(string) bool               { return false }
 func (noHost) CopyViewerSettings(string, string) error { return nil }
 func (noHost) StickMount(string) string                { return "" }
 func (noHost) FindStick(string) (hostdev.Stick, error) { return hostdev.Stick{}, nil }
@@ -187,6 +188,7 @@ func (noHost) CopySSHKey(guest.Addr, string) error     { return nil }
 type noPrompter struct{}
 
 func (noPrompter) Confirm(string) error              { return nil }
+func (noPrompter) HasTerminal() bool                 { return true }
 func (noPrompter) ReadSecret(string) (string, error) { return "root needs none", nil }
 
 type testWriter struct{ t *testing.T }

@@ -176,3 +176,40 @@ func TestBootOfARunningDomainTypesNothing(t *testing.T) {
 		t.Errorf("no hint:\n%s", w.out.String())
 	}
 }
+
+// After a restart of libvirtd every call fails; a step must not take that
+// for a stopped domain and start it.
+func TestBootStepsFailWhenTheStateIsUnknown(t *testing.T) {
+	for name, step := range map[string]pipeline.Step{"boot": steps.Boot{}, "prepare boot": &steps.PrepareBoot{}} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			w.fake.FailOn("DomainState", errors.New("lost the connection to libvirt"))
+			_, err := w.run([]pipeline.Entry{{Name: "boot", Step: step}}, true)
+			if err == nil || !strings.Contains(err.Error(), "could not read the state of testvm: lost the connection to libvirt") {
+				t.Errorf("err = %v, want the state error", err)
+			}
+			if w.index("^StartDomain") >= 0 {
+				t.Errorf("the step started the domain:\n  %s", strings.Join(w.entries(), "\n  "))
+			}
+		})
+	}
+}
+
+func TestCleanupSaysWhenTheStateIsUnknown(t *testing.T) {
+	w := newWorld(t)
+	must(t, w.fake.StartDomain(vm))
+	r := w.newRun(true)
+	r.Reach("true")
+	g := &steps.SudoGrant{}
+	must(t, g.Run(r))
+	w.fake.FailOn("DomainState", errors.New("lost the connection to libvirt"))
+	err := g.Cleanup(r)
+	if err == nil || !strings.Contains(err.Error(), "could not read the state of testvm: lost the connection to libvirt") || strings.Contains(err.Error(), "is not running") {
+		t.Errorf("err = %v, want the state error", err)
+	}
+	w.fake.FailOn("DomainState", nil)
+	must(t, w.fake.DestroyDomain(vm))
+	if err := g.Cleanup(r); err == nil || !strings.Contains(err.Error(), "testvm is not running") {
+		t.Errorf("err of a stopped domain = %v, want is not running", err)
+	}
+}

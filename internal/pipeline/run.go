@@ -24,6 +24,8 @@ const GuestPassword = "guest-password"
 type Prompter interface {
 	Confirm(question string) error
 	secret.Terminal
+	// HasTerminal says whether there is a terminal to ask on.
+	HasTerminal() bool
 }
 
 // Host is what steps do on the host, outside libvirt.
@@ -31,6 +33,9 @@ type Host interface {
 	HasDisplay() bool
 	// OpenViewer opens a detached viewer window on domain; stop closes it.
 	OpenViewer(domain string, reconnect bool) (stop func(), err error)
+	// EarlierViewer reports whether a viewer that this process did not
+	// open, as one an earlier failed run left, is attached to domain.
+	EarlierViewer(domain string) bool
 	CopyViewerSettings(fromUUID, toUUID string) error
 	StickMount(label string) string
 	FindStick(mount string) (hostdev.Stick, error)
@@ -118,6 +123,36 @@ func (r *Run) Printf(format string, args ...any) {
 // passed, unless the run answers yes to all.
 func (r *Run) Ask(question string) {
 	r.questions = append(r.questions, question)
+}
+
+// needsTerminal fails, before any question or secret, when there is no
+// terminal and a question or a prompt-only secret needs one. The one error
+// names all of them, so one run tells everything a rerun needs.
+func (r *Run) needsTerminal() error {
+	if r.Prompter.HasTerminal() {
+		return nil
+	}
+	var questions, prompts []string
+	if !r.Yes {
+		questions = r.questions
+	}
+	for _, name := range r.order {
+		if spec := r.specs[name]; !spec.HasStoredSource() {
+			prompts = append(prompts, spec.Prompt)
+		}
+	}
+	switch {
+	case len(prompts) == 0 && len(questions) == 0:
+		return nil
+	case len(prompts) == 0:
+		return failure.New(failure.NeedsConfirmation, "needs a terminal: stdin is no terminal; pass --yes for: %s",
+			strings.Join(questions, "; "))
+	case len(questions) == 0:
+		return failure.New(failure.SecretUnavailable, "needs a terminal: stdin is no terminal to ask for: %s",
+			strings.Join(prompts, "; "))
+	}
+	return failure.New(failure.SecretUnavailable, "needs a terminal: stdin is no terminal; pass --yes for: %s; and a terminal for: %s",
+		strings.Join(questions, "; "), strings.Join(prompts, "; "))
 }
 
 func (r *Run) askQuestions() error {
@@ -239,8 +274,12 @@ func (r *Run) Reach(cmd string) bool {
 	return false
 }
 
-// Running reports whether the domain is running.
-func (r *Run) Running() bool {
+// Running reports whether the domain is running. An error means libvirt did
+// not say, so the domain may still run.
+func (r *Run) Running() (bool, error) {
 	s, err := r.H.DomainState(r.Domain)
-	return err == nil && s == virt.StateRunning
+	if err != nil {
+		return false, failure.Wrap(failure.KindOf(err), err, "could not read the state of %s", r.Domain)
+	}
+	return s == virt.StateRunning, nil
 }

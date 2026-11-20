@@ -16,7 +16,8 @@ says, then check the build:
 ./bin/werft version
 ```
 
-- Run `./bin/werft` from the repo root. A `werft` on `PATH` is an older build.
+- Run `./bin/werft` from the repo root. A `werft` on `PATH` can be older or newer than the source,
+  and it is not the build under test.
 - `mise run werft -- <command>` builds from the current source, then runs it in your shell's
   directory. Its stdout is the same as that of `./bin/werft`; mise writes its own line to stderr.
 - Add `--json` to parse a result: one JSON document on stdout, progress and logs on stderr.
@@ -39,6 +40,9 @@ The host is the user's workstation. Its build VMs are every domain not named `we
 - Run `images --prune` only with an isolated state directory. With your real one it deletes the
   user's old stock versions.
 - Run a write command on a build VM only when the user is present and asked for that run.
+- Do not run `provision` with a prompt-only secret yourself: it needs a real terminal, and the
+  `!` mode of Claude Code has none. Give the user the full command for their own terminal, with
+  the flags before the name, and tell them to mount the key stick first.
 
 ## Get a scratch domain
 

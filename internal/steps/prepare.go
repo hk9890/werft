@@ -58,8 +58,11 @@ func (PrepareBoot) Check(*pipeline.Run) error { return nil }
 
 func (p *PrepareBoot) Run(r *pipeline.Run) error {
 	var before []virt.DHCPLease
-	if !r.Running() {
-		var err error
+	running, err := r.Running()
+	if err != nil {
+		return err
+	}
+	if !running {
 		if before, err = virt.DomainLeases(r.H, r.Domain); err != nil {
 			return err
 		}
