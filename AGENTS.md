@@ -20,6 +20,10 @@ Every route below is **mandatory, not advisory**. Load the document BEFORE the f
 
 **MUST read [docs/DESIGN.md](docs/DESIGN.md) before changing the architecture or adding a mechanism.** It owns the package roles, the libvirt and SSH boundaries, the lease and reset-point mechanics, and the exit-code contract.
 
+### Changing a decided design
+
+**MUST read the records in [docs/decisions/](docs/decisions/) that bear on the change before editing `cmd/`, `internal/`, `go.mod`, `.mise.toml`, or `.goreleaser.yaml`.** Each holds a decision in force, and a change against one is the user's call — name the record and ask.
+
 ### Coding and file changes
 
 **MUST read [docs/CODING.md](docs/CODING.md) before creating or editing ANY file outside the Markdown docs.** It owns the build commands, where code goes, and the mechanisms a change must use.
