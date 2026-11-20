@@ -24,11 +24,10 @@ conflict, this file wins.
 - [SECURITY.md](../SECURITY.md) owns how to report a vulnerability, the supported versions, and
   the security scope.
 
-## Decisions and work items
+## Open questions and work items
 
-- Record a decision in the section of PRODUCT.md or DESIGN.md that owns its subject.
-- Mark a row of the DESIGN.md "Proposals in short" table `(accepted)` when the user accepts it.
-- Close an open question: write the answer into the owning section, then delete the question from
+- Close an open question: write the answer into a record in [decisions/](decisions/) when it is a
+  decision, else into the owning section of PRODUCT.md or DESIGN.md. Then delete the question from
   "Open questions".
 - Track a work item, a plan step or a TODO as an issue ([CHANGE-WORKFLOW.md](CHANGE-WORKFLOW.md#issues)).
   The docs hold the target state, not the backlog.
