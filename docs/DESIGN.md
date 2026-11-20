@@ -555,7 +555,7 @@ All generic.
 | Step | Does |
 |---|---|
 | `reset` | Force off the VM and revert it to a reset point |
-| `boot` | Start the VM; type the disk password when the LUKS marker is set. A VM that runs already gets no keys: its screen can be a desktop. While it waits for the prompt, it tries an SSH login at every fifth screenshot: when the guest answers, a person opened the disk, and `boot` types nothing. Before the wait, it warns when a viewer from an earlier run is open on the VM (`EarlierViewer`, from `/proc`) |
+| `boot` | Start the VM; type the disk password when the LUKS marker is set. A VM that runs already gets no keys: its screen can be a desktop. While it waits for the prompt, it tries an SSH login at every fifth screenshot: when the guest answers, a person opened the disk, and `boot` types nothing. Before the wait, it warns when a viewer from an earlier run is open on the VM (`EarlierViewer` in `internal/steps/system.go`, from `/proc`) |
 | `viewer` | Open a viewer; `undo` or a successful run closes it, a failed run leaves it open. The next `boot` of that VM warns of the open viewer: keys typed in it before the disk prompt are lost |
 | `wait-ssh` | Wait until sshd answers; `prepare` also installs the werft key and the user's own key |
 | `verify-guest-password` | Check the guest password with one `sudo` call; a lost SSH connection is `failed` and blames no password |
@@ -706,12 +706,12 @@ Exit codes are part of the contract:
 | 2 | `usage` | unknown flag, missing argument |
 | 3 | `not_found` | no such domain, image, lease or reset point |
 | 4 | `conflict` | VM not shut off, label exists without `--replace` |
-| 5 | `needs_confirmation` | no TTY and no `--yes` |
+| 5 | `needs_confirmation` | no TTY and no `--yes` (questions alone) |
 | 6 | `no_capacity` | pool space or memory |
 | 7 | `timeout` | no SSH, no lease address, no shutdown in time |
 | 8 | `checks_failed` | the provision checks failed |
 | 9 | `unsupported` | raw-NVRAM guard, libvirt version |
-| 10 | `secret_unavailable` | the keyring and `pass` gave nothing, and no TTY |
+| 10 | `secret_unavailable` | no TTY for a prompt-only secret, or the keyring and `pass` gave nothing and no TTY |
 
 ## Concurrency and locking
 

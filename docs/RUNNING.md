@@ -22,7 +22,7 @@ says, then check the build:
   directory. Its stdout is the same as that of `./bin/werft`; mise writes its own line to stderr.
 - Add `--json` to parse a result: one JSON document on stdout, progress and logs on stderr.
 - Read the exit code; the codes and the error document are in [DESIGN.md](DESIGN.md), "Agent interface".
-- Pass `--yes` to every command that asks; without a terminal it fails with `needs_confirmation`.
+- Pass `--yes` to every command that asks; without a terminal it fails with `needs_confirmation`; `provision` and `prepare` fail with `secret_unavailable` when a prompt-only secret also needs the terminal.
 
 ## What is safe on this host
 
