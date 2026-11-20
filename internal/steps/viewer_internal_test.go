@@ -38,6 +38,8 @@ func TestEarlierViewer(t *testing.T) {
 		{"viewer of an earlier run", map[string][]string{"200": viewer}, "1", true},
 		{"viewer of this run", map[string][]string{"200": viewer}, "100", false},
 		{"viewer of another domain", map[string][]string{"200": append(viewer[:len(viewer)-1:len(viewer)-1], "testvm-full")}, "1", false},
+		{"viewer with the domain before its options", map[string][]string{"200": {"virt-viewer", "testvm", "--wait"}}, "1", true},
+		{"viewer of a domain with a longer name", map[string][]string{"200": {"virt-viewer", "testvm-full", "--wait"}}, "1", false},
 		{"no viewer", map[string][]string{"200": {"/usr/bin/vim", "testvm"}}, "1", false},
 	}
 	for _, tt := range tests {

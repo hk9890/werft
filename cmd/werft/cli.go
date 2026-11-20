@@ -187,6 +187,16 @@ func (c *cli) parseFlags(fs *flag.FlagSet, name string, args []string) error {
 	return nil
 }
 
+// flagsBeforeNames refuses a flag after the first name, such as
+// "werft reset vm -y": the flag package stops at the first name, so the
+// command would read the flag as a name. names is the usage of the names.
+func flagsBeforeNames(fs *flag.FlagSet, command, names string) error {
+	if fs.NArg() > 1 && slices.ContainsFunc(fs.Args()[1:], func(a string) bool { return strings.HasPrefix(a, "-") }) {
+		return failure.New(failure.Usage, "flags go before the name: werft %s [flags] %s", command, names)
+	}
+	return nil
+}
+
 // errHelpShown ends a command whose usage was asked for; run treats it as
 // success.
 var errHelpShown = errors.New("help shown")

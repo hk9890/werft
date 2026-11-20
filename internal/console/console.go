@@ -72,6 +72,8 @@ func Typeable(s string) error {
 
 // Prompt is how long and how often to look for a prompt.
 type Prompt struct {
+	// Timeout counts the intervals between the screenshots only: each call
+	// of Opened adds its own time, so the wait can take longer.
 	Timeout  time.Duration
 	Interval time.Duration
 	// Still is how many screenshots in a row must not change before the

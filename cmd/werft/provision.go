@@ -148,8 +148,8 @@ func ensureKey(dir state.Dir) error {
 }
 
 func buildVMArg(fs *flag.FlagSet, command string) (string, error) {
-	if fs.NArg() > 1 && slices.ContainsFunc(fs.Args()[1:], func(a string) bool { return strings.HasPrefix(a, "-") }) {
-		return "", failure.New(failure.Usage, "flags go before the name: werft %s [flags] <name>", command)
+	if err := flagsBeforeNames(fs, command, "<name>"); err != nil {
+		return "", err
 	}
 	if fs.NArg() != 1 {
 		return "", failure.New(failure.Usage, "%s takes one build VM name", command)

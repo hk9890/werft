@@ -216,6 +216,9 @@ func (e Env) printf(format string, args ...any) { _, _ = fmt.Fprintf(e.Out, form
 // removes the temporary domain and the volumes, and names what it could not
 // remove.
 func (s *Seal) Run(e Env) (rec Record, err error) {
+	if err := Writable(e.Catalog); err != nil {
+		return Record{}, err
+	}
 	password, err := s.diskPassword(e)
 	if err != nil {
 		return Record{}, err

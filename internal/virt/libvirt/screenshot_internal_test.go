@@ -129,7 +129,7 @@ func TestACallAfterTheConnectionDropsReportsTheLostConnection(t *testing.T) {
 	_, _ = a.Screenshot("vm1", io.Discard)
 	<-a.l.Disconnected()
 	_, err := a.DomainState("vm1")
-	want := "domain vm1: lost the connection to libvirt (libvirtd restarted?); the domain may still run"
+	want := "domain vm1: lost the connection to libvirt (libvirtd restarted?)"
 	if err == nil || err.Error() != want || !failure.Is(err, failure.Failed) {
 		t.Errorf("DomainState error = %v (%s), want %q", err, failure.KindOf(err), want)
 	}

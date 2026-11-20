@@ -93,6 +93,9 @@ func (c *cli) cmdStart(args []string) error {
 	if err := c.parseFlags(fs, "start", args); err != nil {
 		return err
 	}
+	if err := flagsBeforeNames(fs, "start", "<name>"); err != nil {
+		return err
+	}
 	if fs.NArg() != 1 {
 		return failure.New(failure.Usage, "start takes one VM name")
 	}
@@ -150,6 +153,9 @@ func (c *cli) cmdStop(args []string) error {
 	fs.BoolVar(&force, "force", false, "force the VM off at once instead of an ACPI shutdown")
 	fs.BoolVar(&force, "f", false, "short for --force")
 	if err := c.parseFlags(fs, "stop", args); err != nil {
+		return err
+	}
+	if err := flagsBeforeNames(fs, "stop", "<name>"); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

@@ -22,7 +22,10 @@ says, then check the build:
   directory. Its stdout is the same as that of `./bin/werft`; mise writes its own line to stderr.
 - Add `--json` to parse a result: one JSON document on stdout, progress and logs on stderr.
 - Read the exit code; the codes and the error document are in [DESIGN.md](DESIGN.md), "Agent interface".
-- Pass `--yes` to every command that asks; without a terminal it fails with `needs_confirmation`; `provision` and `prepare` fail with `secret_unavailable` when a prompt-only secret also needs the terminal.
+- Pass `--yes` to every command that asks. Without a terminal, the command fails with
+  `needs_confirmation`.
+- Expect `secret_unavailable` from `provision` and `prepare` when a prompt-only secret needs the
+  terminal. `--yes` does not stop that failure.
 
 ## What is safe on this host
 
@@ -40,9 +43,11 @@ The host is the user's workstation. Its build VMs are every domain not named `we
 - Run `images --prune` only with an isolated state directory. With your real one it deletes the
   user's old stock versions.
 - Run a write command on a build VM only when the user is present and asked for that run.
-- Do not run `provision` with a prompt-only secret yourself: it needs a real terminal, and the
-  `!` mode of Claude Code has none. Give the user the full command for their own terminal, with
-  the flags before the name, and tell them to mount the key stick first.
+- Do not run `provision` with a prompt-only secret yourself. It needs a real terminal, and the
+  `!` mode of Claude Code has none.
+- Give the user the full `provision` command for their own terminal. Put the flags before the
+  name.
+- Tell the user to mount the key stick before they run it.
 
 ## Get a scratch domain
 

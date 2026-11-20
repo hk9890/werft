@@ -37,3 +37,19 @@ func TestWritesRefuseUnknownKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestWritableNamesEachUnknownKeyOnce: two records with the same unknown
+// key name it once.
+func TestWritableNamesEachUnknownKeyOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "images.toml")
+	content := "[[image]]\nname = \"vm-plain-20261101\"\nnewer_field = \"x\"\n\n" +
+		"[[image]]\nname = \"vm-plain-20261102\"\nnewer_field = \"y\"\nolder_field = \"z\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := Writable(path)
+	if !failure.Is(err, failure.Unsupported) || strings.Count(err.Error(), "image.newer_field") != 1 ||
+		!strings.Contains(err.Error(), "image.newer_field, image.older_field") {
+		t.Errorf("Writable = %v, want image.newer_field once, then image.older_field", err)
+	}
+}

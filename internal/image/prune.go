@@ -26,14 +26,18 @@ type PruneEnv struct {
 // Prunable is every stock version that Prune deletes now: not the newest of
 // its image and tier, named by no lease domain, and the backing file of no
 // volume in its pool. A version a seal reserves has no record yet. Prunable
-// changes nothing and takes no lock.
+// changes nothing and takes no lock. It refuses a catalog that Prune cannot
+// write, before prune asks.
 func Prunable(e PruneEnv) ([]Record, error) {
-	records, err := Load(e.Catalog)
+	c, err := load(e.Catalog)
 	if err != nil {
 		return nil, err
 	}
+	if err := c.writable(e.Catalog); err != nil {
+		return nil, err
+	}
 	newest := map[[2]string]string{}
-	for _, r := range records {
+	for _, r := range c.Images {
 		newest[[2]string{r.Image, r.Tier}] = r.Name
 	}
 	leased, err := e.Leased()
@@ -42,7 +46,7 @@ func Prunable(e PruneEnv) ([]Record, error) {
 	}
 	backing := map[string][]string{}
 	out := []Record{}
-	for _, r := range records {
+	for _, r := range c.Images {
 		if newest[[2]string{r.Image, r.Tier}] == r.Name || leased[r.Name] {
 			continue
 		}
@@ -100,13 +104,6 @@ func Prune(e PruneEnv, planned []Record) ([]Record, error) {
 		return nil, err
 	}
 	defer release()
-	c, err := load(e.Catalog)
-	if err != nil {
-		return nil, err
-	}
-	if err := c.writable(e.Catalog); err != nil {
-		return nil, err
-	}
 	now, err := Prunable(e)
 	if err != nil {
 		return nil, err

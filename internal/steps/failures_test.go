@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/pipeline"
@@ -192,6 +193,51 @@ func TestBootStepsFailWhenTheStateIsUnknown(t *testing.T) {
 				t.Errorf("the step started the domain:\n  %s", strings.Join(w.entries(), "\n  "))
 			}
 		})
+	}
+}
+
+// A state read that fails says nothing about the power of the domain:
+// poweroff and reset stop at once with that error, and nothing forces the
+// domain off.
+func TestPowerStepsFailWhenTheStateIsUnknown(t *testing.T) {
+	for name, step := range map[string]pipeline.Step{"poweroff": steps.Poweroff{}, "reset": steps.Reset{}} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			must(t, w.fake.StartDomain(vm))
+			r := w.newRun(true)
+			sleeps := 0
+			r.Sleep = func(time.Duration) { sleeps++ }
+			w.fake.FailOn("DomainState", errors.New("lost the connection to libvirt"))
+			err := step.Run(r)
+			if err == nil || !strings.Contains(err.Error(), "could not read the state of testvm: lost the connection to libvirt") {
+				t.Errorf("err = %v, want the state error", err)
+			}
+			if sleeps > 0 {
+				t.Errorf("the step waited %d times for a state it cannot read", sleeps)
+			}
+			if w.index("^(DestroyDomain|RevertSnapshot)") >= 0 {
+				t.Errorf("the step forced the domain off or reset it:\n  %s", strings.Join(w.entries(), "\n  "))
+			}
+		})
+	}
+}
+
+// A disk prompt that never shows because libvirt is gone gets the libvirt
+// error, not the hint of a disk opened by hand.
+func TestPromptTimeoutNamesALostConnection(t *testing.T) {
+	w := newWorld(t)
+	w.omarchy()
+	r := w.newRun(true)
+	r.Sleep = func(time.Duration) {
+		w.fake.FailOn("Screenshot", errors.New("lost the connection to libvirt"))
+		w.fake.FailOn("DomainState", errors.New("lost the connection to libvirt"))
+	}
+	err := pipeline.Execute(r, bootOnly())
+	if err == nil || !strings.Contains(err.Error(), "waiting for the disk prompt: could not read the state of testvm: lost the connection to libvirt") {
+		t.Errorf("err = %v, want the state error", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "opened by hand") {
+		t.Errorf("err = %v, want no viewer hint", err)
 	}
 }
 

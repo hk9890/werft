@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -51,9 +52,9 @@ func (System) OpenViewer(domain string, reconnect bool) (func(), error) {
 	return func() { _ = c.Process.Kill() }, nil
 }
 
-// EarlierViewer looks in /proc for a virt-viewer whose last argument is
-// domain and whose parent is not this process: werft starts its own viewers
-// as its children.
+// EarlierViewer looks in /proc for a virt-viewer that has domain as one of
+// its arguments and whose parent is not this process: werft starts its own
+// viewers as its children. A virt-manager console window is not found.
 func (System) EarlierViewer(domain string) bool {
 	return earlierViewer("/proc", domain, os.Getpid())
 }
@@ -69,7 +70,7 @@ func earlierViewer(proc, domain string, self int) bool {
 			continue
 		}
 		args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
-		if filepath.Base(args[0]) == "virt-viewer" && args[len(args)-1] == domain && parentPID(proc, e.Name()) != self {
+		if filepath.Base(args[0]) == "virt-viewer" && slices.Contains(args[1:], domain) && parentPID(proc, e.Name()) != self {
 			return true
 		}
 	}

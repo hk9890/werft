@@ -65,7 +65,7 @@ func TestWrapKeepsLibvirtMessage(t *testing.T) {
 
 func TestWrapReportsALostConnection(t *testing.T) {
 	err := wrap(false, syscall.EINVAL, "domain %s", "vm1")
-	want := "domain vm1: lost the connection to libvirt (libvirtd restarted?); the domain may still run"
+	want := "domain vm1: lost the connection to libvirt (libvirtd restarted?)"
 	if err.Error() != want || !failure.Is(err, failure.Failed) || !errors.Is(err, syscall.EINVAL) {
 		t.Errorf("wrap = %v (%s), want %q (failed) around EINVAL", err, failure.KindOf(err), want)
 	}
@@ -75,6 +75,21 @@ func TestWrapReportsALostConnection(t *testing.T) {
 	transient := golibvirt.Error{Code: uint32(golibvirt.ErrOperationInvalid), Message: "transient domains do not have any persistent config"}
 	if err := metadataErr(false, transient, "uri", "vm1"); !errors.As(err, new(lostConnection)) {
 		t.Errorf("metadataErr on a closed connection = %v, want the lost connection", err)
+	}
+}
+
+// The call in flight when libvirtd stops fails before IsConnected turns
+// false; libvirt's own invalid argument stays a libvirt error.
+func TestWrapReportsALostConnectionBeforeTheDisconnect(t *testing.T) {
+	for _, cause := range []error{golibvirt.ErrInterrupted, syscall.EINVAL, fmt.Errorf("send: %w", syscall.EINVAL)} {
+		err := wrap(true, cause, "domain %s", "vm1")
+		if !errors.As(err, new(lostConnection)) || !errors.Is(err, cause) {
+			t.Errorf("wrap(connected, %v) = %v, want the lost connection", cause, err)
+		}
+	}
+	invalid := golibvirt.Error{Code: uint32(golibvirt.ErrInvalidArg), Message: "invalid argument"}
+	if err := wrap(true, invalid, "domain %s", "vm1"); errors.As(err, new(lostConnection)) || err.Error() != "domain vm1: invalid argument" {
+		t.Errorf("wrap(connected, libvirt invalid argument) = %v, want the libvirt error", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"syscall"
 
 	golibvirt "github.com/digitalocean/go-libvirt"
 	"libvirt.org/go/libvirtxml"
@@ -58,10 +59,19 @@ func kindOf(err error) failure.Kind {
 type lostConnection struct{ err error }
 
 func (e lostConnection) Error() string {
-	return "lost the connection to libvirt (libvirtd restarted?); the domain may still run"
+	return "lost the connection to libvirt (libvirtd restarted?)"
 }
 
 func (e lostConnection) Unwrap() error { return e.err }
+
+// connectionLost reports whether err means that the connection is gone. The
+// call in flight when libvirtd stops gets golibvirt.ErrInterrupted, and a
+// call on a closed socket gets syscall.EINVAL, both before IsConnected turns
+// false. libvirt reports its own invalid argument as a golibvirt.Error,
+// which never matches syscall.EINVAL.
+func connectionLost(connected bool, err error) bool {
+	return !connected || errors.Is(err, golibvirt.ErrInterrupted) || errors.Is(err, syscall.EINVAL)
+}
 
 func (a *Adapter) wrap(err error, format string, args ...any) error {
 	return wrap(a.l.IsConnected(), err, format, args...)
@@ -70,7 +80,7 @@ func (a *Adapter) wrap(err error, format string, args ...any) error {
 // wrap gives err its failure kind and a context message. On a closed
 // connection err becomes a lostConnection of kind failure.Failed.
 func wrap(connected bool, err error, format string, args ...any) error {
-	if err != nil && !connected {
+	if err != nil && connectionLost(connected, err) {
 		return failure.Wrap(failure.Failed, lostConnection{err}, format, args...)
 	}
 	return failure.Wrap(kindOf(err), err, format, args...)

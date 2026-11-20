@@ -199,10 +199,11 @@ func TestPruneRefusesACatalogWithUnknownKeys(t *testing.T) {
 		t.Fatalf("Load = %v, %v", names(records), err)
 	}
 	e := pruneEnv(f, catalog)
-	planned, err := image.Prunable(e)
-	must(t, err)
-	_, err = image.Prune(e, planned)
-	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "image.newer_field") {
+	if _, err := image.Prunable(e); !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "image.newer_field") {
+		t.Errorf("Prunable = %v, want unsupported naming image.newer_field", err)
+	}
+	old1 := []image.Record{{Name: "vm-plain-20261101", Pool: "werft", Disk: "vm-plain-20261101.qcow2", NVRAM: "vm-plain-20261101_VARS.qcow2"}}
+	if _, err := image.Prune(e, old1); !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "image.newer_field") {
 		t.Errorf("Prune = %v, want unsupported naming image.newer_field", err)
 	}
 	if got, _ := os.ReadFile(catalog); !bytes.Equal(got, content) {

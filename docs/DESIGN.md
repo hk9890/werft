@@ -43,7 +43,10 @@ real adapters.
   reports a taken domain or snapshot name as a generic "operation failed"; the adapter maps it to
   `conflict` by its message, because a define must reserve a lease name. The adapter does not
   reconnect: after a restart of libvirtd every call fails with `failed` and the text
-  `lost the connection to libvirt (libvirtd restarted?); the domain may still run`.
+  `lost the connection to libvirt (libvirtd restarted?)`. The call in flight at the restart gets
+  the same text (`connectionLost` in `internal/virt/libvirt/adapter.go`). The pipeline adds
+  `it may still run` when it cannot read the state of the domain (`Run.failed` in
+  `internal/pipeline/pipeline.go`).
 - **`internal/virttest`** — The fake hypervisor: in-memory domains, volumes and snapshots, a call
   log, and failure injection.
 - **`internal/domxml`** — Pure functions that read, build and edit domain XML with libvirtxml.
@@ -60,8 +63,10 @@ real adapters.
 - **`internal/console`** — Typing at the boot console: screenshot, decode with Go `image/png`, detect
   "not black and still for 20 frames", send key codes with `DomainSendKey`. No keystroke passes
   through a `virsh` process. A screenshot every 2 s. Unlike `vm`, which types after 4 still frames
-  (8 s) and waits at most 120 s, the screen must hold still for 40 s, and the wait takes at most
-  180 s: the firmware screen of Omarchy held still for 23 s on the first boot of a copied disk.
+  (8 s) and waits at most 120 s, the screen must hold still for 40 s, and the wait counts at most
+  180 s of screenshot intervals: the firmware screen of Omarchy held still for 23 s on the first
+  boot of a copied disk. Each SSH probe of `boot` adds its connect time to the wait
+  (`Prompt.Timeout` in `internal/console/console.go`).
   The wait stops when its context ends, so SIGINT stops it before anything is typed.
 - **`internal/lifecycle`** — `list`, `start` and `stop` for any domain. `list` gets disk use from
   the storage API and counts native reset points plus the `.bak` files of `vm`. It finds the `.bak`
@@ -467,9 +472,10 @@ A failed run removes the temporary domain and both volumes. When that removal fa
 names what is left.
 
 werft reads an `images.toml` with keys it does not know, but does not write it: a write keeps only
-the known keys and deletes the others. So `seal` fails with `unsupported` in step 3, before the
-copy, and `werft images --prune` fails with `unsupported` before it deletes a volume. The error
-names the unknown keys. A newer werft wrote them; update werft.
+the known keys and deletes the others. So `seal` fails with `unsupported` in step 1, before the
+question and the revert, and `werft images --prune` fails with `unsupported` before the question
+(`image.Writable`, `image.Prunable`). Steps 3 and 7 and the prune write check again under the
+global lock. The error names each unknown key once. A newer werft wrote them; update werft.
 
 `werft images --json` gives every field of each record but the domain definition: name, image,
 tier, version, date, source build VM and label, pool, volumes, user, guest family, systemd
@@ -555,7 +561,7 @@ All generic.
 | Step | Does |
 |---|---|
 | `reset` | Force off the VM and revert it to a reset point |
-| `boot` | Start the VM; type the disk password when the LUKS marker is set. A VM that runs already gets no keys: its screen can be a desktop. While it waits for the prompt, it tries an SSH login at every fifth screenshot: when the guest answers, a person opened the disk, and `boot` types nothing. Before the wait, it warns when a viewer from an earlier run is open on the VM (`EarlierViewer` in `internal/steps/system.go`, from `/proc`) |
+| `boot` | Start the VM; type the disk password when the LUKS marker is set. A VM that runs already gets no keys: its screen can be a desktop. While it waits for the prompt, it tries an SSH login at every fifth screenshot: when the guest answers, a person opened the disk, and `boot` types nothing. Before the wait, it warns when a viewer from an earlier run is open on the VM (`EarlierViewer` in `internal/steps/system.go`, from `/proc`): a `virt-viewer` process that has the VM name as one of its arguments. It does not find a virt-manager console window. When the prompt does not show and libvirt does not give the state of the VM, `boot` fails with the libvirt error, not with the viewer hint |
 | `viewer` | Open a viewer; `undo` or a successful run closes it, a failed run leaves it open. The next `boot` of that VM warns of the open viewer: keys typed in it before the disk prompt are lost |
 | `wait-ssh` | Wait until sshd answers; `prepare` also installs the werft key and the user's own key |
 | `verify-guest-password` | Check the guest password with one `sudo` call; a lost SSH connection is `failed` and blames no password |
@@ -710,7 +716,7 @@ Exit codes are part of the contract:
 | 6 | `no_capacity` | pool space or memory |
 | 7 | `timeout` | no SSH, no lease address, no shutdown in time |
 | 8 | `checks_failed` | the provision checks failed |
-| 9 | `unsupported` | raw-NVRAM guard, libvirt version |
+| 9 | `unsupported` | raw-NVRAM guard, libvirt version, `images.toml` from a newer werft |
 | 10 | `secret_unavailable` | no TTY for a prompt-only secret, or the keyring and `pass` gave nothing and no TTY |
 
 ## Concurrency and locking

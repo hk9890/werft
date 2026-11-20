@@ -31,6 +31,9 @@ func (c *cli) cmdSeal(args []string) error {
 	if err := c.parseFlags(fs, "seal", args); err != nil {
 		return err
 	}
+	if err := flagsBeforeNames(fs, "seal", "<build-vm> <label>"); err != nil {
+		return err
+	}
 	if fs.NArg() != 2 {
 		return failure.New(failure.Usage, "seal takes a build VM name and a label")
 	}
@@ -50,6 +53,9 @@ func (c *cli) cmdSeal(args []string) error {
 	defer done()
 	s, err := image.Plan(h, name, label)
 	if err != nil {
+		return err
+	}
+	if err := image.Writable(dir.Images()); err != nil {
 		return err
 	}
 	var spec secret.Spec

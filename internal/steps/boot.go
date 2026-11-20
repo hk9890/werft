@@ -79,7 +79,11 @@ func (s Reset) Check(r *pipeline.Run) error {
 }
 
 func (s Reset) Run(r *pipeline.Run) error {
-	if !shutOff(r) {
+	off, err := shutOff(r)
+	if err != nil {
+		return err
+	}
+	if !off {
 		r.Printf("Forcing %s off", r.Domain)
 		if err := r.H.DestroyDomain(r.Domain); err != nil {
 			return err
@@ -89,9 +93,12 @@ func (s Reset) Run(r *pipeline.Run) error {
 	return resetpoint.Revert(r.H, r.Domain, s.label())
 }
 
-func shutOff(r *pipeline.Run) bool {
+func shutOff(r *pipeline.Run) (bool, error) {
 	s, err := r.H.DomainState(r.Domain)
-	return err == nil && s == virt.StateShutOff
+	if err != nil {
+		return false, failure.Wrap(failure.KindOf(err), err, "could not read the state of %s", r.Domain)
+	}
+	return s == virt.StateShutOff, nil
 }
 
 // Boot starts the domain. An encrypted guest takes no address before its
@@ -140,6 +147,9 @@ func boot(r *pipeline.Run) error {
 		r.Printf("The disk of %s was opened already, by hand; werft typed nothing", r.Domain)
 		return nil
 	case failure.Is(err, failure.Timeout):
+		if _, serr := r.Running(); serr != nil {
+			return failure.Wrap(failure.KindOf(serr), serr, "waiting for the disk prompt")
+		}
 		return failure.Wrap(failure.Timeout, err, "look at its console: %s; if the console shows a desktop, the disk was opened by hand; close the old viewer windows and run again", ViewerCommand(r.Domain))
 	}
 	return err
@@ -202,7 +212,16 @@ func (Poweroff) Run(r *pipeline.Run) error { return poweroff(r) }
 func poweroff(r *pipeline.Run) error {
 	r.Printf("Powering %s off from inside", r.Domain)
 	_ = r.Shell.Run(r.Ctx, r.Addr, rootPoweroff, guest.Line(r.Secret(pipeline.GuestPassword)), io.Discard, io.Discard)
-	if err := r.Poll(shutdownTimeout, pollInterval, r.Domain+" did not power off", func() bool { return shutOff(r) }); err != nil {
+	var stateErr error
+	err := r.Poll(shutdownTimeout, pollInterval, r.Domain+" did not power off", func() bool {
+		var off bool
+		off, stateErr = shutOff(r)
+		return off || stateErr != nil
+	})
+	if stateErr != nil {
+		return stateErr
+	}
+	if err != nil {
 		return err
 	}
 	r.Printf("%s is shut off", r.Domain)

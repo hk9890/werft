@@ -645,4 +645,7 @@ func TestSealRefusesACatalogWithUnknownKeys(t *testing.T) {
 	if _, err := f.Domain("vm-plain-20261102"); !failure.Is(err, failure.NotFound) {
 		t.Errorf("seal defined a temporary domain: %v", err)
 	}
+	if calls := strings.Join(f.Calls(), "\n"); strings.Contains(calls, "RevertSnapshot") {
+		t.Errorf("seal reset the build VM before the refusal:\n%s", calls)
+	}
 }

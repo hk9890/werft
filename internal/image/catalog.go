@@ -79,7 +79,20 @@ func load(path string) (catalog, error) {
 	for _, k := range md.Undecoded() {
 		c.unknown = append(c.unknown, k.String())
 	}
+	slices.Sort(c.unknown)
+	c.unknown = slices.Compact(c.unknown)
 	return c, nil
+}
+
+// Writable refuses the images.toml at path when it has keys that this werft
+// does not know, with unsupported. A command calls it before it asks or
+// changes anything; a write checks again under the global lock.
+func Writable(path string) error {
+	c, err := load(path)
+	if err != nil {
+		return err
+	}
+	return c.writable(path)
 }
 
 // writable refuses a catalog with unknown keys: a write keeps only the keys

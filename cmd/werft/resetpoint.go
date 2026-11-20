@@ -34,6 +34,9 @@ func (c *cli) lockedHypervisor(name string) (virt.Hypervisor, func(), error) {
 // nameAndLabel reads <name> [label]; the label defaults to clean-install,
 // as in vm.
 func nameAndLabel(fs *flag.FlagSet, command string) (name, label string, err error) {
+	if err := flagsBeforeNames(fs, command, "<name> [label]"); err != nil {
+		return "", "", err
+	}
 	switch fs.NArg() {
 	case 1:
 		return fs.Arg(0), resetpoint.CleanInstall, nil
@@ -153,6 +156,9 @@ func (c *cli) cmdMigrate(args []string) error {
 	fs.BoolVar(&yes, "yes", false, "migrate without asking")
 	fs.BoolVar(&yes, "y", false, "short for --yes")
 	if err := c.parseFlags(fs, "migrate", args); err != nil {
+		return err
+	}
+	if err := flagsBeforeNames(fs, "migrate", "<name>"); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
