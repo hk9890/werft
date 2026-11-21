@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       # Fails in seconds on a tag without a CHANGELOG.md section.
       - run: scripts/release-notes "$GITHUB_REF_NAME" > /dev/null
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
       # TestZshCompletes drives the completion script in zsh.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh
       - run: mise run quality
@@ -43,7 +43,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Go and GoReleaser at the versions .mise.toml pins; nothing else.
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
           install_args: go goreleaser
       # The binary, not only the action, is pinned: cosign 3.x signs into one
