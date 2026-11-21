@@ -114,8 +114,8 @@ func TestImages(t *testing.T) {
 
 	r = lh.run("images")
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
-	if r.code != 0 || len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != "NAME IMAGE TIER VERSION DATE USER" ||
-		!strings.HasPrefix(strings.Join(strings.Fields(lines[1]), " "), "ubuntu-26-04-plain-20261102 ubuntu-26-04 plain 20261102 2026-11-0") {
+	if r.code != 0 || len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != "NAME IMAGE TIER VERSION DATE (UTC) USER" ||
+		!strings.HasPrefix(strings.Join(strings.Fields(lines[1]), " "), "ubuntu-26-04-plain-20261102 ubuntu-26-04 plain 20261102 2026-11-02 21:00 tester") {
 		t.Errorf("images = %+v", r)
 	}
 }

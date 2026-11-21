@@ -57,6 +57,10 @@ mise run werft -- <command>     # build, then run in your shell's directory; ver
 - **Locks**: take `LockDomain` from `state.Root()` before a command changes a build VM;
   `c.lockedHypervisor(name)` in `cmd/werft/resetpoint.go` does both. A held lock fails with
   `conflict`.
+- **Stock catalog**: write `images.toml` only through `add` and `drop` in
+  `internal/image/catalog.go`. They refuse a file with keys this werft does not know. A command that
+  deletes or reverts before it writes the catalog calls `image.Writable` first, before any
+  question or secret read (model: `Seal.Run` in `internal/image/seal.go`).
 - **Setup recipe**: the step tests load `internal/steps/testdata/setup/recipe.toml`, a copy of
   `tests/werft/recipe.toml` of the setup repo with generic values. A change to a step or a key
   that the setup recipe uses needs a setup PR too. `TestExampleRecipeProvisions` runs

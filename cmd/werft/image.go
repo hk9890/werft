@@ -165,9 +165,9 @@ func (c *cli) cmdImages(args []string) error {
 			return
 		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(tw, "NAME\tIMAGE\tTIER\tVERSION\tDATE\tUSER")
+		_, _ = fmt.Fprintln(tw, "NAME\tIMAGE\tTIER\tVERSION\tDATE (UTC)\tUSER")
 		for _, r := range records {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.Image, r.Tier, r.Version, r.Date.Local().Format("2006-01-02 15:04"), r.User)
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.Image, r.Tier, r.Version, r.Date.UTC().Format("2006-01-02 15:04"), r.User)
 		}
 		_ = tw.Flush()
 	})
