@@ -114,8 +114,8 @@ func TestImages(t *testing.T) {
 
 	r = lh.run("images")
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
-	if r.code != 0 || len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != "NAME IMAGE TIER VERSION DATE USER" ||
-		!strings.HasPrefix(strings.Join(strings.Fields(lines[1]), " "), "ubuntu-26-04-plain-20261102 ubuntu-26-04 plain 20261102 2026-11-0") {
+	if r.code != 0 || len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != "NAME IMAGE TIER VERSION DATE (UTC) USER" ||
+		!strings.HasPrefix(strings.Join(strings.Fields(lines[1]), " "), "ubuntu-26-04-plain-20261102 ubuntu-26-04 plain 20261102 2026-11-02 21:00 tester") {
 		t.Errorf("images = %+v", r)
 	}
 }
@@ -151,6 +151,39 @@ func TestImagesPrune(t *testing.T) {
 	}
 	if r := lh.run("images", "--prune"); r.code != 0 || !strings.Contains(r.stdout, "nothing to prune") {
 		t.Errorf("a second images --prune = %+v, want nothing to prune", r)
+	}
+}
+
+// TestImagesPruneRefusesANewerCatalogBeforeItAsks: without a terminal,
+// prune of an images.toml with unknown keys fails with unsupported, not
+// needs_confirmation, and deletes nothing.
+func TestImagesPruneRefusesANewerCatalogBeforeItAsks(t *testing.T) {
+	lh := newPruneHost(t)
+	writeNewerCatalog(t, filepath.Join(os.Getenv("XDG_STATE_HOME"), "werft", "images.toml"))
+	if r := lh.run("--json", "images", "--prune"); r.code != 9 || !strings.Contains(r.stdout, "image.newer_field") {
+		t.Errorf("images --prune of an images.toml of a newer werft = %+v, want unsupported", r)
+	}
+	if calls := strings.Join(lh.fake.Calls(), "\n"); strings.Contains(calls, "DeleteVolume") {
+		t.Errorf("images --prune deleted a volume:\n%s", calls)
+	}
+}
+
+// writeNewerCatalog appends a key that this werft does not know to the
+// last record of the images.toml at path, as a newer werft could write it.
+func writeNewerCatalog(t *testing.T, path string) {
+	t.Helper()
+	old, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(old) == 0 {
+		old = []byte("[[image]]\nname = \"vm-plain-20261101\"\n")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(old, "newer_field = \"x\"\n"...), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -208,7 +241,8 @@ func TestImagesPruneReapsFirst(t *testing.T) {
 }
 
 func TestSealNeedsConfirmation(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	lh := newLifecycleHost(t)
 	if r := lh.run("seal", "vm1"); r.code != 2 {
@@ -238,6 +272,10 @@ func TestSealNeedsConfirmation(t *testing.T) {
 	}
 	if r := lh.run("--json", "seal", "vm1", "provision-base"); r.code != 5 || !strings.Contains(r.stdout, "--yes") {
 		t.Errorf("seal without --yes = %+v, want needs_confirmation", r)
+	}
+	writeNewerCatalog(t, filepath.Join(state, "werft", "images.toml"))
+	if r := lh.run("--json", "seal", "vm1", "provision-base"); r.code != 9 || !strings.Contains(r.stdout, "image.newer_field") {
+		t.Errorf("seal into an images.toml of a newer werft = %+v, want unsupported before the question", r)
 	}
 	if calls := strings.Join(lh.fake.Calls(), "\n"); strings.Contains(calls, "RevertSnapshot") || strings.Contains(calls, "CreateVolumeFrom") {
 		t.Errorf("seal without --yes changed something:\n%s", calls)

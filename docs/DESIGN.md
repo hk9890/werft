@@ -25,7 +25,12 @@ real adapters.
 - **`internal/virt/libvirt`** — The go-libvirt adapter. It opens `libvirt-sock` (monolithic daemon)
   or `virtqemud-sock` (modular daemons) and maps libvirt error codes to failure kinds. libvirt
   reports a taken domain or snapshot name as a generic "operation failed"; the adapter maps it to
-  `conflict` by its message, because a define must reserve a lease name.
+  `conflict` by its message, because a define must reserve a lease name. The adapter does not
+  reconnect: after a restart of libvirtd every call fails with `failed` and the text
+  `lost the connection to libvirt (libvirtd restarted?)`. The call in flight at the restart gets
+  the same text (`connectionLost` in `internal/virt/libvirt/adapter.go`). The pipeline adds
+  `it may still run` when it cannot read the state of the domain (`Run.failed` in
+  `internal/pipeline/pipeline.go`).
 - **`internal/virttest`** — The fake hypervisor: in-memory domains, volumes and snapshots, a call
   log, and failure injection.
 - **`internal/domxml`** — Pure functions that read, build and edit domain XML with libvirtxml.
@@ -42,8 +47,10 @@ real adapters.
 - **`internal/console`** — Typing at the boot console: screenshot, decode with Go `image/png`, detect
   "not black and still for 20 frames", send key codes with `DomainSendKey`. No keystroke passes
   through a `virsh` process. A screenshot every 2 s. Unlike `vm`, which types after 4 still frames
-  (8 s) and waits at most 120 s, the screen must hold still for 40 s, and the wait takes at most
-  180 s: the firmware screen of Omarchy held still for 23 s on the first boot of a copied disk.
+  (8 s) and waits at most 120 s, the screen must hold still for 40 s, and the wait counts at most
+  180 s of screenshot intervals: the firmware screen of Omarchy held still for 23 s on the first
+  boot of a copied disk. Each SSH probe of `boot` adds its connect time to the wait
+  (`Prompt.Timeout` in `internal/console/console.go`).
   The wait stops when its context ends, so SIGINT stops it before anything is typed.
 - **`internal/lifecycle`** — `list`, `start` and `stop` for any domain. `list` gets disk use from
   the storage API and counts native reset points plus the `.bak` files of `vm`. It finds the `.bak`
@@ -414,7 +421,8 @@ Both tiers run the same steps:
    from the checked definition fails the run before anything is copied.
 3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` past
    every name of that day that `images.toml` holds or names as pruned, that no volume of the pool
-   and no domain has. So a pruned name never comes back with other content. Define a temporary
+   and no domain has. So a pruned name never comes back with other content. `YYYYMMDD` is the UTC
+   date, the same date as the `date` field of the record. Define a temporary
    domain under that name, so the name is reserved: the build VM XML on the stock volumes
    `<name>.qcow2` and `<name>_VARS.qcow2` in the `werft` pool (`pool` in `config.toml`), with a new
    UUID and MAC, a vsock device, and SMBIOS credentials that replace those of the build VM. The
@@ -446,6 +454,12 @@ Both tiers run the same steps:
 
 A failed run removes the temporary domain and both volumes. When that removal fails, the error
 names what is left.
+
+werft reads an `images.toml` with keys it does not know, but does not write it: a write keeps only
+the known keys and deletes the others. So `seal` fails with `unsupported` in step 1, before the
+question and the revert, and `werft images --prune` fails with `unsupported` before the question
+(`image.Writable`, `image.Prunable`). Steps 3 and 7 and the prune write check again under the
+global lock. The error names each unknown key once. A newer werft wrote them; update werft.
 
 `werft images --json` gives every field of each record but the domain definition: name, image,
 tier, version, date, source build VM and label, pool, volumes, user, guest family, systemd
@@ -502,8 +516,11 @@ version that the lease chose before the lock cannot go in between
 
 - a **check**, run in preflight before any step runs: validate inputs, queue questions, declare
   secrets. The runner asks the queued questions after every check passed, so a failed check, such
-  as a key stick that a program holds, costs no question. All questions come before any secret and
-  any destructive action.
+  as a key stick that a program holds, costs no question. Without a terminal, the runner then
+  fails at once when a question without `--yes` or a prompt-only secret needs one. The one error
+  names all of them, with `needs_confirmation` for questions alone and `secret_unavailable` when a
+  secret is among them; no question is asked and no keyring or `pass` is read. All questions come
+  before any secret and any destructive action.
 - a **run**.
 - an optional **cleanup**, pushed on a stack before the run starts, so a half-done step is undone.
   On success, failure and SIGINT the runner pops the stack in reverse. Each cleanup must be safe
@@ -528,8 +545,8 @@ All generic.
 | Step | Does |
 |---|---|
 | `reset` | Force off the VM and revert it to a reset point |
-| `boot` | Start the VM; type the disk password when the LUKS marker is set. A VM that runs already gets no keys: its screen can be a desktop |
-| `viewer` | Open a viewer; `undo` or a successful run closes it, a failed run leaves it open |
+| `boot` | Start the VM; type the disk password when the LUKS marker is set. A VM that runs already gets no keys: its screen can be a desktop. While it waits for the prompt, it tries an SSH login at every fifth screenshot: when the guest answers, a person opened the disk, and `boot` types nothing. Before the wait, it warns when a viewer from an earlier run is open on the VM (`EarlierViewer` in `internal/steps/system.go`, from `/proc`): a `virt-viewer` process that has the VM name as one of its arguments. It does not find a virt-manager console window. When the prompt does not show and libvirt does not give the state of the VM, `boot` fails with the libvirt error, not with the viewer hint |
+| `viewer` | Open a viewer; `undo` or a successful run closes it, a failed run leaves it open. The next `boot` of that VM warns of the open viewer: keys typed in it before the disk prompt are lost |
 | `wait-ssh` | Wait until sshd answers; `prepare` also installs the werft key and the user's own key |
 | `verify-guest-password` | Check the guest password with one `sudo` call; a lost SSH connection is `failed` and blames no password |
 | `detect-guest` | Detect the family (`ubuntu` or `omarchy`) and the session process; write the systemd version of the guest as a description line, and replace an older one |
@@ -540,7 +557,7 @@ All generic.
 | `wait-session` | Wait for the desktop session |
 | `unlock-keyring` | Unlock the GNOME keyring |
 | `sudo-grant` | Grant passwordless sudo, and revoke it in cleanup. Under classic sudo (Omarchy, Ubuntu 24.04) `sudo -v` passes too; sudo-rs (Ubuntu 26.04) still asks there |
-| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup. A failed detach leaves the stick in the guest, mounts nothing on the host, and is tried again at the end of the run. A VM that is off, or booted again, has let go of the stick, and the host mounts it |
+| `usb-passthrough` | Find the stick by its mount label under `/media/$USER` or `/run/media/$USER`, or at the mount point `provision --key <mount>` gives; refuse it in preflight when a program holds it, unmount it on the host, attach it live only, and give it back to the host in cleanup. A failed detach leaves the stick in the guest, mounts nothing on the host, and is tried again at the end of the run. A VM that is off, or booted again, has let go of the stick, and the host mounts it. A stick that the desktop automount mounted first counts as mounted |
 | `pinentry` | Install a pinentry stub with the passphrase in tmpfs and a gpg-agent line; remove them in cleanup |
 | `run` | Run a guest command or script, with an optional secret on stdin |
 | `checks` | Copy a host check directory into the guest and run its entry script; a script that fails is `checks_failed`, a lost SSH connection is `failed`. ssh exits 255 for both, so a script that exits 255 is `failed` |
@@ -679,12 +696,12 @@ Exit codes are part of the contract:
 | 2 | `usage` | unknown flag, missing argument |
 | 3 | `not_found` | no such domain, image, lease or reset point |
 | 4 | `conflict` | VM not shut off, label exists without `--replace` |
-| 5 | `needs_confirmation` | no TTY and no `--yes` |
+| 5 | `needs_confirmation` | no TTY and no `--yes` (questions alone) |
 | 6 | `no_capacity` | pool space or memory |
 | 7 | `timeout` | no SSH, no lease address, no shutdown in time |
 | 8 | `checks_failed` | the provision checks failed |
-| 9 | `unsupported` | raw-NVRAM guard, libvirt version |
-| 10 | `secret_unavailable` | the keyring and `pass` gave nothing, and no TTY |
+| 9 | `unsupported` | raw-NVRAM guard, libvirt version, `images.toml` from a newer werft |
+| 10 | `secret_unavailable` | no TTY for a prompt-only secret, or the keyring and `pass` gave nothing and no TTY |
 
 ## Concurrency and locking
 

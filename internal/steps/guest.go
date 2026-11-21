@@ -243,7 +243,11 @@ func onGuest(r *pipeline.Run, domain string, fn func() error) error {
 	saved, savedAddr := r.Domain, r.Addr
 	defer func() { r.Domain, r.Addr = saved, savedAddr }()
 	r.Domain = domain
-	if !r.Running() {
+	running, err := r.Running()
+	if err != nil {
+		return err
+	}
+	if !running {
 		return fmt.Errorf("%s is not running", domain)
 	}
 	if !r.Reach("true") {

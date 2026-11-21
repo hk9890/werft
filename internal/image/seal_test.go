@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -600,5 +601,51 @@ func TestSealOfARefusedPasswordNamesNoRemovedDomain(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "virt-viewer") {
 		t.Errorf("Run names the console of the removed domain: %v", err)
+	}
+}
+
+// TestSealNamesTheVersionByTheUTCDate: a seal just after local midnight
+// east of UTC takes the UTC date, the date of its record.
+func TestSealNamesTheVersionByTheUTCDate(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{f: f})
+	e.Now = func() time.Time { return time.Date(2026, 11, 19, 0, 36, 0, 0, time.FixedZone("CET", 3600)) }
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	rec, err := s.Run(e)
+	must(t, err)
+	if rec.Name != "vm-plain-20261118" || rec.Version != "20261118" {
+		t.Errorf("seal at 00:36 CET = %s, version %s, want the UTC date 20261118", rec.Name, rec.Version)
+	}
+	if want := time.Date(2026, 11, 18, 23, 36, 0, 0, time.UTC); !rec.Date.Equal(want) || rec.Date.Location() != time.UTC {
+		t.Errorf("date = %v, want %v", rec.Date, want)
+	}
+}
+
+// TestSealRefusesACatalogWithUnknownKeys: a newer werft wrote images.toml,
+// and a write by this werft would delete the keys it does not know.
+func TestSealRefusesACatalogWithUnknownKeys(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{f: f})
+	content := []byte("[[image]]\nname = \"vm-plain-20261101\"\nimage = \"vm\"\ntier = \"plain\"\nnewer_field = \"x\"\n")
+	must(t, os.WriteFile(e.Catalog, content, 0o600))
+	records, err := image.Load(e.Catalog)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("Load = %+v, %v", records, err)
+	}
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	_, err = s.Run(e)
+	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "image.newer_field") || !strings.Contains(err.Error(), "update werft") {
+		t.Errorf("seal = %v, want unsupported naming image.newer_field", err)
+	}
+	if got, _ := os.ReadFile(e.Catalog); !bytes.Equal(got, content) {
+		t.Errorf("images.toml changed:\n%s", got)
+	}
+	if _, err := f.Domain("vm-plain-20261102"); !failure.Is(err, failure.NotFound) {
+		t.Errorf("seal defined a temporary domain: %v", err)
+	}
+	if calls := strings.Join(f.Calls(), "\n"); strings.Contains(calls, "RevertSnapshot") {
+		t.Errorf("seal reset the build VM before the refusal:\n%s", calls)
 	}
 }

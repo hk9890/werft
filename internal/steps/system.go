@@ -5,6 +5,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -47,6 +50,45 @@ func (System) OpenViewer(domain string, reconnect bool) (func(), error) {
 	}
 	go func() { _ = c.Wait() }()
 	return func() { _ = c.Process.Kill() }, nil
+}
+
+// EarlierViewer looks in /proc for a virt-viewer that has domain as one of
+// its arguments and whose parent is not this process: werft starts its own
+// viewers as its children. A virt-manager console window is not found.
+func (System) EarlierViewer(domain string) bool {
+	return earlierViewer("/proc", domain, os.Getpid())
+}
+
+func earlierViewer(proc, domain string, self int) bool {
+	entries, _ := os.ReadDir(proc)
+	for _, e := range entries {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join(proc, e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+		if filepath.Base(args[0]) == "virt-viewer" && slices.Contains(args[1:], domain) && parentPID(proc, e.Name()) != self {
+			return true
+		}
+	}
+	return false
+}
+
+func parentPID(proc, pid string) int {
+	status, err := os.ReadFile(filepath.Join(proc, pid, "status"))
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		if v, ok := strings.CutPrefix(line, "PPid:"); ok {
+			n, _ := strconv.Atoi(strings.TrimSpace(v))
+			return n
+		}
+	}
+	return 0
 }
 
 const virtManagerVMs = "/org/virt-manager/virt-manager/vms/"

@@ -1,6 +1,8 @@
 // Package pipeline runs the steps of prepare and provision (docs/DESIGN.md,
 // "Provision pipeline"). Every step's check runs before the first question,
-// so a failed check costs no answer; every question comes before the first
+// so a failed check costs no answer. Without a terminal, one error names
+// every question and prompt-only secret before any is asked or read. Every
+// question comes before the first
 // secret, and every secret before the first destructive action. SIGINT and SIGTERM are caught only after
 // that, so they end a prompt as they always do. A step's cleanup is pushed
 // before the step runs, and the stack is popped in reverse on success, on
@@ -72,6 +74,9 @@ func Execute(r *Run, entries []Entry) error {
 		if err := e.Step.Check(r); err != nil {
 			return err
 		}
+	}
+	if err := r.needsTerminal(); err != nil {
+		return err
 	}
 	if err := r.askQuestions(); err != nil {
 		return err
@@ -159,12 +164,16 @@ func (u Undo) Run(r *Run) error {
 
 func (r *Run) failed(err error) error {
 	var hint []string
-	if s, serr := r.H.DomainState(r.Domain); serr == nil && s == virt.StateRunning {
-		if r.Addr.Host != "" {
-			hint = append(hint, fmt.Sprintf("%s is left running for inspection: %s", r.Domain, r.SSHCommand()))
-		} else {
-			hint = append(hint, r.Domain+" is left running for inspection")
-		}
+	s, serr := r.H.DomainState(r.Domain)
+	switch {
+	case failure.Is(serr, failure.NotFound):
+	case serr != nil:
+		hint = append(hint, fmt.Sprintf("%s: could not read its state (%v); it may still run", r.Domain, serr))
+	case s != virt.StateRunning:
+	case r.Addr.Host != "":
+		hint = append(hint, fmt.Sprintf("%s is left running for inspection: %s", r.Domain, r.SSHCommand()))
+	default:
+		hint = append(hint, r.Domain+" is left running for inspection")
 	}
 	if r.LogPath != "" {
 		hint = append(hint, "log: "+r.LogPath)

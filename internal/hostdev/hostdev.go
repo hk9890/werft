@@ -103,8 +103,11 @@ func OnHost(s Stick) bool {
 	return err == nil
 }
 
+// Mount mounts the stick with udisks. A stick that the desktop's automount
+// mounted first counts as mounted.
 func Mount(s Stick) error {
-	if out, err := exec.Command("udisksctl", "mount", "-b", "/dev/disk/by-uuid/"+s.UUID).CombinedOutput(); err != nil {
+	out, err := exec.Command("udisksctl", "mount", "-b", "/dev/disk/by-uuid/"+s.UUID).CombinedOutput()
+	if err != nil && !bytes.Contains(out, []byte("AlreadyMounted")) {
 		return fmt.Errorf("udisksctl mount: %s: %w", bytes.TrimSpace(out), err)
 	}
 	return nil

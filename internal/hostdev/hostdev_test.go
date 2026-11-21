@@ -30,7 +30,8 @@ echo "ID_FS_UUID=${STICK_UUID:-ABCD-1234}"`,
 		"fuser": `[ -n "$STICK_BUSY" ] || exit 1
 [ "$1" = -vm ] && printf 'USER PID ACCESS COMMAND\n/dev/sdz1: user 4242 f.... nautilus\n' >&2
 printf ' 4242'`,
-		"udisksctl": `[ "$1" != unmount ] || [ "$STICK_UNMOUNT_FAIL" != 1 ] || { echo "target is busy" >&2; exit 1; }`,
+		"udisksctl": `[ "$1" != unmount ] || [ "$STICK_UNMOUNT_FAIL" != 1 ] || { echo "target is busy" >&2; exit 1; }
+[ "$1" != mount ] || [ -z "$STICK_MOUNT_ERROR" ] || { echo "$STICK_MOUNT_ERROR" >&2; exit 1; }`,
 	} {
 		script := "#!/bin/sh\necho \"" + name + " $*\" >>\"$STUB_LOG\"\n" + body + "\n"
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
@@ -38,7 +39,7 @@ printf ' 4242'`,
 		}
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	for _, k := range []string{"STICK_WHOLE_DISK", "STICK_NOT_USB", "STICK_BUSY", "STICK_UNMOUNT_FAIL", "STICK_UUID"} {
+	for _, k := range []string{"STICK_WHOLE_DISK", "STICK_NOT_USB", "STICK_BUSY", "STICK_UNMOUNT_FAIL", "STICK_UUID", "STICK_MOUNT_ERROR"} {
 		t.Setenv(k, "")
 	}
 	t.Setenv("STICK_MOUNT", "/media/tester/KEYSTICK")
@@ -151,5 +152,20 @@ func TestUnmountAndMount(t *testing.T) {
 	err = hostdev.Unmount(s)
 	if msg := err.Error(); !strings.Contains(msg, "close what holds it and run again:\n") || !strings.Contains(msg, "nautilus") || strings.HasSuffix(msg, "\n") {
 		t.Errorf("err = %q, want the holders named", msg)
+	}
+}
+
+// The desktop's automount can mount the stick first, while werft waits for
+// it to come back; udisks then refuses the mount, and the stick is mounted.
+func TestMountOfAMountedStick(t *testing.T) {
+	stubs(t)
+	s := hostdev.Stick{Device: "/dev/sdz1", UUID: "ABCD-1234"}
+	t.Setenv("STICK_MOUNT_ERROR", "Error mounting /dev/sdz1: GDBus.Error:org.freedesktop.UDisks2.Error.AlreadyMounted: Device /dev/sdz1 is already mounted at /media/tester/KEYSTICK.")
+	if err := hostdev.Mount(s); err != nil {
+		t.Errorf("err = %v, want none for a mounted stick", err)
+	}
+	t.Setenv("STICK_MOUNT_ERROR", "Error mounting /dev/sdz1: GDBus.Error:org.freedesktop.UDisks2.Error.Failed: wrong fs type")
+	if err := hostdev.Mount(s); err == nil || !strings.Contains(err.Error(), "wrong fs type") {
+		t.Errorf("err = %v, want the udisksctl reason", err)
 	}
 }

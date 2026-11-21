@@ -124,6 +124,17 @@ func TestScreenshotFailsWhenTheConnectionDrops(t *testing.T) {
 	}
 }
 
+func TestACallAfterTheConnectionDropsReportsTheLostConnection(t *testing.T) {
+	a := adapterOn(t, hangUp)
+	_, _ = a.Screenshot("vm1", io.Discard)
+	<-a.l.Disconnected()
+	_, err := a.DomainState("vm1")
+	want := "domain vm1: lost the connection to libvirt (libvirtd restarted?)"
+	if err == nil || err.Error() != want || !failure.Is(err, failure.Failed) {
+		t.Errorf("DomainState error = %v (%s), want %q", err, failure.KindOf(err), want)
+	}
+}
+
 func TestScreenshotFailsWhenTheWriterFails(t *testing.T) {
 	a := adapterOn(t, endOfStream)
 	_, err := a.Screenshot("vm1", failingWriter{})

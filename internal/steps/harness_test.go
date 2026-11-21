@@ -29,6 +29,9 @@ import (
 	"github.com/hk9890/werft/internal/virttest"
 )
 
+// keyEnter is the Linux key code of Enter.
+const keyEnter = 28
+
 const (
 	werftPubKey = "ssh-ed25519 AAAAwerft werft"
 	userPubKey  = "ssh-ed25519 AAAAuser tester@host"
@@ -146,9 +149,10 @@ func (w *world) defineClone() {
 }
 
 // omarchy makes the guest Omarchy, with its root on LUKS and the marker vm
-// prepare sets, and a console that shows the disk prompt.
+// prepare sets, and a console that shows the disk prompt. Each start locks
+// the disk until Enter at the console.
 func (w *world) omarchy() {
-	w.shell.omarchy, w.shell.luks = true, true
+	w.shell.omarchy, w.shell.luks, w.shell.locks = true, true, true
 	must(w.t, w.fake.SetDomainDescription(vm, "my notes\n"+domxml.LUKSMarker))
 	must(w.t, w.fake.DeleteSnapshot(vm, resetpoint.ProvisionBase))
 	must(w.t, w.fake.CreateSnapshot(vm, resetpoint.ProvisionBase, ""))
@@ -200,6 +204,7 @@ type recorder struct {
 func (h *recorder) StartDomain(name string) error {
 	h.w.add("StartDomain " + name)
 	h.starts++
+	h.w.shell.locked = h.w.shell.locks
 	return h.Fake.StartDomain(name)
 }
 
@@ -270,6 +275,9 @@ func (h *recorder) DetachDevice(domain, xml string) error {
 
 func (h *recorder) SendKey(domain string, keys []uint32) error {
 	h.w.add(fmt.Sprintf("SendKey %s %v", domain, keys))
+	if len(keys) == 1 && keys[0] == keyEnter {
+		h.w.shell.locked = false
+	}
 	return h.Fake.SendKey(domain, keys)
 }
 
@@ -290,6 +298,9 @@ type shell struct {
 	w       *world
 	omarchy bool
 	luks    bool
+	// locks locks the disk at each start; locked holds the guest in its
+	// initramfs, with no sshd, until Enter at the console opens the disk.
+	locks, locked bool
 	// systemd is the version systemctl --version prints; 0 prints nothing.
 	systemd int
 	// keyRejected makes sshd refuse every key until ssh-copy-id ran.
@@ -319,7 +330,7 @@ func (s *shell) running() []string {
 }
 
 func (s *shell) Run(ctx context.Context, addr guest.Addr, cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
-	if len(s.running()) == 0 || addr.Host == "" {
+	if len(s.running()) == 0 || addr.Host == "" || s.locked {
 		return fmt.Errorf("ssh: connect to host %q: no route", addr.Host)
 	}
 	if s.keyRejected {
@@ -411,9 +422,14 @@ type host struct {
 	viewers     int
 	copyKeyErr  error
 	settingsErr error
+
+	// earlierViewer is a viewer an earlier run left open on the domain.
+	earlierViewer bool
 }
 
 func (h *host) HasDisplay() bool { return h.display }
+
+func (h *host) EarlierViewer(string) bool { return h.earlierViewer }
 
 func (h *host) OpenViewer(domain string, reconnect bool) (func(), error) {
 	h.viewers++
@@ -473,6 +489,8 @@ func (t *terminal) Confirm(q string) error {
 	}
 	return nil
 }
+
+func (t *terminal) HasTerminal() bool { return t.tty }
 
 func (t *terminal) ReadSecret(prompt string) (string, error) {
 	t.w.add("secret " + prompt)

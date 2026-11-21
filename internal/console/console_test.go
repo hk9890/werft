@@ -3,6 +3,7 @@ package console_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -217,5 +218,48 @@ func TestDefaultPromptWaitsOutTheFirmwareScreen(t *testing.T) {
 	}
 	if shots < 12+p.Still {
 		t.Errorf("returned after %d waits, on the firmware screen", shots)
+	}
+}
+
+// A desktop that moves never holds still; the probe ends the wait once the
+// disk is open. It runs at every fifth screenshot, not at each.
+func TestWaitForPromptEndsWhenTheDiskIsOpen(t *testing.T) {
+	f := running(t)
+	a, b, c := screen(t, true), screen(t, true), screen(t, true)
+	b = append(b[:len(b):len(b)], 0)
+	c = append(c[:len(c):len(c)], 0, 0)
+	frames := [][]byte{a, b, c}
+	shots, probes := 0, 0
+	p := console.Prompt{Timeout: time.Hour, Interval: 2 * time.Second, Still: 4,
+		Sleep: func(time.Duration) {
+			shots++
+			f.SetScreenshot("vm", "image/png", frames[shots%3])
+		},
+		Opened: func() bool { probes++; return probes == 2 },
+	}
+	f.SetScreenshot("vm", "image/png", a)
+	err := console.WaitForPrompt(context.Background(), f, "vm", p)
+	if !errors.Is(err, console.ErrOpened) {
+		t.Fatalf("err = %v, want ErrOpened", err)
+	}
+	if shots != 10 {
+		t.Errorf("returned after %d waits, want the second probe at the tenth screenshot", shots)
+	}
+}
+
+// A guest that is still locked at the timeout keeps the timeout error. The
+// probe runs once more at the timeout.
+func TestWaitForPromptProbesAtTheTimeout(t *testing.T) {
+	f := running(t)
+	f.SetScreenshot("vm", "image/png", screen(t, false))
+	sleeps, probes := 0, 0
+	p := prompt(&sleeps)
+	p.Timeout = 6 * time.Second
+	p.Opened = func() bool { probes++; return false }
+	if err := console.WaitForPrompt(context.Background(), f, "vm", p); !failure.Is(err, failure.Timeout) {
+		t.Fatalf("err = %v, want a timeout", err)
+	}
+	if probes != 1 {
+		t.Errorf("%d probes, want one at the timeout", probes)
 	}
 }

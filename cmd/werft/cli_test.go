@@ -196,6 +196,15 @@ func TestProvisionUsage(t *testing.T) {
 		{[]string{"provision", "-y"}, "provision takes one build VM name"},
 		{[]string{"prepare", "-y"}, "prepare takes one build VM name"},
 		{[]string{"migrate", "-y"}, "migrate takes one build VM name"},
+		{[]string{"provision", "ubuntu-26-04", "--key", "/media/tester/KEYSTICK"}, "flags go before the name: werft provision [flags] <name>"},
+		{[]string{"prepare", "omarchy", "-y"}, "flags go before the name: werft prepare [flags] <name>"},
+		{[]string{"seal", "vm", "provision-base", "-y"}, "flags go before the name: werft seal [flags] <build-vm> <label>"},
+		{[]string{"seal", "vm", "--recipe", "/none.toml", "provision-base"}, "flags go before the name: werft seal [flags] <build-vm> <label>"},
+		{[]string{"migrate", "vm", "--yes"}, "flags go before the name: werft migrate [flags] <name>"},
+		{[]string{"reset", "vm", "-y"}, "flags go before the name: werft reset [flags] <name> [label]"},
+		{[]string{"snapshot", "vm", "--replace"}, "flags go before the name: werft snapshot [flags] <name> [label]"},
+		{[]string{"start", "vm", "--view"}, "flags go before the name: werft start [flags] <name>"},
+		{[]string{"stop", "vm", "-f"}, "flags go before the name: werft stop [flags] <name>"},
 	}
 	for _, tt := range tests {
 		r := runCLI("", false, tt.args...)

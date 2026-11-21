@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/hk9890/werft/internal/failure"
 )
 
 // Record is one stock version in images.toml. Name is <image>-<tier>-<version>,
-// and Version is <YYYYMMDD>[-n].
+// and Version is <YYYYMMDD>[-n], the UTC date of the seal.
 type Record struct {
 	Name    string    `toml:"name" json:"name"`
 	Image   string    `toml:"image" json:"image"`
@@ -51,9 +53,11 @@ type Record struct {
 // catalog is the content of images.toml. Removed is the name of every record
 // that prune deleted: seal numbers past every name the catalog ever held, so
 // a name never comes back with other content. werft before prune ignores it.
+// unknown is every key of the file that this werft does not know.
 type catalog struct {
 	Removed []string `toml:"removed,omitempty"`
 	Images  []Record `toml:"image"`
+	unknown []string
 }
 
 // Load reads the records of the images.toml at path, oldest first. A missing
@@ -65,14 +69,40 @@ func Load(path string) ([]Record, error) {
 
 func load(path string) (catalog, error) {
 	var c catalog
-	_, err := toml.DecodeFile(path, &c)
+	md, err := toml.DecodeFile(path, &c)
 	if errors.Is(err, os.ErrNotExist) {
 		return catalog{}, nil
 	}
 	if err != nil {
 		return catalog{}, fmt.Errorf("read %s: %w", path, err)
 	}
+	for _, k := range md.Undecoded() {
+		c.unknown = append(c.unknown, k.String())
+	}
+	slices.Sort(c.unknown)
+	c.unknown = slices.Compact(c.unknown)
 	return c, nil
+}
+
+// Writable refuses the images.toml at path when it has keys that this werft
+// does not know, with unsupported. A command calls it before it asks or
+// changes anything; a write checks again under the global lock.
+func Writable(path string) error {
+	c, err := load(path)
+	if err != nil {
+		return err
+	}
+	return c.writable(path)
+}
+
+// writable refuses a catalog with unknown keys: a write keeps only the keys
+// this werft knows, so it would delete what a newer werft recorded.
+func (c catalog) writable(path string) error {
+	if len(c.unknown) > 0 {
+		return failure.New(failure.Unsupported, "%s has unknown keys %s: a newer werft wrote it; update werft",
+			path, strings.Join(c.unknown, ", "))
+	}
+	return nil
 }
 
 // add appends r to the images.toml at path. The caller holds the global
@@ -80,6 +110,9 @@ func load(path string) (catalog, error) {
 func add(path string, r Record) error {
 	c, err := load(path)
 	if err != nil {
+		return err
+	}
+	if err := c.writable(path); err != nil {
 		return err
 	}
 	c.Images = append(c.Images, r)
@@ -91,6 +124,9 @@ func add(path string, r Record) error {
 func drop(path string, gone []string) error {
 	c, err := load(path)
 	if err != nil {
+		return err
+	}
+	if err := c.writable(path); err != nil {
 		return err
 	}
 	c.Images = slices.DeleteFunc(c.Images, func(r Record) bool { return slices.Contains(gone, r.Name) })
