@@ -6,6 +6,32 @@ import (
 	"github.com/hk9890/werft/internal/virt"
 )
 
+func TestNewestLease(t *testing.T) {
+	a := virt.DHCPLease{IP: "192.168.122.5", Expiry: 100}
+	b := virt.DHCPLease{IP: "192.168.122.9", Expiry: 200}
+	forever := virt.DHCPLease{IP: "192.168.122.7"}
+	tests := []struct {
+		name   string
+		leases []virt.DHCPLease
+		want   string
+	}{
+		{"none", nil, ""},
+		{"one", []virt.DHCPLease{a}, a.IP},
+		{"one that never expires", []virt.DHCPLease{forever}, forever.IP},
+		{"newest last", []virt.DHCPLease{a, b}, b.IP},
+		{"newest first", []virt.DHCPLease{b, a}, b.IP},
+		{"tie", []virt.DHCPLease{b, {IP: "192.168.122.8", Expiry: 200}}, ""},
+		{"never expires beside another", []virt.DHCPLease{a, forever}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := virt.NewestLease(tt.leases); got != tt.want {
+				t.Errorf("NewestLease = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewLeases(t *testing.T) {
 	old := virt.DHCPLease{IP: "192.168.122.5", Expiry: 100}
 	tests := []struct {

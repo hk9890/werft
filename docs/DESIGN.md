@@ -305,8 +305,9 @@ running lists no address: the address of its last boot is stale, and a start can
 one. `werft start` writes the new address to the lease `ssh_config` (`lease.Readdress`). A start
 outside werft does not. At a DHCP address, neither does a start whose guest shows no new lease in
 60 seconds, such as a LUKS guest that waits for its password: werft warns, and the file keeps the
-old address until the next stop and start. A `werft start` of a running lease does not write the
-file, because libvirt can still list an old lease beside the current one.
+old address. A `werft start` of the running lease then repairs it (`lease.ReaddressRunning`) with
+the DHCP lease that expires last, because libvirt can still list an old lease beside the current
+one. When the leases show no newest one, the file stays and werft warns.
 
 `werft extend <lease-id> [--for duration]` (`lease.Extend`) adds `--for` (default 4 hours) to the
 expiry, under the global lock, and writes the metadata again with `SetDomainMetadata`. An expired

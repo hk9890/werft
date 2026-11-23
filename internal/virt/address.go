@@ -46,6 +46,33 @@ func NewLeases(before, now []DHCPLease) []DHCPLease {
 	return out
 }
 
+// NewestLease is the IP of the lease that expires last: a running guest
+// renews its current lease, and an old one does not renew. It is empty when
+// the leases do not show one newest lease: none, a tie, or a lease that never
+// expires beside another.
+func NewestLease(leases []DHCPLease) string {
+	if len(leases) == 1 {
+		return leases[0].IP
+	}
+	var newest DHCPLease
+	tie := false
+	for _, l := range leases {
+		if l.Expiry == 0 {
+			return ""
+		}
+		if l.Expiry == newest.Expiry {
+			tie = true
+		}
+		if l.Expiry > newest.Expiry {
+			newest, tie = l, false
+		}
+	}
+	if tie {
+		return ""
+	}
+	return newest.IP
+}
+
 func domainAddresses(h Hypervisor, name string) (cid string, leases []DHCPLease, err error) {
 	text, err := h.DomainXML(name, false)
 	if err != nil {

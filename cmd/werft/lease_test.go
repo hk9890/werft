@@ -723,7 +723,7 @@ func TestStartWritesTheNewAddressOfALease(t *testing.T) {
 	if err := guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: "192.168.122.50"}, "key"); err != nil {
 		t.Fatal(err)
 	}
-	lh.lease = &virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.51"}
+	lh.lease = &virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.51", Expiry: 1000}
 	if r := lh.run("start", name); r.code != 0 {
 		t.Fatalf("start = %+v", r)
 	}
@@ -735,16 +735,17 @@ func TestStartWritesTheNewAddressOfALease(t *testing.T) {
 		t.Errorf("ssh_config = %s, want the new address", got)
 	}
 
-	// A start of the running lease leaves the file: libvirt can list an old
-	// lease beside the current one.
+	// A start of the running lease repairs a stale file with the newest
+	// lease: libvirt can list an old lease beside the current one.
 	if err := guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: "192.168.122.50"}, "key"); err != nil {
 		t.Fatal(err)
 	}
+	lh.fake.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.49", Expiry: 500})
 	if r := lh.run("start", name); r.code != 0 {
 		t.Fatalf("start of the running lease = %+v", r)
 	}
-	if got, _ := os.ReadFile(config); !strings.Contains(string(got), "HostName 192.168.122.50\n") {
-		t.Errorf("ssh_config after a start of the running lease = %s, want it unchanged", got)
+	if got, _ := os.ReadFile(config); !strings.Contains(string(got), "HostName 192.168.122.51\n") {
+		t.Errorf("ssh_config after a start of the running lease = %s, want the newest lease", got)
 	}
 
 	// The VM did start, so a failed write is a warning and not a failure.
@@ -755,7 +756,7 @@ func TestStartWritesTheNewAddressOfALease(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(config), 0o700) })
-	lh.lease = &virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.52"}
+	lh.lease = &virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.52", Expiry: 2000}
 	if r := lh.run("start", name); r.code != 0 || !strings.Contains(r.stderr, "can hold an old address") {
 		t.Errorf("start with a read-only lease directory = %+v, want exit 0 and a warning", r)
 	}

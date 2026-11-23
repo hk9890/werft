@@ -207,6 +207,17 @@ func Readdress(e Env, domain, addr string) error {
 	return nil
 }
 
+// ReaddressRunning repairs the ssh_config of a lease that already runs, whose
+// address came after the wait of its start. libvirt can list an old lease
+// beside the current one, so only the newest lease counts.
+func ReaddressRunning(e Env, domain string) error {
+	leases, err := virt.DomainLeases(e.H, domain)
+	if err != nil {
+		return err
+	}
+	return Readdress(e, domain, virt.NewestLease(leases))
+}
+
 // expired is true from the expiry on. A lease without a readable expiry
 // never expires: reap keeps what it cannot judge.
 func (l Lease) expired(now time.Time) bool {

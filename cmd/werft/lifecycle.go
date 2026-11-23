@@ -139,8 +139,8 @@ func (c *cli) cmdStart(args []string) error {
 	if addr == "" {
 		c.progress("No address yet; werft list shows it once the guest is up")
 	}
-	if !started.AlreadyRunning && strings.HasPrefix(name, leasePrefix) {
-		c.readdressLease(h, name, addr)
+	if strings.HasPrefix(name, leasePrefix) {
+		c.readdressLease(h, name, addr, started.AlreadyRunning)
 	}
 	c.output(map[string]any{"domain": name, "state": "running", "already_running": started.AlreadyRunning, "address": addr},
 		func(w io.Writer) {
@@ -153,9 +153,13 @@ func (c *cli) cmdStart(args []string) error {
 
 // readdressLease brings the ssh_config of a started lease up to date. The VM
 // did start, so a failure here is only a warning.
-func (c *cli) readdressLease(h virt.Hypervisor, name, addr string) {
+func (c *cli) readdressLease(h virt.Hypervisor, name, addr string, running bool) {
 	dir, err := state.Root()
-	if err == nil {
+	switch {
+	case err != nil:
+	case running:
+		err = lease.ReaddressRunning(c.leaseEnv(h, dir), name)
+	default:
 		err = lease.Readdress(c.leaseEnv(h, dir), name, addr)
 	}
 	if err != nil {
