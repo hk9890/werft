@@ -5,6 +5,7 @@ package lease
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
@@ -176,6 +177,10 @@ func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 	}
 	if o.Desktop && !steps.HasDesktop(rec.Family) {
 		return Lease{}, failure.New(failure.Unsupported, "%s is a %q guest; --desktop logs in only to an ubuntu or omarchy guest", rec.Name, rec.Family)
+	}
+	if o.Desktop && rec.Systemd == guest.TCPSystemd {
+		return Lease{}, failure.New(failure.Unsupported, "%s has systemd %d; --desktop sends the guest password over SSH, and on this guest werft cannot check the host key of its TCP address; it needs systemd %d or later",
+			rec.Name, rec.Systemd, guest.VsockSystemd)
 	}
 	password, err := diskPassword(e, rec)
 	if err != nil {
@@ -355,9 +360,18 @@ func reserve(e Env, rec image.Record, o Options, tmpl *libvirtxml.Domain) (Lease
 		return fail(err)
 	}
 	l.overlay = overlay.Name
-	d, err := domxml.Lease(tmpl, l.Domain, stockDisk, overlay.Path, vars, metadata(l, "werft:"), credentials(l.Domain, rec.User, strings.TrimSpace(string(pub))))
+	key := strings.TrimSpace(string(pub))
+	tcp := rec.Systemd == guest.TCPSystemd
+	creds := credentials(l.Domain, rec.User, key)
+	if tcp {
+		creds = tcpCredentials(l.Domain, rec.User, key)
+	}
+	d, err := domxml.Lease(tmpl, l.Domain, stockDisk, overlay.Path, vars, metadata(l, "werft:"), creds)
 	if err != nil {
 		return fail(failure.Wrap(failure.Failed, err, "build the lease domain"))
+	}
+	if tcp {
+		domxml.RemoveVsock(d)
 	}
 	text, err := d.Marshal()
 	if err != nil {
@@ -540,6 +554,27 @@ func credentials(hostname, user, pub string) []domxml.Credential {
 		{Name: "werft.ssh.authorized_keys", Value: []byte("\n" + pub + "\n")},
 		{Name: "tmpfiles.extra", Value: []byte(tmpfiles)},
 		{Name: "systemd.unit-dropin.systemd-tmpfiles-setup.service", Value: []byte("[Service]\nImportCredential=werft.*\n")},
+	}
+}
+
+// tcpCredentials are the credentials of a systemd 255 guest, which reads
+// system.machine_id and imports tmpfiles.extra, and ignores system.hostname
+// and unit drop-ins. The tmpfiles lines carry the hostname and the lease key
+// inline.
+func tcpCredentials(hostname, user, pub string) []domxml.Credential {
+	encode := base64.StdEncoding.EncodeToString
+	home := "/home/" + user
+	tmpfiles := strings.Join([]string{
+		"f~ /etc/hostname 0644 root root - " + encode([]byte(hostname+"\n")),
+		"w~ /proc/sys/kernel/hostname - - - - " + encode([]byte(hostname)),
+		"w+~ /etc/hosts - - - - " + encode([]byte("\n127.0.1.1\t"+hostname+"\n")),
+		fmt.Sprintf("d %s/.ssh 0700 %s %s -", home, user, user),
+		fmt.Sprintf("f %s/.ssh/authorized_keys 0600 %s %s -", home, user, user),
+		fmt.Sprintf("w+~ %s/.ssh/authorized_keys - - - - %s", home, encode([]byte("\n"+pub+"\n"))),
+	}, "\n") + "\n"
+	return []domxml.Credential{
+		{Name: "system.machine_id", Value: []byte(newMachineID())},
+		{Name: "tmpfiles.extra", Value: []byte(tmpfiles)},
 	}
 }
 

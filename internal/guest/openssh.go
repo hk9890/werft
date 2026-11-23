@@ -19,11 +19,20 @@ const SSHProxy = "/usr/lib/systemd/systemd-ssh-proxy"
 // Config, which WriteConfig writes. The user's own ssh_config never applies,
 // so its SendEnv LC_* does not hand the host's locale to a guest without it.
 // KeyOnly offers the werft key alone, so a login tells whether the guest
-// accepts it.
+// accepts it. KeepAlive makes ssh end a session at a TCP address whose peer
+// went silent; a vsock address keeps its behavior.
 type OpenSSH struct {
-	Config  string
-	KeyOnly bool
+	Config    string
+	KeyOnly   bool
+	KeepAlive bool
 }
+
+// A guest that dies sends no FIN or RST, so without these ssh waits for the
+// TCP keepalive of the host, about two hours.
+const (
+	serverAliveInterval = 15
+	serverAliveCountMax = 4
+)
 
 // LoginPause is the pause after the attempt-th SSH login of a wait that
 // failed: 1s, then doubling up to 8s. The attempts stay few on purpose: sshd
@@ -59,6 +68,10 @@ func (o OpenSSH) Args(addr Addr, cmd string) []string {
 	args := []string{"-F", o.Config}
 	if o.KeyOnly {
 		args = append(args, "-P", keyOnlyTag)
+	}
+	if o.KeepAlive && !strings.HasPrefix(addr.Host, "vsock/") {
+		args = append(args, "-o", fmt.Sprintf("ServerAliveInterval=%d", serverAliveInterval),
+			"-o", fmt.Sprintf("ServerAliveCountMax=%d", serverAliveCountMax))
 	}
 	args = append(args, addr.String())
 	if cmd != "" {
@@ -114,6 +127,8 @@ func WriteHostConfig(path, alias string, addr Addr, key string) error {
 	if strings.HasPrefix(addr.Host, "vsock/") {
 		fmt.Fprintf(&b, "  ProxyCommand %s %%h %%p\n", SSHProxy)
 		b.WriteString("  ProxyUseFdpass yes\n")
+	} else {
+		fmt.Fprintf(&b, "  ServerAliveInterval %d\n  ServerAliveCountMax %d\n", serverAliveInterval, serverAliveCountMax)
 	}
 	fmt.Fprintf(&b, "  IdentityFile %s\n", key)
 	b.WriteString("  IdentitiesOnly yes\n")

@@ -26,7 +26,10 @@ the test image is missing.
    ```
 
    Set `WERFT_TEST_IMAGE` to use another UEFI cloud image.
-3. Run `mise run test:live`.
+3. For a test on systemd 255, download `ubuntu-24.04-minimal-cloudimg-amd64.img` the same way from
+   `https://cloud-images.ubuntu.com/minimal/releases/noble/release/`. Set `WERFT_TEST_IMAGE_255`
+   to use another image. `livetest.NewTCPGuest` skips the test when the image is missing.
+4. Run `mise run test:live`.
 
 What a run creates:
 
@@ -72,6 +75,11 @@ Build on `internal/livetest`; `internal/virt/libvirt/uefi_reset_live_test.go` is
   as the `ssh.ephemeral-authorized_keys-all` credential. The cloud image has no SSH host keys and
   no network configuration, so the guest gets two more credentials: a `sshd-vsock@` drop-in that
   runs `ssh-keygen -A`, and a networkd DHCP file.
+- For a systemd 255 guest, create the domain with `livetest.NewTCPGuest`. It has no vsock device.
+  `Guest.Boot` and `Guest.SSH` use root at the DHCP address, with the key, the networkd file and
+  the host-key units of `seal.sh` in `tmpfiles.extra`. An OEM string is in the argv of QEMU, so it
+  holds no private key. `Guest.Boot` boots twice: the guest reads these files only at the second
+  boot.
 - Call `Guest.Run` and `Guest.Boot` only from the test goroutine, not from a subtest: they fail
   the test they were made for.
 - Add a control step that shows the effect you assert away is real.

@@ -109,7 +109,7 @@ func rootShell() (sh guest.Shell, pubkey string, cleanup func(), err error) {
 		cleanup()
 		return nil, "", nil, failure.Wrap(failure.Failed, err, "set up the seal key")
 	}
-	return guest.OpenSSH{Config: config}, strings.TrimSpace(string(pub)), cleanup, nil
+	return guest.OpenSSH{Config: config, KeepAlive: true}, strings.TrimSpace(string(pub)), cleanup, nil
 }
 
 // openViewer opens virt-viewer in a session of its own, so the window

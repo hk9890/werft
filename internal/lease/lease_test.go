@@ -238,6 +238,117 @@ func TestStartOverDHCP(t *testing.T) {
 	if !strings.Contains(string(config), "HostName 192.168.122.40") || strings.Contains(string(config), "ProxyCommand") {
 		t.Errorf("ssh_config:\n%s", config)
 	}
+	text, err := f.DomainXML(l.Domain, true)
+	must(t, err)
+	if strings.Contains(text, "<vsock") {
+		t.Errorf("a systemd 255 lease has a vsock device:\n%s", text)
+	}
+	creds := credentialsOf(t, text)
+	if len(creds) != 2 || len(creds["system.machine_id"]) != 32 {
+		t.Fatalf("credentials = %q, want system.machine_id and tmpfiles.extra", creds)
+	}
+	encode := base64.StdEncoding.EncodeToString
+	want := strings.Join([]string{
+		"f~ /etc/hostname 0644 root root - " + encode([]byte(l.Domain+"\n")),
+		"w~ /proc/sys/kernel/hostname - - - - " + encode([]byte(l.Domain)),
+		"w+~ /etc/hosts - - - - " + encode([]byte("\n127.0.1.1\t"+l.Domain+"\n")),
+		"d /home/tester/.ssh 0700 tester tester -",
+		"f /home/tester/.ssh/authorized_keys 0600 tester tester -",
+		"w+~ /home/tester/.ssh/authorized_keys - - - - " + encode([]byte("\nssh-ed25519 AAAAlease werft\n")),
+	}, "\n") + "\n"
+	if creds["tmpfiles.extra"] != want {
+		t.Errorf("tmpfiles.extra =\n%s\nwant\n%s", creds["tmpfiles.extra"], want)
+	}
+}
+
+// credentialsOf decodes the SMBIOS credentials of a domain definition.
+func credentialsOf(t *testing.T, text string) map[string]string {
+	t.Helper()
+	d, err := domxml.Parse(text)
+	must(t, err)
+	creds := map[string]string{}
+	for _, entry := range d.SysInfo[0].SMBIOS.OEMStrings.Entry {
+		name, value, _ := strings.Cut(strings.TrimPrefix(entry, "io.systemd.credential.binary:"), "=")
+		data, err := base64.StdEncoding.DecodeString(value)
+		must(t, err)
+		creds[name] = string(data)
+	}
+	return creds
+}
+
+// TestStartRefusesDesktopOnSystemd255: the guest password would go to a TCP
+// peer whose host key werft cannot check. The refusal comes before any secret
+// read and before the lease reserves anything.
+func TestStartRefusesDesktopOnSystemd255(t *testing.T) {
+	f := world(t)
+	rec := luksRecord()
+	rec.Systemd = 255
+	e := env(t, f, &shell{up: true})
+	e.Secrets, e.Terminal = failingSecrets{t}, failingSecrets{t}
+	before := len(f.Calls())
+	_, err := lease.Start(e, rec, lease.Options{Owner: "agent", Desktop: true})
+	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "--desktop") {
+		t.Fatalf("Start = %v, want unsupported for --desktop", err)
+	}
+	if calls := f.Calls()[before:]; len(calls) != 0 {
+		t.Errorf("Start touched libvirt: %q", calls)
+	}
+	if entries, _ := os.ReadDir(e.Dir.Leases()); len(entries) != 0 {
+		t.Errorf("lease directories left: %v", entries)
+	}
+}
+
+// failingSecrets fails the test on any secret read.
+type failingSecrets struct{ t *testing.T }
+
+func (s failingSecrets) Lookup(map[string]string) (string, error) {
+	s.t.Error("Start read the keyring")
+	return "", failure.New(failure.SecretUnavailable, "no read")
+}
+
+func (s failingSecrets) Show(string) (string, error) {
+	s.t.Error("Start read pass")
+	return "", failure.New(failure.SecretUnavailable, "no read")
+}
+
+func (s failingSecrets) ReadSecret(string) (string, error) {
+	s.t.Error("Start read the terminal")
+	return "", failure.New(failure.SecretUnavailable, "no read")
+}
+
+// TestStartKeepsTheCredentialsAt259 pins the credentials of a guest with SSH
+// over vsock.
+func TestStartKeepsTheCredentialsAt259(t *testing.T) {
+	f := world(t)
+	l, err := lease.Start(env(t, f, &shell{up: true}), record(), lease.Options{Owner: "agent"})
+	must(t, err)
+	text, err := f.DomainXML(l.Domain, true)
+	must(t, err)
+	if !strings.Contains(text, "<vsock") {
+		t.Errorf("the lease has no vsock device:\n%s", text)
+	}
+	creds := credentialsOf(t, text)
+	if len(creds["system.machine_id"]) != 32 {
+		t.Errorf("machine-id = %q", creds["system.machine_id"])
+	}
+	delete(creds, "system.machine_id")
+	want := map[string]string{
+		"system.hostname":                   l.Domain,
+		"ssh.ephemeral-authorized_keys-all": "ssh-ed25519 AAAAlease werft\n",
+		"werft.ssh.authorized_keys":         "\nssh-ed25519 AAAAlease werft\n",
+		"tmpfiles.extra": "d /home/tester/.ssh 0700 tester tester -\n" +
+			"f /home/tester/.ssh/authorized_keys 0600 tester tester -\n" +
+			"w+^ /home/tester/.ssh/authorized_keys - - - - werft.ssh.authorized_keys\n",
+		"systemd.unit-dropin.systemd-tmpfiles-setup.service": "[Service]\nImportCredential=werft.*\n",
+	}
+	if len(creds) != len(want) {
+		t.Errorf("credentials = %q, want %q", creds, want)
+	}
+	for name, value := range want {
+		if creds[name] != value {
+			t.Errorf("%s = %q, want %q", name, creds[name], value)
+		}
+	}
 }
 
 func TestStartFailsAndReleases(t *testing.T) {

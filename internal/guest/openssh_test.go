@@ -111,3 +111,45 @@ func TestWriteHostConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestKeepAliveIsForTCP asks ssh how it resolves each path: a TCP session ends
+// when its peer goes silent, and a vsock session keeps its behavior.
+func TestKeepAliveIsForTCP(t *testing.T) {
+	dir := t.TempDir()
+	config, host := filepath.Join(dir, "ssh_config"), filepath.Join(dir, "host_config")
+	if err := guest.WriteConfig(config, "/state/id_ed25519"); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("ssh", append([]string{"-G"}, args...)...).Output()
+		if err != nil {
+			t.Skipf("no ssh -G: %v", err)
+		}
+		return string(out)
+	}
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"seal at an IP", guest.OpenSSH{Config: config, KeepAlive: true}.Args(guest.Addr{User: "root", Host: "192.0.2.1"}, ""), true},
+		{"seal at vsock", guest.OpenSSH{Config: config, KeepAlive: true}.Args(guest.Addr{User: "root", Host: "vsock/7"}, ""), false},
+		{"build VM at an IP", guest.OpenSSH{Config: config}.Args(guest.Addr{User: "tester", Host: "192.0.2.1"}, ""), false},
+	}
+	for _, tt := range tests {
+		got := resolve(tt.args...)
+		if has := strings.Contains(got, "serveraliveinterval 15\n") && strings.Contains(got, "serveralivecountmax 4\n"); has != tt.want {
+			t.Errorf("%s: keepalive %v, want %v ", tt.name, has, tt.want)
+		}
+	}
+	for addr, want := range map[string]bool{"192.0.2.1": true, "vsock/7": false} {
+		if err := guest.WriteHostConfig(host, "abc123", guest.Addr{User: "tester", Host: addr}, "/k"); err != nil {
+			t.Fatal(err)
+		}
+		got := resolve("-F", host, "abc123")
+		if has := strings.Contains(got, "serveraliveinterval 15\n"); has != want {
+			t.Errorf("lease at %s: keepalive %v, want %v", addr, has, want)
+		}
+	}
+}
