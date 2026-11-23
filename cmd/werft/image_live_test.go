@@ -48,6 +48,7 @@ func TestSealLive(t *testing.T) {
 	src.Boot()
 	addImageUser(src, u.Username, werftKey, ownKey.Public)
 	before := src.Run(identity)
+	regularDBusMachineID(src)
 	src.Poweroff()
 	werftJSON(t, 0, "snapshot", src.Name, "provision-base")
 	src.Boot()
@@ -131,6 +132,12 @@ printf '%%s werft\n%%s\n' '%[2]s' '%[3]s' > ~%[1]s/.ssh/authorized_keys
 chown %[1]s: ~%[1]s/.ssh/authorized_keys
 echo %[4]s > /etc/hostname
 sync`, user, werftKey, ownKey, src.Name))
+}
+
+// regularDBusMachineID is the control of the D-Bus check of inspectStockDisk:
+// the source holds the regular file that seal must turn into a link.
+func regularDBusMachineID(src *livetest.Guest) {
+	src.Run("mkdir -p /var/lib/dbus && rm -f /var/lib/dbus/machine-id && cp /etc/machine-id /var/lib/dbus/machine-id && test -f /var/lib/dbus/machine-id && test ! -L /var/lib/dbus/machine-id && sync")
 }
 
 // inspectStockDisk reads the root file system of the stock disk. The disk
@@ -323,6 +330,7 @@ func TestSeal255Live(t *testing.T) {
 		t.Fatalf("the test image has systemd %q, want 255", v)
 	}
 	addImageUser(src, u.Username, publicKey(dir.SSHKey()+".pub"), livetest.NewKey(t).Public)
+	regularDBusMachineID(src)
 	src.Poweroff()
 	livetest.Must(t, h.SetDomainDescription(src.Name, domxml.SystemdLine(255)), "set the systemd line")
 	werftJSON(t, 0, "snapshot", src.Name, "provision-base")

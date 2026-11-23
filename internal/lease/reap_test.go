@@ -219,6 +219,44 @@ func TestReaddress(t *testing.T) {
 	}
 }
 
+// TestReaddressLeavesALeaseWithoutSSHConfig: a lease that still boots has no
+// ssh_config, and a start does not make one.
+func TestReaddressLeavesALeaseWithoutSSHConfig(t *testing.T) {
+	const domain, id = "werft-vm-plain-abc123", "abc123"
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	defineLease(t, f, domain, "<werft:state>"+string(e.Dir)+"</werft:state>")
+	config := filepath.Join(e.Dir.Lease(id), "ssh_config")
+	must(t, os.MkdirAll(filepath.Dir(config), 0o700))
+	must(t, lease.Readdress(e, domain, "192.168.122.51"))
+	if _, err := os.Stat(config); !os.IsNotExist(err) {
+		t.Errorf("Readdress made an ssh_config: %v", err)
+	}
+}
+
+// TestReaddressFailsWhenItCannotWrite: a lease directory that takes no new
+// file gives failed, and the old ssh_config stays.
+func TestReaddressFailsWhenItCannotWrite(t *testing.T) {
+	const domain, id, old = "werft-vm-plain-abc123", "abc123", "192.168.122.50"
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	defineLease(t, f, domain, "<werft:state>"+string(e.Dir)+"</werft:state>")
+	dir := e.Dir.Lease(id)
+	config := filepath.Join(dir, "ssh_config")
+	must(t, os.MkdirAll(dir, 0o700))
+	must(t, guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: old}, "key"))
+	must(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := lease.Readdress(e, domain, "192.168.122.51"); !failure.Is(err, failure.Failed) {
+		t.Errorf("Readdress = %v, want failed", err)
+	}
+	got, err := os.ReadFile(config)
+	must(t, err)
+	if !strings.Contains(string(got), "HostName "+old+"\n") {
+		t.Errorf("ssh_config = %s, want the old address", got)
+	}
+}
+
 // TestReaddressTakesTheVsockCID: the CID of the running domain replaces a
 // stale one, also when the start saw no fresh address.
 func TestReaddressTakesTheVsockCID(t *testing.T) {
