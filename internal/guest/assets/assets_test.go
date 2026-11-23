@@ -49,6 +49,17 @@ func runSealTCP(t *testing.T, version, keys string) (dir string, out []byte, err
 	if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte(stub), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	for name, body := range map[string]string{
+		"getent": "#!/bin/sh\necho \"tester:x:1000:1000::${STUB_HOME:-/home/tester}:/bin/sh\"\n",
+		"id":     "#!/bin/sh\necho \"${STUB_GROUP:-tester}\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hosts"), []byte("127.0.0.1\tlocalhost\n127.0.1.1\tbuildvm\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "dbus/machine-id"), []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +71,7 @@ func runSealTCP(t *testing.T, version, keys string) (dir string, out []byte, err
 	script := strings.NewReplacer(
 		"/root/.ssh/authorized_keys", filepath.Join(dir, "root/.ssh/authorized_keys"),
 		"/var/lib/dbus/machine-id", filepath.Join(dir, "dbus/machine-id"),
+		"/etc/hosts", filepath.Join(dir, "hosts"),
 	).Replace(assets.SealTCP)
 	c := exec.Command("sh", "-c", script, "sh", "tester", "", sealKey)
 	c.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
@@ -97,6 +109,30 @@ func TestSealTCPRemovesOnlyTheRunKey(t *testing.T) {
 			link, err := os.Readlink(filepath.Join(dir, "dbus/machine-id"))
 			if err != nil || link != "/etc/machine-id" {
 				t.Errorf("D-Bus machine-id link = %q, %v", link, err)
+			}
+			hosts, err := os.ReadFile(filepath.Join(dir, "hosts"))
+			if err != nil || string(hosts) != "127.0.0.1\tlocalhost\n" {
+				t.Errorf("hosts = %q, %v; the build VM name must go", hosts, err)
+			}
+		})
+	}
+}
+
+func TestSealTCPRefusesAUserALeaseCannotReach(t *testing.T) {
+	tests := map[string]struct{ home, group string }{
+		"another home":  {"/var/home/tester", "tester"},
+		"another group": {"/home/tester", "users"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("STUB_HOME", tt.home)
+			t.Setenv("STUB_GROUP", tt.group)
+			dir, _, err := runSealTCP(t, "255", sealKey+"\n")
+			if err == nil {
+				t.Fatal("seal-tcp.sh passed")
+			}
+			if got, err := os.ReadFile(filepath.Join(dir, "dbus/machine-id")); err != nil || string(got) != "old\n" {
+				t.Errorf("D-Bus machine-id = %q, %v; a refused run must leave it", got, err)
 			}
 		})
 	}

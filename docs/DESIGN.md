@@ -460,7 +460,9 @@ Both tiers run the same steps:
 6. At systemd 255, first run `internal/guest/assets/seal-tcp.sh`: check the version, remove the run
    key from `/root/.ssh/authorized_keys` and verify the removal, and replace a regular
    `/var/lib/dbus/machine-id` with a link to `/etc/machine-id`, because that file wins over the
-   machine-id credential of a lease.
+   machine-id credential of a lease. It also removes the `127.0.1.1` line of the build VM from
+   `/etc/hosts`, and fails unless `$USER` has the home `/home/$USER` and the primary group `$USER`:
+   a 255 lease writes its key there.
    Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
    systemd version; empty `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
    werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest
