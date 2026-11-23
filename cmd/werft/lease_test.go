@@ -701,6 +701,41 @@ func TestLeaseDesktopReadsTheRecipeGuestPassword(t *testing.T) {
 	}
 }
 
+// TestStartWritesTheNewAddressOfALease: werft start of a stopped lease
+// brings its ssh_config to the address of the new boot.
+func TestStartWritesTheNewAddressOfALease(t *testing.T) {
+	const name, id = "werft-vm-plain-abc123", "abc123"
+	lh := newLifecycleHost(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir, err := state.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := "<metadata><werft:lease xmlns:werft='" + lease.Namespace + "'><werft:state>" + string(dir) + "</werft:state></werft:lease></metadata>"
+	if _, err := lh.fake.DefineDomain(strings.Replace(lifecycleVM(lh.nvramDir), "<name>vm1</name>", "<name>"+name+"</name>"+metadata, 1)); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir.Lease(id), "ssh_config")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: "192.168.122.50"}, "key"); err != nil {
+		t.Fatal(err)
+	}
+	lh.lease = &virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.51"}
+	if r := lh.run("start", name); r.code != 0 {
+		t.Fatalf("start = %+v", r)
+	}
+	got, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "HostName 192.168.122.51\n") {
+		t.Errorf("ssh_config = %s, want the new address", got)
+	}
+}
+
 // TestLeaseDesktopAt255IgnoresAMissingRecipe: --desktop at systemd 255 fails
 // with unsupported, also when the recipe config.toml names does not exist.
 func TestLeaseDesktopAt255IgnoresAMissingRecipe(t *testing.T) {

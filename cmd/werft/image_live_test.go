@@ -148,6 +148,9 @@ func inspectStockDisk(t *testing.T, h virt.Hypervisor, disk string) func(cmd str
 	if id := debugfs("stat /etc/machine-id"); !strings.Contains(id, "Size: 0") {
 		t.Errorf("/etc/machine-id of the stock disk is not empty:\n%s", id)
 	}
+	if dbus := debugfs("stat /var/lib/dbus/machine-id"); strings.Contains(dbus, "Type: regular") {
+		t.Errorf("/var/lib/dbus/machine-id of the stock disk is a regular file:\n%s", dbus)
+	}
 	return debugfs
 }
 
@@ -344,9 +347,6 @@ func TestSeal255Live(t *testing.T) {
 	// tmpfiles appends the key of the source at each of its boots.
 	if len(rootKeys) == 0 || slices.ContainsFunc(rootKeys, func(k string) bool { return k != src.Key.Public }) {
 		t.Errorf("root keys of the stock disk = %q, want only the key of the source", rootKeys)
-	}
-	if dbus := debugfs("stat /var/lib/dbus/machine-id"); strings.Contains(dbus, "Type: regular") {
-		t.Errorf("/var/lib/dbus/machine-id of the stock disk is a regular file:\n%s", dbus)
 	}
 
 	docs := parallelLeases(t, h, prefix, []string{"lease", src.Name}, []string{"lease", src.Name})

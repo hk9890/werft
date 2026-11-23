@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/virt"
 )
@@ -170,6 +172,39 @@ func withState(e Env, l Lease) (Lease, error) {
 		l.Address = ""
 	}
 	return l, nil
+}
+
+// Readdress writes the address a start of domain gave it to the lease
+// ssh_config. addr is the fresh address of that start, or empty; a vsock CID
+// of the running domain goes first. A domain that is no lease of this state
+// directory, or that has no ssh_config yet, stays as it is.
+func Readdress(e Env, domain, addr string) error {
+	if !namePattern(e.Prefix).MatchString(domain) {
+		return nil
+	}
+	all, err := scan(e)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(all, func(f found) bool { return f.Domain == domain })
+	if i < 0 || all[i].owner == foreign || all[i].User == "" {
+		return nil
+	}
+	f := all[i]
+	if cid, _ := virt.DomainAddresses(e.H, domain); cid != "" {
+		addr = cid
+	}
+	if addr == "" {
+		e.printf("warning: no new address for lease %s; its ssh_config can hold an old one", f.ID)
+		return nil
+	}
+	if addr == f.Address {
+		return nil
+	}
+	if err := guest.WriteHostConfig(f.SSHConfig, f.ID, guest.Addr{User: f.User, Host: addr}, f.Key); err != nil {
+		return failure.Wrap(failure.Failed, err, "write the ssh_config of lease %s", f.ID)
+	}
+	return nil
 }
 
 // expired is true from the expiry on. A lease without a readable expiry

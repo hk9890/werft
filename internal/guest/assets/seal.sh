@@ -3,8 +3,10 @@
 # own user, $2 the werft key prepare installed for it, as "<type> <base64>",
 # or empty. It removes the identity of the build VM, so each lease gets its
 # own: the machine-id, the hostname and the SSH host keys. An empty
-# machine-id makes systemd take a new one at the next boot. A static
-# hostname would override the hostname credential of a lease.
+# machine-id makes systemd take a new one at the next boot. A regular D-Bus
+# machine-id file would win over the machine-id credential of a lease, so it
+# becomes a link. A static hostname would override the hostname credential of
+# a lease.
 # A guest without host keys accepts a vsock connection and closes it at once,
 # so sshd makes them before it starts: in the vsock instances of
 # systemd-ssh-generator, and through a oneshot for the TCP units.
@@ -19,6 +21,9 @@ if [ -d /usr/share/omarchy ]; then echo omarchy; else echo ubuntu; fi
 systemctl --version | sed -n '1s/^systemd \([0-9]*\).*/\1/p'
 
 : >/etc/machine-id
+if [ -f /var/lib/dbus/machine-id ] && [ ! -L /var/lib/dbus/machine-id ]; then
+	ln -sf /etc/machine-id /var/lib/dbus/machine-id
+fi
 rm -f /etc/hostname /etc/ssh/ssh_host_*
 
 keys=$home/.ssh/authorized_keys

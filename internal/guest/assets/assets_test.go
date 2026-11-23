@@ -40,7 +40,7 @@ func runSealTCP(t *testing.T, version, keys string) (dir string, out []byte, err
 	t.Helper()
 	dir = t.TempDir()
 	bin := filepath.Join(dir, "bin")
-	for _, d := range []string{bin, filepath.Join(dir, "root/.ssh"), filepath.Join(dir, "dbus")} {
+	for _, d := range []string{bin, filepath.Join(dir, "root/.ssh")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -60,9 +60,6 @@ func runSealTCP(t *testing.T, version, keys string) (dir string, out []byte, err
 	if err := os.WriteFile(filepath.Join(dir, "hosts"), []byte("127.0.0.1\tlocalhost\n127.0.1.1\tbuildvm\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "dbus/machine-id"), []byte("old\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	if keys != "" {
 		if err := os.WriteFile(filepath.Join(dir, "root/.ssh/authorized_keys"), []byte(keys), 0o600); err != nil {
 			t.Fatal(err)
@@ -70,7 +67,6 @@ func runSealTCP(t *testing.T, version, keys string) (dir string, out []byte, err
 	}
 	script := strings.NewReplacer(
 		"/root/.ssh/authorized_keys", filepath.Join(dir, "root/.ssh/authorized_keys"),
-		"/var/lib/dbus/machine-id", filepath.Join(dir, "dbus/machine-id"),
 		"/etc/hosts", filepath.Join(dir, "hosts"),
 	).Replace(assets.SealTCP)
 	c := exec.Command("sh", "-c", script, "sh", "tester", "", sealKey)
@@ -106,10 +102,6 @@ func TestSealTCPRemovesOnlyTheRunKey(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(dir, "root/.ssh/authorized_keys.werft")); !os.IsNotExist(err) {
 				t.Errorf("the temporary file is left: %v", err)
 			}
-			link, err := os.Readlink(filepath.Join(dir, "dbus/machine-id"))
-			if err != nil || link != "/etc/machine-id" {
-				t.Errorf("D-Bus machine-id link = %q, %v", link, err)
-			}
 			hosts, err := os.ReadFile(filepath.Join(dir, "hosts"))
 			if err != nil || string(hosts) != "127.0.0.1\tlocalhost\n" {
 				t.Errorf("hosts = %q, %v; the build VM name must go", hosts, err)
@@ -131,8 +123,8 @@ func TestSealTCPRefusesAUserALeaseCannotReach(t *testing.T) {
 			if err == nil {
 				t.Fatal("seal-tcp.sh passed")
 			}
-			if got, err := os.ReadFile(filepath.Join(dir, "dbus/machine-id")); err != nil || string(got) != "old\n" {
-				t.Errorf("D-Bus machine-id = %q, %v; a refused run must leave it", got, err)
+			if got, err := os.ReadFile(filepath.Join(dir, "hosts")); err != nil || !strings.Contains(string(got), "127.0.1.1") {
+				t.Errorf("hosts = %q, %v; a refused run must leave it", got, err)
 			}
 		})
 	}
@@ -145,13 +137,86 @@ func TestSealTCPFails(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			dir, _, err := runSealTCP(t, tt.version, tt.keys)
-			if err == nil {
+			if _, _, err := runSealTCP(t, tt.version, tt.keys); err == nil {
 				t.Fatal("seal-tcp.sh passed")
 			}
-			if got, err := os.ReadFile(filepath.Join(dir, "dbus/machine-id")); err != nil || string(got) != "old\n" {
-				t.Errorf("D-Bus machine-id = %q, %v; a failed run must leave it", got, err)
+		})
+	}
+}
+
+// TestSealLinksTheDBusMachineID runs seal.sh under a temp root. Every tool
+// that acts on the system is a stub, and every /etc path moves under the root.
+func TestSealLinksTheDBusMachineID(t *testing.T) {
+	const id = "var/lib/dbus/machine-id"
+	tests := map[string]struct {
+		prepare  func(t *testing.T, dir string)
+		wantLink bool
+	}{
+		"regular file becomes a link": {func(t *testing.T, dir string) {
+			writeFile(t, filepath.Join(dir, id), "old\n")
+		}, true},
+		"link stays": {func(t *testing.T, dir string) {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, id)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(dir, "etc/machine-id"), filepath.Join(dir, id)); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		"directory without the file": {func(t *testing.T, dir string) {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, id)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"no directory": {func(*testing.T, string) {}, false},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, d := range []string{"bin", "etc/ssh", "etc/systemd/system", "etc/sudoers.d", "home/tester"} {
+				if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFile(t, filepath.Join(dir, "etc/machine-id"), "build\n")
+			for tool, body := range map[string]string{
+				"getent":      "echo 'tester:x:1000:1000::" + filepath.Join(dir, "home/tester") + ":/bin/sh'",
+				"systemctl":   "echo 'systemd 259 (259.1-1)'",
+				"visudo":      "exit 0",
+				"systemd-run": "exit 0",
+				"sync":        "exit 0",
+			} {
+				if err := os.WriteFile(filepath.Join(dir, "bin", tool), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tt.prepare(t, dir)
+			script := strings.NewReplacer(
+				"/var/lib/dbus", filepath.Join(dir, "var/lib/dbus"),
+				"/etc/", filepath.Join(dir, "etc")+"/",
+			).Replace(assets.Seal)
+			c := exec.Command("sh", "-c", script, "sh", "tester", "")
+			c.Env = append(os.Environ(), "PATH="+filepath.Join(dir, "bin")+":"+os.Getenv("PATH"))
+			if out, err := c.CombinedOutput(); err != nil {
+				t.Fatalf("seal.sh: %v\n%s", err, out)
+			}
+			link, err := os.Readlink(filepath.Join(dir, id))
+			if tt.wantLink && (err != nil || link != filepath.Join(dir, "etc/machine-id")) {
+				t.Errorf("D-Bus machine-id link = %q, %v", link, err)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, id)); !tt.wantLink && !os.IsNotExist(err) {
+				t.Errorf("seal.sh made a D-Bus machine-id: %v", err)
 			}
 		})
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

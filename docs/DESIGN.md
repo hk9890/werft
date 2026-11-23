@@ -302,7 +302,10 @@ owner, created, expiry (from the metadata), the state (from `DomainState`: runni
 shutting down, shut off, crashed or other), and the user, address, key, `ssh_config` and `ssh`
 command of the lease directory. A lease that still boots has no address yet. A lease that is not
 running lists no address: the address of its last boot is stale, and a start can give it a new
-one.
+one. `werft start` writes the new address to the lease `ssh_config` (`lease.Readdress`). A start
+outside werft does not, and neither does a start whose guest shows no new address in 60 seconds,
+such as a LUKS guest that waits for its password: the file then keeps the old address, and werft
+warns in the second case.
 
 `werft extend <lease-id> [--for duration]` (`lease.Extend`) adds `--for` (default 4 hours) to the
 expiry, under the global lock, and writes the metadata again with `SetDomainMetadata`. An expired
@@ -458,13 +461,13 @@ Both tiers run the same steps:
    `ServerAliveCountMax 4`: a guest that dies sends no FIN or RST, and `ssh` ends after about one
    minute. The vsock path and the build VM `ssh_config` do not change.
 6. At systemd 255, first run `internal/guest/assets/seal-tcp.sh`: check the version, remove the run
-   key from `/root/.ssh/authorized_keys` and verify the removal, and replace a regular
-   `/var/lib/dbus/machine-id` with a link to `/etc/machine-id`, because that file wins over the
-   machine-id credential of a lease. It also removes the `127.0.1.1` line of the build VM from
-   `/etc/hosts`, and fails unless `$USER` has the home `/home/$USER` and the primary group `$USER`:
-   a 255 lease writes its key there.
+   key from `/root/.ssh/authorized_keys` and verify the removal. It also removes the `127.0.1.1`
+   line of the build VM from `/etc/hosts`, and fails unless `$USER` has the home `/home/$USER` and
+   the primary group `$USER`: a 255 lease writes its key there.
    Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
-   systemd version; empty `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
+   systemd version; empty `/etc/machine-id`; replace a regular `/var/lib/dbus/machine-id` with a
+   link to `/etc/machine-id`, because that file wins over the machine-id credential of a lease;
+   delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
    werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest
    without host keys accepts the vsock connection and closes it at once) as a `sshd-vsock@`
    drop-in and as a oneshot that `ssh` and `sshd` want; give `$USER` passwordless sudo; schedule

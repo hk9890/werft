@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/lifecycle"
 	"github.com/hk9890/werft/internal/resetpoint"
 	"github.com/hk9890/werft/internal/secret"
@@ -138,6 +139,9 @@ func (c *cli) cmdStart(args []string) error {
 	if addr == "" {
 		c.progress("No address yet; werft list shows it once the guest is up")
 	}
+	if !started.AlreadyRunning && strings.HasPrefix(name, leasePrefix) {
+		c.readdressLease(h, name, addr)
+	}
 	c.output(map[string]any{"domain": name, "state": "running", "already_running": started.AlreadyRunning, "address": addr},
 		func(w io.Writer) {
 			if addr != "" {
@@ -145,6 +149,18 @@ func (c *cli) cmdStart(args []string) error {
 			}
 		})
 	return nil
+}
+
+// readdressLease brings the ssh_config of a started lease up to date. The VM
+// did start, so a failure here is only a warning.
+func (c *cli) readdressLease(h virt.Hypervisor, name, addr string) {
+	dir, err := state.Root()
+	if err == nil {
+		err = lease.Readdress(c.leaseEnv(h, dir), name, addr)
+	}
+	if err != nil {
+		c.progress("warning: the ssh_config of %s can hold an old address: %v", name, err)
+	}
 }
 
 func (c *cli) cmdStop(args []string) error {

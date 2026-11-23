@@ -2,12 +2,14 @@ package lease_test
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/virt"
@@ -179,6 +181,56 @@ func TestListShutOff(t *testing.T) {
 	must(t, err)
 	if len(leases) != 1 || leases[0].State != "shut off" || leases[0].Address != "" {
 		t.Errorf("List = %+v, want one lease in state shut off without an address", leases)
+	}
+}
+
+// TestReaddress: a start writes its new address to the ssh_config of a lease
+// of this state directory, and leaves every other domain and file alone.
+func TestReaddress(t *testing.T) {
+	const domain, id, old = "werft-vm-plain-abc123", "abc123", "192.168.122.50"
+	tests := map[string]struct {
+		state, name, addr, want string
+	}{
+		"new address":     {"", domain, "192.168.122.51", "192.168.122.51"},
+		"same address":    {"", domain, old, old},
+		"no address":      {"", domain, "", old},
+		"foreign lease":   {"/other/werft", domain, "192.168.122.51", old},
+		"no lease domain": {"", "vm1", "192.168.122.51", old},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := world(t)
+			e := env(t, f, &shell{up: true})
+			st := tt.state
+			if st == "" {
+				st = string(e.Dir)
+			}
+			defineLease(t, f, domain, "<werft:state>"+st+"</werft:state>")
+			config := filepath.Join(e.Dir.Lease(id), "ssh_config")
+			must(t, os.MkdirAll(filepath.Dir(config), 0o700))
+			must(t, guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: old}, "key"))
+			must(t, lease.Readdress(e, tt.name, tt.addr))
+			got, err := os.ReadFile(config)
+			must(t, err)
+			if !strings.Contains(string(got), "HostName "+tt.want+"\n") || !strings.Contains(string(got), "User tester\n") {
+				t.Errorf("ssh_config = %s, want HostName %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestReaddressTakesTheVsockCID: the CID of the running domain replaces a
+// stale one, also when the start saw no fresh address.
+func TestReaddressTakesTheVsockCID(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l := startAt(t, e, e.Now())
+	must(t, guest.WriteHostConfig(l.SSHConfig, l.ID, guest.Addr{User: "tester", Host: "vsock/9"}, l.Key))
+	must(t, lease.Readdress(e, l.Domain, ""))
+	got, err := os.ReadFile(l.SSHConfig)
+	must(t, err)
+	if !strings.Contains(string(got), "HostName vsock/3\n") || !strings.Contains(string(got), "ProxyCommand") {
+		t.Errorf("ssh_config = %s, want the CID of the domain and its proxy", got)
 	}
 }
 
