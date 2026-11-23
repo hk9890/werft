@@ -396,6 +396,50 @@ func TestSeal255Live(t *testing.T) {
 			t.Errorf("the two leases have the %s %q and %q, want two different ones", what, pair[0], pair[1])
 		}
 	}
+	startRepairsTheAddress(t, docs[0])
+}
+
+// startRepairsTheAddress breaks the address in the ssh_config of a 255 lease
+// and wants werft start to repair it, after a stop and on the running lease.
+// Control: the broken file gives no login to the running guest.
+func startRepairsTheAddress(t *testing.T, l map[string]any) {
+	t.Helper()
+	name, _ := l["domain"].(string)
+	ssh, _ := l["ssh"].(string)
+	id, _ := l["id"].(string)
+	config, _ := l["ssh_config"].(string)
+	user, _ := l["user"].(string)
+	key, _ := l["key"].(string)
+	breakAddress := func() {
+		t.Helper()
+		livetest.Must(t, guest.WriteHostConfig(config, id, guest.Addr{User: user, Host: "192.0.2.1"}, key), "write a stale ssh_config")
+	}
+	waitLogin := func(when string) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Minute)
+		for {
+			got, err := leaseAttempt(ssh, "hostname")
+			if err == nil && got == name {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no login to %s %s within 3m: %q, %v", name, when, got, err)
+			}
+			time.Sleep(3 * time.Second)
+		}
+	}
+
+	werftJSON(t, 0, "stop", name)
+	breakAddress()
+	werftJSON(t, 0, "start", name)
+	waitLogin("after a stop and start")
+
+	breakAddress()
+	if got, err := leaseAttempt(ssh, "hostname"); err == nil {
+		t.Fatalf("the broken ssh_config gave a login: %q", got)
+	}
+	werftJSON(t, 0, "start", name)
+	waitLogin("after a start of the running lease")
 }
 
 // rebootLease reboots the lease from inside and waits for a login to the new

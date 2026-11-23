@@ -257,6 +257,48 @@ func TestReaddressFailsWhenItCannotWrite(t *testing.T) {
 	}
 }
 
+// TestReaddressRunning: a start of a running lease takes the newest lease of
+// the NIC that holds the address, and another NIC does not take it over.
+func TestReaddressRunning(t *testing.T) {
+	const domain, id = "werft-vm-plain-abc123", "abc123"
+	nic1Old := virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.10", Expiry: 100}
+	nic1New := virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.11", Expiry: 150}
+	nic2 := virt.DHCPLease{MAC: "52:54:00:00:00:02", IP: "192.168.122.20", Expiry: 200}
+	tests := map[string]struct {
+		file   string
+		leases []virt.DHCPLease
+		want   string
+	}{
+		"healthy on the first NIC":       {nic1Old.IP, []virt.DHCPLease{nic1Old, nic2}, nic1Old.IP},
+		"healthy on the second NIC":      {nic2.IP, []virt.DHCPLease{nic1Old, nic2}, nic2.IP},
+		"old lease of the same NIC":      {nic1Old.IP, []virt.DHCPLease{nic1Old, nic1New, nic2}, nic1New.IP},
+		"address no longer leased":       {"192.168.122.9", []virt.DHCPLease{nic1New, nic2}, nic1New.IP},
+		"no lease keeps the old address": {nic1Old.IP, nil, nic1Old.IP},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := world(t)
+			e := env(t, f, &shell{up: true})
+			_, err := f.DefineDomain("<domain type='kvm'><name>" + domain + "</name><metadata><werft:lease xmlns:werft='" + lease.Namespace + "'><werft:state>" + string(e.Dir) + "</werft:state></werft:lease></metadata><devices>" +
+				"<interface type='network'><mac address='" + nic1Old.MAC + "'/><source network='default'/></interface>" +
+				"<interface type='network'><mac address='" + nic2.MAC + "'/><source network='default'/></interface></devices></domain>")
+			must(t, err)
+			for _, l := range tt.leases {
+				f.AddDHCPLease("default", l)
+			}
+			config := filepath.Join(e.Dir.Lease(id), "ssh_config")
+			must(t, os.MkdirAll(filepath.Dir(config), 0o700))
+			must(t, guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: tt.file}, "key"))
+			must(t, lease.ReaddressRunning(e, domain))
+			got, err := os.ReadFile(config)
+			must(t, err)
+			if !strings.Contains(string(got), "HostName "+tt.want+"\n") {
+				t.Errorf("ssh_config = %s, want HostName %s", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestReaddressTakesTheVsockCID: the CID of the running domain replaces a
 // stale one, also when the start saw no fresh address.
 func TestReaddressTakesTheVsockCID(t *testing.T) {

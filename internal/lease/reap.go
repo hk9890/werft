@@ -179,19 +179,56 @@ func withState(e Env, l Lease) (Lease, error) {
 // of the running domain goes first. A domain that is no lease of this state
 // directory, or that has no ssh_config yet, stays as it is.
 func Readdress(e Env, domain, addr string) error {
-	if !namePattern(e.Prefix).MatchString(domain) {
-		return nil
+	f, ok, err := addressable(e, domain)
+	if err != nil || !ok {
+		return err
 	}
-	all, err := scan(e)
+	return setAddress(e, f, addr)
+}
+
+// ReaddressRunning repairs the ssh_config of a lease that already runs, whose
+// address came after the wait of its start. libvirt can list an old lease
+// beside the current one, so the newest lease of the NIC that holds the
+// address counts, and another NIC does not take the lease over.
+func ReaddressRunning(e Env, domain string) error {
+	f, ok, err := addressable(e, domain)
+	if err != nil || !ok {
+		return err
+	}
+	if cid, _ := virt.DomainAddresses(e.H, domain); cid != "" {
+		return setAddress(e, f, cid)
+	}
+	leases, err := virt.DomainLeases(e.H, domain)
 	if err != nil {
 		return err
 	}
+	if i := slices.IndexFunc(leases, func(l virt.DHCPLease) bool { return l.IP == f.Address }); i >= 0 {
+		return setAddress(e, f, virt.NewestLease(virt.LeasesOfMAC(leases, leases[i].MAC)))
+	}
+	return setAddress(e, f, virt.CurrentIP(leases))
+}
+
+// addressable is the lease of domain when this state directory may write its
+// ssh_config, which a lease that still boots does not have yet.
+func addressable(e Env, domain string) (found, bool, error) {
+	if !namePattern(e.Prefix).MatchString(domain) {
+		return found{}, false, nil
+	}
+	all, err := scan(e)
+	if err != nil {
+		return found{}, false, err
+	}
 	i := slices.IndexFunc(all, func(f found) bool { return f.Domain == domain })
 	if i < 0 || all[i].owner == foreign || all[i].User == "" {
-		return nil
+		return found{}, false, nil
 	}
-	f := all[i]
-	if cid, _ := virt.DomainAddresses(e.H, domain); cid != "" {
+	return all[i], true, nil
+}
+
+// setAddress writes addr to the ssh_config of f; the vsock CID of the running
+// domain goes first.
+func setAddress(e Env, f found, addr string) error {
+	if cid, _ := virt.DomainAddresses(e.H, f.Domain); cid != "" {
 		addr = cid
 	}
 	if addr == "" {
@@ -205,17 +242,6 @@ func Readdress(e Env, domain, addr string) error {
 		return failure.Wrap(failure.Failed, err, "write the ssh_config of lease %s", f.ID)
 	}
 	return nil
-}
-
-// ReaddressRunning repairs the ssh_config of a lease that already runs, whose
-// address came after the wait of its start. libvirt can list an old lease
-// beside the current one, so only the newest lease counts.
-func ReaddressRunning(e Env, domain string) error {
-	leases, err := virt.DomainLeases(e.H, domain)
-	if err != nil {
-		return err
-	}
-	return Readdress(e, domain, virt.NewestLease(leases))
 }
 
 // expired is true from the expiry on. A lease without a readable expiry

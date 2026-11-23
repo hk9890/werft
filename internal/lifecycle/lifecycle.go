@@ -133,13 +133,13 @@ func diskUsage(h virt.Hypervisor, d *libvirtxml.Domain) (used, size *uint64) {
 }
 
 // Address is how to reach a running domain: vsock/<cid> when it has a vsock
-// CID, else its first IPv4 DHCP lease, else empty.
+// CID, else the current IPv4 DHCP lease of its first NIC, else empty.
 func Address(h virt.Hypervisor, name string) string {
-	cid, ips := virt.DomainAddresses(h, name)
-	if cid != "" || len(ips) == 0 {
+	if cid, _ := virt.DomainAddresses(h, name); cid != "" {
 		return cid
 	}
-	return ips[0]
+	leases, _ := virt.DomainLeases(h, name)
+	return virt.CurrentIP(leases)
 }
 
 // Started says what Start found and did.
@@ -320,7 +320,7 @@ func WaitAddress(h virt.Hypervisor, name string, before []virt.DHCPLease, sleep 
 	if cid, _ := virt.DomainAddresses(h, name); cid != "" {
 		return cid
 	}
-	return fresh[0].IP
+	return virt.CurrentIP(fresh)
 }
 
 type Stopped int

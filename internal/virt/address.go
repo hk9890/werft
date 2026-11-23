@@ -73,6 +73,29 @@ func NewestLease(leases []DHCPLease) string {
 	return newest.IP
 }
 
+// LeasesOfMAC are the leases of one NIC.
+func LeasesOfMAC(leases []DHCPLease, mac string) []DHCPLease {
+	var out []DHCPLease
+	for _, l := range leases {
+		if l.MAC == mac {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// CurrentIP is the newest lease of the first NIC, else its first lease, else
+// empty.
+func CurrentIP(leases []DHCPLease) string {
+	if len(leases) == 0 {
+		return ""
+	}
+	if ip := NewestLease(LeasesOfMAC(leases, leases[0].MAC)); ip != "" {
+		return ip
+	}
+	return leases[0].IP
+}
+
 func domainAddresses(h Hypervisor, name string) (cid string, leases []DHCPLease, err error) {
 	text, err := h.DomainXML(name, false)
 	if err != nil {
