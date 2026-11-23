@@ -466,9 +466,10 @@ Both tiers run the same steps:
    werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest
    without host keys accepts the vsock connection and closes it at once) as a `sshd-vsock@`
    drop-in and as a oneshot that `ssh` and `sshd` want; give `$USER` passwordless sudo; schedule
-   the poweroff 2 s later with `systemd-run`. It fails when the guest has no user `$USER`. The
-   tmpfiles line for `werft.ssh.authorized_keys` comes with the lease, which passes that
-   credential ([Lease lifecycle](#lease-lifecycle), step 5).
+   the poweroff 2 s later with `systemd-run`. It fails when the guest has no user `$USER`. At
+   systemd 256 or later, the tmpfiles line for `werft.ssh.authorized_keys` comes with the lease,
+   which passes that credential ([Lease lifecycle](#lease-lifecycle), step 5). At systemd 255, the
+   lease key is inline in `tmpfiles.extra`.
 7. Wait for the poweroff. No SSH login comes after the script: it would start a `sshd-vsock@`
    instance whose drop-in makes new host keys, and every lease of the image would share them.
    Undefine the temporary domain, keep the volumes under the stock name, and append the record to
@@ -771,9 +772,9 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
   Ubuntu 24.04 has 255, so seal and lease use root and user login over TCP at its DHCP address,
   with the identity and keys in `tmpfiles.extra`. Seal refuses a reset point whose recorded
   systemd version is below 255 before it copies anything. A boot of the noble cloud image without
-  Secure Boot showed root login and `tmpfiles.extra` delivery. SMBIOS credentials under Secure
-  Boot and DHCP on a real clone are not proven. A static `/etc/hostname` overrides the hostname
-  credential, so seal must delete it.
+  Secure Boot showed root login and `tmpfiles.extra` delivery. Two real 24.04 build VMs with Secure
+  Boot on sealed and leased with SMBIOS credentials and DHCP on a new MAC. LUKS at systemd 255 is
+  not proven. A static `/etc/hostname` overrides the hostname credential, so seal must delete it.
 - **Duplicate DHCP DUID.** Clones with one machine-id get one IP. The machine-id credential
   prevents it only if seal empties `/etc/machine-id`.
 - **Desktop internals.** Keyring unlock uses gnome-keyring's

@@ -700,3 +700,26 @@ func TestLeaseDesktopReadsTheRecipeGuestPassword(t *testing.T) {
 		t.Errorf("a lease without the guest password made a volume or a domain: %v", calls)
 	}
 }
+
+// TestLeaseDesktopAt255IgnoresAMissingRecipe: --desktop at systemd 255 fails
+// with unsupported, also when the recipe config.toml names does not exist.
+func TestLeaseDesktopAt255IgnoresAMissingRecipe(t *testing.T) {
+	lh := stockHost(t, 0)
+	images := filepath.Join(os.Getenv("XDG_STATE_HOME"), "werft", "images.toml")
+	content, err := os.ReadFile(images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(images, []byte(strings.Replace(string(content), "systemd = 259", "systemd = 255", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "werft")
+	missing := filepath.Join(config, "missing.toml")
+	if err := os.WriteFile(filepath.Join(config, "config.toml"), []byte("recipe = \""+missing+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := lh.run("--json", "lease", "ubuntu-26-04", "--desktop")
+	if r.code != 9 || !strings.Contains(r.stdout, "systemd 255") {
+		t.Fatalf("lease --desktop = %+v, want exit 9 that names systemd 255", r)
+	}
+}
