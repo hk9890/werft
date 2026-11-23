@@ -237,6 +237,9 @@ func TestReaddressLeavesALeaseWithoutSSHConfig(t *testing.T) {
 // TestReaddressFailsWhenItCannotWrite: a lease directory that takes no new
 // file gives failed, and the old ssh_config stays.
 func TestReaddressFailsWhenItCannotWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the mode of the directory")
+	}
 	const domain, id, old = "werft-vm-plain-abc123", "abc123", "192.168.122.50"
 	f := world(t)
 	e := env(t, f, &shell{up: true})
@@ -274,6 +277,7 @@ func TestReaddressRunning(t *testing.T) {
 		"old lease of the same NIC":      {nic1Old.IP, []virt.DHCPLease{nic1Old, nic1New, nic2}, nic1New.IP},
 		"address no longer leased":       {"192.168.122.9", []virt.DHCPLease{nic1New, nic2}, nic1New.IP},
 		"no lease keeps the old address": {nic1Old.IP, nil, nic1Old.IP},
+		"other NIC answers first":        {nic1Old.IP, []virt.DHCPLease{nic2, nic1Old}, nic1Old.IP},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -289,7 +293,7 @@ func TestReaddressRunning(t *testing.T) {
 			config := filepath.Join(e.Dir.Lease(id), "ssh_config")
 			must(t, os.MkdirAll(filepath.Dir(config), 0o700))
 			must(t, guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: tt.file}, "key"))
-			must(t, lease.ReaddressRunning(e, domain))
+			must(t, lease.Readdress(e, domain, virt.CurrentIP(tt.leases)))
 			got, err := os.ReadFile(config)
 			must(t, err)
 			if !strings.Contains(string(got), "HostName "+tt.want+"\n") {

@@ -749,6 +749,10 @@ func TestStartWritesTheNewAddressOfALease(t *testing.T) {
 	}
 
 	// The VM did start, so a failed write is a warning and not a failure.
+	// Root ignores the mode of the directory.
+	if os.Geteuid() == 0 {
+		return
+	}
 	if r := lh.run("stop", name); r.code != 0 {
 		t.Fatalf("stop = %+v", r)
 	}

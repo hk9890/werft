@@ -174,62 +174,35 @@ func withState(e Env, l Lease) (Lease, error) {
 	return l, nil
 }
 
-// Readdress writes the address a start of domain gave it to the lease
-// ssh_config. addr is the fresh address of that start, or empty; a vsock CID
-// of the running domain goes first. A domain that is no lease of this state
-// directory, or that has no ssh_config yet, stays as it is.
+// Readdress brings the lease ssh_config up to date after a start of domain.
+// addr is the address that start saw, or empty. A vsock CID of the running
+// domain goes first. While libvirt still lists the address in the file, the
+// newest lease of that NIC counts, so another NIC does not take the lease
+// over. A domain that is no lease of this state directory, or that has no
+// ssh_config yet, stays as it is.
 func Readdress(e Env, domain, addr string) error {
-	f, ok, err := addressable(e, domain)
-	if err != nil || !ok {
-		return err
-	}
-	return setAddress(e, f, addr)
-}
-
-// ReaddressRunning repairs the ssh_config of a lease that already runs, whose
-// address came after the wait of its start. libvirt can list an old lease
-// beside the current one, so the newest lease of the NIC that holds the
-// address counts, and another NIC does not take the lease over.
-func ReaddressRunning(e Env, domain string) error {
-	f, ok, err := addressable(e, domain)
-	if err != nil || !ok {
-		return err
-	}
-	if cid, _ := virt.DomainAddresses(e.H, domain); cid != "" {
-		return setAddress(e, f, cid)
-	}
-	leases, err := virt.DomainLeases(e.H, domain)
-	if err != nil {
-		return err
-	}
-	if i := slices.IndexFunc(leases, func(l virt.DHCPLease) bool { return l.IP == f.Address }); i >= 0 {
-		return setAddress(e, f, virt.NewestLease(virt.LeasesOfMAC(leases, leases[i].MAC)))
-	}
-	return setAddress(e, f, virt.CurrentIP(leases))
-}
-
-// addressable is the lease of domain when this state directory may write its
-// ssh_config, which a lease that still boots does not have yet.
-func addressable(e Env, domain string) (found, bool, error) {
 	if !namePattern(e.Prefix).MatchString(domain) {
-		return found{}, false, nil
+		return nil
 	}
 	all, err := scan(e)
 	if err != nil {
-		return found{}, false, err
+		return err
 	}
 	i := slices.IndexFunc(all, func(f found) bool { return f.Domain == domain })
 	if i < 0 || all[i].owner == foreign || all[i].User == "" {
-		return found{}, false, nil
+		return nil
 	}
-	return all[i], true, nil
-}
-
-// setAddress writes addr to the ssh_config of f; the vsock CID of the running
-// domain goes first.
-func setAddress(e Env, f found, addr string) error {
-	if cid, _ := virt.DomainAddresses(e.H, f.Domain); cid != "" {
+	f := all[i]
+	if cid, _ := virt.DomainAddresses(e.H, domain); cid != "" {
 		addr = cid
+	} else if addr != "" {
+		leases, err := virt.DomainLeases(e.H, domain)
+		if err != nil {
+			return err
+		}
+		if held := slices.IndexFunc(leases, func(l virt.DHCPLease) bool { return l.IP == f.Address }); held >= 0 {
+			addr = virt.NewestLease(virt.LeasesOfMAC(leases, leases[held].MAC))
+		}
 	}
 	if addr == "" {
 		e.printf("warning: no new address for lease %s; its ssh_config can hold an old one", f.ID)

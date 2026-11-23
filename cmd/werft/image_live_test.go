@@ -64,7 +64,7 @@ func TestSealLive(t *testing.T) {
 		livetest.RemoveDomain(t, h, name)
 		livetest.DeleteVolumes(h, disk, nvram)
 	})
-	version := time.Now().Format("20060102")
+	version := time.Now().UTC().Format("20060102")
 	if name != src.Name+"-plain-"+version || doc["image"] != src.Name || doc["tier"] != "plain" || doc["version"] != version ||
 		doc["user"] != u.Username || doc["family"] != "ubuntu" || doc["disk"] != disk || doc["nvram"] != nvram || doc["pool"] != livetest.Pool {
 		t.Fatalf("seal = %v", doc)
@@ -283,7 +283,7 @@ func TestSealFullLive(t *testing.T) {
 		livetest.RemoveDomain(t, h, stock)
 		livetest.DeleteVolumes(h, stock+".qcow2", stock+"_VARS.qcow2")
 	})
-	version := time.Now().Format("20060102")
+	version := time.Now().UTC().Format("20060102")
 	if stock != img+"-full-"+version || doc["image"] != img || doc["tier"] != "full" || doc["source"] != src.Name || doc["label"] != "clean" {
 		t.Fatalf("seal = %v", doc)
 	}
