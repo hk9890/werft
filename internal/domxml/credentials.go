@@ -39,3 +39,11 @@ func EnsureVsock(d *libvirtxml.Domain) {
 		d.Devices.VSock = &libvirtxml.DomainVSock{Model: "virtio", CID: &libvirtxml.DomainVSockCID{Auto: "yes"}}
 	}
 }
+
+// RemoveVsock takes the vsock device off d, so the address rules of a guest
+// without SSH over AF_VSOCK return its DHCP address.
+func RemoveVsock(d *libvirtxml.Domain) {
+	if d.Devices != nil {
+		d.Devices.VSock = nil
+	}
+}

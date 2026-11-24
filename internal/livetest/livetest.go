@@ -44,6 +44,20 @@ func Image(t *testing.T) string {
 	return image
 }
 
+// Image255 is the path of a cloud image with systemd 255, $WERFT_TEST_IMAGE_255
+// or the cached Ubuntu 24.04 minimal image. The test skips when it is missing.
+func Image255(t *testing.T) string {
+	t.Helper()
+	image := os.Getenv("WERFT_TEST_IMAGE_255")
+	if image == "" {
+		image = filepath.Join(os.Getenv("HOME"), ".cache/werft/images/ubuntu-24.04-minimal-cloudimg-amd64.img")
+	}
+	if _, err := os.Stat(image); err != nil {
+		t.Skipf("no systemd 255 test image at %s (set WERFT_TEST_IMAGE_255)", image)
+	}
+	return image
+}
+
 // Connect dials qemu:///system and closes the connection at the end of the
 // test. The test skips when libvirt does not answer.
 func Connect(t *testing.T) *libvirt.Adapter {
@@ -216,13 +230,18 @@ var (
 )
 
 // Guest is a scratch UEFI domain on an overlay of the base image, with qcow2
-// NVRAM, reached as root over vsock SSH.
+// NVRAM, reached as root over vsock SSH, or over TCP at its DHCP address when
+// NewTCPGuest made it.
 type Guest struct {
 	T    *testing.T
 	H    virt.Hypervisor
 	Name string
 	Key  Key
 	CID  uint32
+	IP   string
+	tcp  bool
+
+	networkFileWritten bool
 }
 
 func (g *Guest) DiskVolume() string    { return g.Name + "-disk.qcow2" }
@@ -239,9 +258,25 @@ func (g *Guest) volumes() []string {
 func NewGuest(t *testing.T, h virt.Hypervisor, name string) *Guest {
 	t.Helper()
 	g := &Guest{T: t, H: h, Name: name}
+	g.define(Image(t))
+	return g
+}
+
+// NewTCPGuest is NewGuest for a systemd 255 image. The guest has no vsock
+// device, and its only credential is tmpfiles.extra.
+func NewTCPGuest(t *testing.T, h virt.Hypervisor, name string) *Guest {
+	t.Helper()
+	g := &Guest{T: t, H: h, Name: name, tcp: true}
+	g.define(Image255(t))
+	return g
+}
+
+func (g *Guest) define(image string) {
+	t, h, name := g.T, g.H, g.Name
+	t.Helper()
 	RemoveDomain(t, h, name)
 	EnsurePool(t, h)
-	base := BaseImage(t, h, Image(t))
+	base := BaseImage(t, h, image)
 	DeleteVolumes(h, g.volumes()...)
 	t.Cleanup(func() {
 		if t.Failed() && os.Getenv("WERFT_TEST_KEEP") != "" {
@@ -255,14 +290,47 @@ func NewGuest(t *testing.T, h virt.Hypervisor, name string) *Guest {
 	disk := Overlay(t, h, g.DiskVolume(), base)
 	vars := QCOW2Vars(t, h, g.VarsVolume())
 	g.Key = NewKey(t)
-	_, err := h.DefineDomain(g.domainXML(disk, vars))
+	credentials, vsock := vsockCredentials(g.Key), vsockDevice
+	if g.tcp {
+		credentials, vsock = tcpCredentials(g.Key), ""
+	}
+	_, err := h.DefineDomain(g.domainXML(disk, vars, credentials, vsock))
 	Must(t, err, "define "+name)
-	return g
+}
+
+const vsockDevice = "    <vsock model='virtio'><cid auto='yes'/></vsock>\n"
+
+func vsockCredentials(key Key) string {
+	return fmt.Sprintf(`      <entry>io.systemd.credential:ssh.ephemeral-authorized_keys-all=%s</entry>
+      <entry>io.systemd.credential.binary:systemd.unit-dropin.sshd-vsock@.service=%s</entry>
+      <entry>io.systemd.credential.binary:network.network.50-werft-test=%s</entry>
+      <entry>io.systemd.credential.binary:systemd.unit-dropin.systemd-networkd.service=%s</entry>
+`, key.Public, hostKeyDropin, dhcpNetwork, networkdDropin)
+}
+
+// tcpCredentials writes the root key, a networkd DHCP file and the units of
+// seal.sh that make the SSH host keys through tmpfiles.extra, the credential
+// that systemd 255 imports. An OEM string is in the argv of QEMU, so it holds
+// no private key.
+func tcpCredentials(key Key) string {
+	encode := base64.StdEncoding.EncodeToString
+	hostKeys := "[Unit]\nDescription=SSH host keys of a werft stock image\n[Service]\nType=oneshot\nExecStart=/usr/bin/ssh-keygen -A\n"
+	sshDropin := "[Unit]\nWants=werft-ssh-host-keys.service\nAfter=werft-ssh-host-keys.service\n"
+	lines := strings.Join([]string{
+		"d /root/.ssh 0700 root root -",
+		"f /root/.ssh/authorized_keys 0600 root root -",
+		"w+~ /root/.ssh/authorized_keys - - - - " + encode([]byte("\n"+key.Public+"\n")),
+		"f~ /etc/systemd/system/werft-ssh-host-keys.service 0644 root root - " + encode([]byte(hostKeys)),
+		"d /etc/systemd/system/ssh.service.d 0755 root root -",
+		"f~ /etc/systemd/system/ssh.service.d/werft-host-keys.conf 0644 root root - " + encode([]byte(sshDropin)),
+		"f~ /etc/systemd/network/50-werft-test.network 0644 root root - " + dhcpNetwork,
+	}, "\n") + "\n"
+	return "      <entry>io.systemd.credential.binary:tmpfiles.extra=" + encode([]byte(lines)) + "</entry>\n"
 }
 
 // domainXML has a VNC display without a listener, for screenshots, and more
 // PCIe ports than its devices take, for hot-plugged ones.
-func (g *Guest) domainXML(disk, vars string) string {
+func (g *Guest) domainXML(disk, vars, credentials, vsock string) string {
 	return fmt.Sprintf(`<domain type='kvm'>
   <name>%s</name>
   <memory unit='MiB'>1024</memory>
@@ -276,11 +344,7 @@ func (g *Guest) domainXML(disk, vars string) string {
   <features><acpi/></features>
   <sysinfo type='smbios'>
     <oemStrings>
-      <entry>io.systemd.credential:ssh.ephemeral-authorized_keys-all=%s</entry>
-      <entry>io.systemd.credential.binary:systemd.unit-dropin.sshd-vsock@.service=%s</entry>
-      <entry>io.systemd.credential.binary:network.network.50-werft-test=%s</entry>
-      <entry>io.systemd.credential.binary:systemd.unit-dropin.systemd-networkd.service=%s</entry>
-    </oemStrings>
+%s    </oemStrings>
   </sysinfo>
   <devices>
     <disk type='file' device='disk'>
@@ -290,30 +354,63 @@ func (g *Guest) domainXML(disk, vars string) string {
     </disk>
     <controller type='pci' index='0' model='pcie-root'/>
 %s    <interface type='network'><source network='default'/><model type='virtio'/></interface>
-    <vsock model='virtio'><cid auto='yes'/></vsock>
-    <serial type='file'><source path='%s'/></serial>
+%s    <serial type='file'><source path='%s'/></serial>
     <graphics type='vnc'><listen type='none'/></graphics>
     <video><model type='virtio'/></video>
   </devices>
-</domain>`, g.Name, ovmfCode, vars, g.Key.Public, hostKeyDropin, dhcpNetwork, networkdDropin, disk,
-		strings.Repeat("    <controller type='pci' model='pcie-root-port'/>\n", 10), PoolPath+"/"+g.ConsoleVolume())
+</domain>`, g.Name, ovmfCode, vars, credentials, disk,
+		strings.Repeat("    <controller type='pci' model='pcie-root-port'/>\n", 10), vsock, PoolPath+"/"+g.ConsoleVolume())
 }
 
-// Boot starts the domain and waits until SSH answers over vsock.
+// Boot starts the domain and waits until SSH answers, over vsock or at the
+// DHCP address of a TCP guest.
 func (g *Guest) Boot() {
 	g.T.Helper()
+	if g.tcp && !g.networkFileWritten {
+		g.writeNetworkFile()
+	}
 	Must(g.T, g.H.StartDomain(g.Name), "start "+g.Name)
-	g.CID = g.liveCID()
+	if !g.tcp {
+		g.CID = g.liveCID()
+	}
 	deadline := time.Now().Add(bootTimeout)
 	for {
+		if g.tcp {
+			if _, ips := virt.DomainAddresses(g.H, g.Name); len(ips) > 0 {
+				g.IP = ips[0]
+			}
+		}
 		out, err := g.SSH("true")
 		if err == nil {
 			return
 		}
 		if time.Now().After(deadline) {
-			g.T.Fatalf("no SSH over vsock/%d within %v: %v\n%s\nconsole:\n%s", g.CID, bootTimeout, err, out, ConsoleTail(g.H, g.ConsoleVolume()))
+			g.T.Fatalf("no SSH to %s within %v: %v\n%s\nconsole:\n%s", g.host(), bootTimeout, err, out, ConsoleTail(g.H, g.ConsoleVolume()))
 		}
 		time.Sleep(5 * time.Second)
+	}
+}
+
+// writeNetworkFile boots once and shuts down cleanly. On systemd 255,
+// systemd-networkd starts before systemd-tmpfiles-setup, so the network file
+// and the host-key units from tmpfiles.extra take effect only at the next boot. logind handles the
+// ACPI request, and logind starts after tmpfiles ran.
+func (g *Guest) writeNetworkFile() {
+	g.T.Helper()
+	Must(g.T, g.H.StartDomain(g.Name), "start "+g.Name)
+	deadline := time.Now().Add(bootTimeout)
+	for {
+		state, err := g.H.DomainState(g.Name)
+		Must(g.T, err, "domain state")
+		if state == virt.StateShutOff {
+			g.networkFileWritten = true
+			return
+		}
+		if time.Now().After(deadline) {
+			g.T.Fatalf("%s did not shut down after its first boot within %v\nconsole:\n%s", g.Name, bootTimeout, ConsoleTail(g.H, g.ConsoleVolume()))
+		}
+		_ = g.H.ShutdownDomain(g.Name)
+		time.Sleep(3 * time.Second)
 	}
 }
 
@@ -364,9 +461,16 @@ func (g *Guest) WaitShutOff(timeout time.Duration) {
 	}
 }
 
-// SSH runs cmd as root over vsock, with no user ssh_config and no known hosts.
+func (g *Guest) host() string {
+	if g.tcp {
+		return g.IP
+	}
+	return fmt.Sprintf("vsock/%d", g.CID)
+}
+
+// SSH runs cmd as root, with no user ssh_config and no known hosts.
 func (g *Guest) SSH(cmd string) ([]byte, error) {
-	c := exec.Command("ssh", "-F", "/dev/null",
+	args := []string{"-F", "/dev/null",
 		"-i", g.Key.Private,
 		"-o", "IdentitiesOnly=yes",
 		"-o", "BatchMode=yes",
@@ -374,8 +478,11 @@ func (g *Guest) SSH(cmd string) ([]byte, error) {
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		"-o", "ProxyCommand="+sshProxy+" %h %p",
-		"-o", "ProxyUseFdpass=yes",
-		fmt.Sprintf("root@vsock/%d", g.CID), cmd)
-	return c.CombinedOutput()
+	}
+	if g.tcp {
+		args = append(args, "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3")
+	} else {
+		args = append(args, "-o", "ProxyCommand="+sshProxy+" %h %p", "-o", "ProxyUseFdpass=yes")
+	}
+	return exec.Command("ssh", append(args, "root@"+g.host(), cmd)...).CombinedOutput()
 }

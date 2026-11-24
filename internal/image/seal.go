@@ -3,6 +3,7 @@ package image
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -63,6 +64,9 @@ type Seal struct {
 	// systemdRecorded tells whether the reset point records the systemd
 	// version of the guest, so Plan could check it.
 	systemdRecorded bool
+	// tcp is set when the reset point records systemd 255: the seal logs in
+	// as root at the DHCP address, because that guest has no SSH over vsock.
+	tcp bool
 }
 
 // Plan checks that the build VM can be sealed from label now, and changes
@@ -128,6 +132,9 @@ func (s *Seal) reread(h virt.Hypervisor) error {
 	if s.LUKS != planned.LUKS {
 		return failure.New(failure.Failed, "%s after the revert to '%s' differs from the reset point in its LUKS marker; nothing is copied", s.BuildVM, s.Label)
 	}
+	if s.tcp != planned.tcp {
+		return failure.New(failure.Failed, "%s after the revert to '%s' differs from the reset point in its systemd line; nothing is copied", s.BuildVM, s.Label)
+	}
 	return nil
 }
 
@@ -136,9 +143,14 @@ func (s *Seal) reread(h virt.Hypervisor) error {
 func (s *Seal) inspect(h virt.Hypervisor, d *libvirtxml.Domain) error {
 	v, ok := domxml.SystemdOf(domxml.Description(d))
 	s.systemdRecorded = ok
-	if ok && v < guest.VsockSystemd {
-		return failure.New(failure.Unsupported, "the guest of %s at '%s' has systemd %d; seal logs in over vsock, which needs systemd %d or later",
-			s.BuildVM, s.Label, v, guest.VsockSystemd)
+	if ok && v < guest.TCPSystemd {
+		return failure.New(failure.Unsupported, "the guest of %s at '%s' has systemd %d; seal needs systemd %d or later",
+			s.BuildVM, s.Label, v, guest.TCPSystemd)
+	}
+	s.tcp = ok && v == guest.TCPSystemd
+	if s.tcp && !slices.ContainsFunc(domxml.Interfaces(d), func(i domxml.Interface) bool { return i.Network != "" }) {
+		return failure.New(failure.Unsupported, "the guest of %s at '%s' has systemd %d and no interface on a libvirt network; seal reaches it at its libvirt DHCP lease",
+			s.BuildVM, s.Label, v)
 	}
 	disk, err := onlyDisk(h, d)
 	if err != nil {
@@ -374,29 +386,46 @@ func (s *Seal) copyVolumes(e Env, rec Record) error {
 }
 
 // defineTemporary defines the domain the seal boots: the build VM on the
-// stock volumes in dir, with a vsock device, and with the key of Env as the
-// only credentials for root login. It returns the definition before the
-// credentials, which leases of the image start from.
+// stock volumes in dir, with the key of Env as the only credentials for root
+// login. It has a vsock device, except on a systemd 255 guest. It returns the
+// definition before the credentials, which leases of the image start from.
 func (s *Seal) defineTemporary(e Env, rec Record, dir string) (template string, err error) {
 	d, err := domxml.Clone(s.domain, rec.Name, map[string]string{s.disk.Target: filepath.Join(dir, rec.Disk)}, filepath.Join(dir, rec.NVRAM))
 	if err != nil {
 		return "", err
 	}
-	domxml.EnsureVsock(d)
+	if s.tcp {
+		domxml.RemoveVsock(d)
+	} else {
+		domxml.EnsureVsock(d)
+	}
 	domxml.SetCredentials(d, nil)
 	if template, err = d.Marshal(); err != nil {
 		return "", err
 	}
-	domxml.SetCredentials(d, []domxml.Credential{
-		{Name: "ssh.ephemeral-authorized_keys-all", Value: []byte(e.Key + "\n")},
-		{Name: "systemd.unit-dropin.sshd-vsock@.service", Value: hostKeyDropin},
-	})
+	domxml.SetCredentials(d, s.loginCredentials(e.Key))
 	text, err := d.Marshal()
 	if err != nil {
 		return "", err
 	}
 	_, err = e.H.DefineDomain(text)
 	return template, err
+}
+
+// loginCredentials let the run key log in as root on the temporary domain.
+// systemd 255 imports only tmpfiles.extra of these, so the key goes inline.
+func (s *Seal) loginCredentials(key string) []domxml.Credential {
+	if !s.tcp {
+		return []domxml.Credential{
+			{Name: "ssh.ephemeral-authorized_keys-all", Value: []byte(key + "\n")},
+			{Name: "systemd.unit-dropin.sshd-vsock@.service", Value: hostKeyDropin},
+		}
+	}
+	line := base64.StdEncoding.EncodeToString([]byte("\n" + key + "\n"))
+	tmpfiles := "d /root/.ssh 0700 root root -\n" +
+		"f /root/.ssh/authorized_keys 0600 root root -\n" +
+		"w+~ /root/.ssh/authorized_keys - - - - " + line + "\n"
+	return []domxml.Credential{{Name: "tmpfiles.extra", Value: []byte(tmpfiles)}}
 }
 
 // seal boots the temporary domain and runs the seal script as root. The
@@ -415,14 +444,18 @@ func (s *Seal) seal(e Env, rec *Record, password string) error {
 			return err
 		}
 	}
-	cid, err := vsockCID(e.H, rec.Name)
-	if err != nil {
+	addr, err := s.rootAddr(e, r, rec.Name)
+	if err != nil && !s.tcp {
 		return err
 	}
-	addr := guest.Addr{User: "root", Host: fmt.Sprintf("vsock/%d", cid)}
-	err = r.PollLogin(bootTimeout, "no SSH answer from "+rec.Name+" at "+addr.Host, func() bool {
-		return e.Shell.Run(r.Ctx, addr, "true", nil, io.Discard, io.Discard) == nil
-	})
+	if err == nil {
+		err = r.PollLogin(bootTimeout, "no SSH answer from "+rec.Name+" at "+addr.Host, func() bool {
+			return e.Shell.Run(r.Ctx, addr, "true", nil, io.Discard, io.Discard) == nil
+		})
+		if s.tcp && failure.Is(err, failure.Timeout) {
+			err = failure.Wrap(failure.Timeout, err, "a systemd 255 guest must allow root key login (PermitRootLogin) and hold SSH host keys at the reset point '%s' of %s", s.Label, s.BuildVM)
+		}
+	}
 	if failure.Is(err, failure.Timeout) && !s.systemdRecorded {
 		err = failure.Wrap(failure.Timeout, err, "the reset point '%s' of %s records no systemd version; run werft prepare %s and take the reset point again, so seal can check it before the copy",
 			s.Label, s.BuildVM, s.BuildVM)
@@ -435,7 +468,7 @@ func (s *Seal) seal(e Env, rec *Record, password string) error {
 	}
 	e.printf("Removing the machine-id, hostname and SSH host keys of %s; it powers off after", rec.Name)
 	var out bytes.Buffer
-	if err := e.Shell.Run(r.Ctx, addr, guest.ScriptCommand(assets.Seal, e.User, e.WerftKey), nil, &out, e.Out); err != nil {
+	if err := e.Shell.Run(r.Ctx, addr, s.script(e), nil, &out, e.Out); err != nil {
 		return failure.Wrap(failure.Failed, err, "the seal script failed in %s", rec.Name)
 	}
 	if rec.Family, rec.Systemd, err = guestFacts(out.String()); err != nil {
@@ -445,6 +478,42 @@ func (s *Seal) seal(e Env, rec *Record, password string) error {
 		state, err := e.H.DomainState(rec.Name)
 		return err == nil && state == virt.StateShutOff
 	})
+}
+
+// script is the seal command. On a systemd 255 guest it first removes the run
+// key, which reached the disk through tmpfiles.
+func (s *Seal) script(e Env) string {
+	if s.tcp {
+		return guest.ScriptCommand(assets.SealTCP+assets.Seal, e.User, e.WerftKey, e.Key)
+	}
+	return guest.ScriptCommand(assets.Seal, e.User, e.WerftKey)
+}
+
+// rootAddr is where the seal logs in: the vsock CID, or on a systemd 255
+// guest the IPv4 DHCP lease of its new MAC.
+func (s *Seal) rootAddr(e Env, r *pipeline.Run, name string) (guest.Addr, error) {
+	if !s.tcp {
+		cid, err := vsockCID(e.H, name)
+		if err != nil {
+			return guest.Addr{}, err
+		}
+		return guest.Addr{User: "root", Host: fmt.Sprintf("vsock/%d", cid)}, nil
+	}
+	e.printf("Waiting up to %v for a DHCP lease of %s", bootTimeout, name)
+	var ip string
+	err := r.Poll(bootTimeout, 2*time.Second, "no DHCP lease for "+name, func() bool {
+		if _, ips := virt.DomainAddresses(e.H, name); len(ips) > 0 {
+			ip = ips[0]
+		}
+		return ip != ""
+	})
+	if failure.Is(err, failure.Timeout) {
+		return guest.Addr{}, failure.Wrap(failure.Timeout, err, "the guest of %s at '%s' must have its own DHCP configuration for a new MAC; seal cannot give it one on this boot", s.BuildVM, s.Label)
+	}
+	if err != nil {
+		return guest.Addr{}, err
+	}
+	return guest.Addr{User: "root", Host: ip}, nil
 }
 
 func vsockCID(h virt.Hypervisor, name string) (uint32, error) {

@@ -700,3 +700,91 @@ func TestLeaseDesktopReadsTheRecipeGuestPassword(t *testing.T) {
 		t.Errorf("a lease without the guest password made a volume or a domain: %v", calls)
 	}
 }
+
+// TestStartWritesTheNewAddressOfALease: werft start of a stopped lease
+// brings its ssh_config to the address of the new boot.
+func TestStartWritesTheNewAddressOfALease(t *testing.T) {
+	const name, id = "werft-vm-plain-abc123", "abc123"
+	lh := newLifecycleHost(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir, err := state.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := "<metadata><werft:lease xmlns:werft='" + lease.Namespace + "'><werft:state>" + string(dir) + "</werft:state></werft:lease></metadata>"
+	if _, err := lh.fake.DefineDomain(strings.Replace(lifecycleVM(lh.nvramDir), "<name>vm1</name>", "<name>"+name+"</name>"+metadata, 1)); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir.Lease(id), "ssh_config")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: "192.168.122.50"}, "key"); err != nil {
+		t.Fatal(err)
+	}
+	lh.lease = &virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.51", Expiry: 1000}
+	if r := lh.run("start", name); r.code != 0 {
+		t.Fatalf("start = %+v", r)
+	}
+	got, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "HostName 192.168.122.51\n") {
+		t.Errorf("ssh_config = %s, want the new address", got)
+	}
+
+	// A start of the running lease repairs a stale file with the newest
+	// lease: libvirt can list an old lease beside the current one.
+	if err := guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: "192.168.122.50"}, "key"); err != nil {
+		t.Fatal(err)
+	}
+	lh.fake.AddDHCPLease("default", virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.49", Expiry: 500})
+	if r := lh.run("start", name); r.code != 0 {
+		t.Fatalf("start of the running lease = %+v", r)
+	}
+	if got, _ := os.ReadFile(config); !strings.Contains(string(got), "HostName 192.168.122.51\n") {
+		t.Errorf("ssh_config after a start of the running lease = %s, want the newest lease", got)
+	}
+
+	// The VM did start, so a failed write is a warning and not a failure.
+	// Root ignores the mode of the directory.
+	if os.Geteuid() == 0 {
+		return
+	}
+	if r := lh.run("stop", name); r.code != 0 {
+		t.Fatalf("stop = %+v", r)
+	}
+	if err := os.Chmod(filepath.Dir(config), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(config), 0o700) })
+	lh.lease = &virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.52", Expiry: 2000}
+	if r := lh.run("start", name); r.code != 0 || !strings.Contains(r.stderr, "can hold an old address") {
+		t.Errorf("start with a read-only lease directory = %+v, want exit 0 and a warning", r)
+	}
+}
+
+// TestLeaseDesktopAt255IgnoresAMissingRecipe: --desktop at systemd 255 fails
+// with unsupported, also when the recipe config.toml names does not exist.
+func TestLeaseDesktopAt255IgnoresAMissingRecipe(t *testing.T) {
+	lh := stockHost(t, 0)
+	images := filepath.Join(os.Getenv("XDG_STATE_HOME"), "werft", "images.toml")
+	content, err := os.ReadFile(images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(images, []byte(strings.Replace(string(content), "systemd = 259", "systemd = 255", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "werft")
+	missing := filepath.Join(config, "missing.toml")
+	if err := os.WriteFile(filepath.Join(config, "config.toml"), []byte("recipe = \""+missing+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := lh.run("--json", "lease", "ubuntu-26-04", "--desktop")
+	if r.code != 9 || !strings.Contains(r.stdout, "systemd 255") {
+		t.Fatalf("lease --desktop = %+v, want exit 9 that names systemd 255", r)
+	}
+}

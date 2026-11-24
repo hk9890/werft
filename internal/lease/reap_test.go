@@ -2,12 +2,14 @@ package lease_test
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/virt"
@@ -179,6 +181,140 @@ func TestListShutOff(t *testing.T) {
 	must(t, err)
 	if len(leases) != 1 || leases[0].State != "shut off" || leases[0].Address != "" {
 		t.Errorf("List = %+v, want one lease in state shut off without an address", leases)
+	}
+}
+
+// TestReaddress: a start writes its new address to the ssh_config of a lease
+// of this state directory, and leaves every other domain and file alone.
+func TestReaddress(t *testing.T) {
+	const domain, id, old = "werft-vm-plain-abc123", "abc123", "192.168.122.50"
+	tests := map[string]struct {
+		state, name, addr, want string
+	}{
+		"new address":     {"", domain, "192.168.122.51", "192.168.122.51"},
+		"same address":    {"", domain, old, old},
+		"no address":      {"", domain, "", old},
+		"foreign lease":   {"/other/werft", domain, "192.168.122.51", old},
+		"no lease domain": {"", "vm1", "192.168.122.51", old},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := world(t)
+			e := env(t, f, &shell{up: true})
+			st := tt.state
+			if st == "" {
+				st = string(e.Dir)
+			}
+			defineLease(t, f, domain, "<werft:state>"+st+"</werft:state>")
+			config := filepath.Join(e.Dir.Lease(id), "ssh_config")
+			must(t, os.MkdirAll(filepath.Dir(config), 0o700))
+			must(t, guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: old}, "key"))
+			must(t, lease.Readdress(e, tt.name, tt.addr))
+			got, err := os.ReadFile(config)
+			must(t, err)
+			if !strings.Contains(string(got), "HostName "+tt.want+"\n") || !strings.Contains(string(got), "User tester\n") {
+				t.Errorf("ssh_config = %s, want HostName %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestReaddressLeavesALeaseWithoutSSHConfig: a lease that still boots has no
+// ssh_config, and a start does not make one.
+func TestReaddressLeavesALeaseWithoutSSHConfig(t *testing.T) {
+	const domain, id = "werft-vm-plain-abc123", "abc123"
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	defineLease(t, f, domain, "<werft:state>"+string(e.Dir)+"</werft:state>")
+	config := filepath.Join(e.Dir.Lease(id), "ssh_config")
+	must(t, os.MkdirAll(filepath.Dir(config), 0o700))
+	must(t, lease.Readdress(e, domain, "192.168.122.51"))
+	if _, err := os.Stat(config); !os.IsNotExist(err) {
+		t.Errorf("Readdress made an ssh_config: %v", err)
+	}
+}
+
+// TestReaddressFailsWhenItCannotWrite: a lease directory that takes no new
+// file gives failed, and the old ssh_config stays.
+func TestReaddressFailsWhenItCannotWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the mode of the directory")
+	}
+	const domain, id, old = "werft-vm-plain-abc123", "abc123", "192.168.122.50"
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	defineLease(t, f, domain, "<werft:state>"+string(e.Dir)+"</werft:state>")
+	dir := e.Dir.Lease(id)
+	config := filepath.Join(dir, "ssh_config")
+	must(t, os.MkdirAll(dir, 0o700))
+	must(t, guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: old}, "key"))
+	must(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := lease.Readdress(e, domain, "192.168.122.51"); !failure.Is(err, failure.Failed) {
+		t.Errorf("Readdress = %v, want failed", err)
+	}
+	got, err := os.ReadFile(config)
+	must(t, err)
+	if !strings.Contains(string(got), "HostName "+old+"\n") {
+		t.Errorf("ssh_config = %s, want the old address", got)
+	}
+}
+
+// TestReaddressRunning: a start of a running lease takes the newest lease of
+// the NIC that holds the address, and another NIC does not take it over.
+func TestReaddressRunning(t *testing.T) {
+	const domain, id = "werft-vm-plain-abc123", "abc123"
+	nic1Old := virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.10", Expiry: 100}
+	nic1New := virt.DHCPLease{MAC: "52:54:00:00:00:01", IP: "192.168.122.11", Expiry: 150}
+	nic2 := virt.DHCPLease{MAC: "52:54:00:00:00:02", IP: "192.168.122.20", Expiry: 200}
+	tests := map[string]struct {
+		file   string
+		leases []virt.DHCPLease
+		want   string
+	}{
+		"healthy on the first NIC":       {nic1Old.IP, []virt.DHCPLease{nic1Old, nic2}, nic1Old.IP},
+		"healthy on the second NIC":      {nic2.IP, []virt.DHCPLease{nic1Old, nic2}, nic2.IP},
+		"old lease of the same NIC":      {nic1Old.IP, []virt.DHCPLease{nic1Old, nic1New, nic2}, nic1New.IP},
+		"address no longer leased":       {"192.168.122.9", []virt.DHCPLease{nic1New, nic2}, nic1New.IP},
+		"no lease keeps the old address": {nic1Old.IP, nil, nic1Old.IP},
+		"other NIC answers first":        {nic1Old.IP, []virt.DHCPLease{nic2, nic1Old}, nic1Old.IP},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := world(t)
+			e := env(t, f, &shell{up: true})
+			_, err := f.DefineDomain("<domain type='kvm'><name>" + domain + "</name><metadata><werft:lease xmlns:werft='" + lease.Namespace + "'><werft:state>" + string(e.Dir) + "</werft:state></werft:lease></metadata><devices>" +
+				"<interface type='network'><mac address='" + nic1Old.MAC + "'/><source network='default'/></interface>" +
+				"<interface type='network'><mac address='" + nic2.MAC + "'/><source network='default'/></interface></devices></domain>")
+			must(t, err)
+			for _, l := range tt.leases {
+				f.AddDHCPLease("default", l)
+			}
+			config := filepath.Join(e.Dir.Lease(id), "ssh_config")
+			must(t, os.MkdirAll(filepath.Dir(config), 0o700))
+			must(t, guest.WriteHostConfig(config, id, guest.Addr{User: "tester", Host: tt.file}, "key"))
+			must(t, lease.Readdress(e, domain, virt.CurrentIP(tt.leases)))
+			got, err := os.ReadFile(config)
+			must(t, err)
+			if !strings.Contains(string(got), "HostName "+tt.want+"\n") {
+				t.Errorf("ssh_config = %s, want HostName %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestReaddressTakesTheVsockCID: the CID of the running domain replaces a
+// stale one, also when the start saw no fresh address.
+func TestReaddressTakesTheVsockCID(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{up: true})
+	l := startAt(t, e, e.Now())
+	must(t, guest.WriteHostConfig(l.SSHConfig, l.ID, guest.Addr{User: "tester", Host: "vsock/9"}, l.Key))
+	must(t, lease.Readdress(e, l.Domain, ""))
+	got, err := os.ReadFile(l.SSHConfig)
+	must(t, err)
+	if !strings.Contains(string(got), "HostName vsock/3\n") || !strings.Contains(string(got), "ProxyCommand") {
+		t.Errorf("ssh_config = %s, want the CID of the domain and its proxy", got)
 	}
 }
 

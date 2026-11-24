@@ -69,7 +69,8 @@ Rules:
   password. It reads the guest password from the user's keyring or pass,
   as for an encrypted disk; you never see it. The lease takes up to 6 minutes more,
   and --for is at least 30m. After a reboot, an Ubuntu VM logs the user in
-  again, but leaves the keyring locked.
+  again, but leaves the keyring locked. --desktop needs systemd 256 or
+  later in the image; on systemd 255 it fails with unsupported.
 
   The JSON document has these fields:
 
@@ -81,7 +82,7 @@ Rules:
     owner       the --owner flag, else $WERFT_OWNER, else $USER
     state       running, or a libvirt state such as shut off or paused
     user        the login user in the VM
-    address     the SSH address, such as vsock/3; empty when not running
+    address     the SSH address: vsock/3 or an IP; empty when not running
     key         the path of the private key of the lease
     ssh_config  the path of the ssh_config of the lease
     ssh         the ssh command, such as: ssh -F <ssh_config> <id>

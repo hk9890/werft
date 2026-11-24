@@ -3,6 +3,7 @@ package image_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	stdimage "image"
 	"image/color"
@@ -19,6 +20,7 @@ import (
 	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
+	"github.com/hk9890/werft/internal/guest/assets"
 	"github.com/hk9890/werft/internal/image"
 	"github.com/hk9890/werft/internal/secret"
 	"github.com/hk9890/werft/internal/virt"
@@ -177,30 +179,274 @@ func TestPlanChecksTheResetPoint(t *testing.T) {
 	}
 }
 
-// TestSealRefusesSystemdBelow256: seal logs in over vsock, which needs
-// systemd 256. A reset point that records systemd 255 is refused at once,
-// before the revert and any volume copy, and not after a boot and a wait.
-func TestSealRefusesSystemdBelow256(t *testing.T) {
-	withSystemd := func(v int) string {
-		return strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>my notes\n"+domxml.SystemdLine(v)+"</description>", 1)
-	}
-	f := worldOf(t, withSystemd(255))
+func withSystemd(v int) string {
+	return strings.Replace(buildVM, "<name>vm</name>", "<name>vm</name><description>my notes\n"+domxml.SystemdLine(v)+"</description>", 1)
+}
+
+// TestSealRefusesSystemdBelow255: a reset point that records systemd 254 is
+// refused at once, before the revert and any volume copy.
+func TestSealRefusesSystemdBelow255(t *testing.T) {
+	f := worldOf(t, withSystemd(254))
 	before := len(f.Calls())
 	_, err := image.Plan(f, "vm", "provision-base")
-	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "has systemd 255") {
-		t.Fatalf("Plan = %v, want unsupported for systemd 255", err)
+	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "has systemd 254") {
+		t.Fatalf("Plan = %v, want unsupported for systemd 254", err)
 	}
 	for _, c := range f.Calls()[before:] {
 		if !readOnly(c) {
-			t.Errorf("seal of a systemd 255 guest changed something: %s", c)
+			t.Errorf("seal of a systemd 254 guest changed something: %s", c)
 		}
 	}
+}
 
-	f = worldOf(t, withSystemd(256))
+// tcpShell is the guest of a systemd 255 seal. It keeps the seal command,
+// and with noPoweroff the guest stays up after the script.
+type tcpShell struct {
+	shell
+	script     string
+	noPoweroff bool
+}
+
+func (s *tcpShell) Run(ctx context.Context, addr guest.Addr, cmd string, in io.Reader, stdout, stderr io.Writer) error {
+	if !strings.HasPrefix(cmd, "sh -c") {
+		return s.shell.Run(ctx, addr, cmd, in, stdout, stderr)
+	}
+	s.script = cmd
+	s.commands = append(s.commands, addr.String()+" sh")
+	name := "vm-plain-20261102"
+	s.xml, _ = s.f.DomainXML(name, true)
+	if s.sealErr != nil {
+		return s.sealErr
+	}
+	_, _ = io.WriteString(stdout, "ubuntu\n255\n")
+	if s.noPoweroff {
+		return nil
+	}
+	return s.f.DestroyDomain(name)
+}
+
+// dhcp is the fake that gives the running temporary domain a DHCP lease.
+type dhcp struct{ *virttest.Fake }
+
+func (d dhcp) StartDomain(name string) error {
+	if err := d.Fake.StartDomain(name); err != nil {
+		return err
+	}
+	text, err := d.DomainXML(name, false)
+	if err != nil {
+		return err
+	}
+	parsed, err := domxml.Parse(text)
+	if err != nil {
+		return err
+	}
+	d.AddDHCPLease("default", virt.DHCPLease{MAC: domxml.Interfaces(parsed)[0].MAC, IP: "192.168.122.50"})
+	return nil
+}
+
+// credentialsOf decodes the SMBIOS credentials of a domain definition.
+func credentialsOf(t *testing.T, text string) map[string]string {
+	t.Helper()
+	d, err := domxml.Parse(text)
+	must(t, err)
+	creds := map[string]string{}
+	if len(d.SysInfo) == 0 {
+		return creds
+	}
+	for _, entry := range d.SysInfo[0].SMBIOS.OEMStrings.Entry {
+		name, value, _ := strings.Cut(strings.TrimPrefix(entry, "io.systemd.credential.binary:"), "=")
+		data, err := base64.StdEncoding.DecodeString(value)
+		must(t, err)
+		creds[name] = string(data)
+	}
+	return creds
+}
+
+func TestSeal255LogsInOverDHCP(t *testing.T) {
+	f := worldOf(t, withSystemd(255))
+	sh := &tcpShell{shell: shell{f: f}}
+	e := env(t, f, sh)
+	e.H = dhcp{f}
 	s, err := image.Plan(f, "vm", "provision-base")
 	must(t, err)
-	if _, err := s.Run(env(t, f, &shell{f: f})); err != nil {
-		t.Fatalf("seal of a systemd 256 guest: %v", err)
+	rec, err := s.Run(e)
+	must(t, err)
+
+	if rec.Systemd != 255 {
+		t.Errorf("record systemd = %d", rec.Systemd)
+	}
+	if strings.Contains(rec.Domain, "<vsock") || strings.Contains(rec.Domain, "io.systemd.credential") {
+		t.Errorf("the stock definition has a vsock device or credentials:\n%s", rec.Domain)
+	}
+	if strings.Contains(sh.xml, "<vsock") {
+		t.Errorf("the temporary domain has a vsock device:\n%s", sh.xml)
+	}
+	line := base64.StdEncoding.EncodeToString([]byte("\nssh-ed25519 AAAAseal seal\n"))
+	want := map[string]string{"tmpfiles.extra": "d /root/.ssh 0700 root root -\n" +
+		"f /root/.ssh/authorized_keys 0600 root root -\n" +
+		"w+~ /root/.ssh/authorized_keys - - - - " + line + "\n"}
+	if got := credentialsOf(t, sh.xml); !reflect.DeepEqual(got, want) {
+		t.Errorf("credentials = %q, want %q", got, want)
+	}
+	if got := strings.Join(sh.commands, ", "); got != "root@192.168.122.50 true, root@192.168.122.50 sh" {
+		t.Errorf("guest commands = %s", got)
+	}
+	if want := guest.ScriptCommand(assets.SealTCP+assets.Seal, "tester", "ssh-ed25519 AAAAwerft", "ssh-ed25519 AAAAseal seal"); sh.script != want {
+		t.Errorf("seal command = %s", sh.script)
+	}
+}
+
+// TestSeal255FailureRemovesTheCopy: each failure keeps its kind and removes
+// the temporary domain and both volumes.
+func TestSeal255FailureRemovesTheCopy(t *testing.T) {
+	tests := []struct {
+		name  string
+		lease bool
+		sh    tcpShell
+		want  failure.Kind
+		hint  string
+	}{
+		{name: "no DHCP lease", want: failure.Timeout, hint: "DHCP configuration"},
+		{name: "login timeout", lease: true, sh: tcpShell{shell: shell{loginErr: errors.New("connection refused")}}, want: failure.Timeout, hint: "PermitRootLogin"},
+		{name: "script failure", lease: true, sh: tcpShell{shell: shell{sealErr: &guest.ExitError{Code: 1}}}, want: failure.Failed, hint: "seal script failed"},
+		{name: "no poweroff", lease: true, sh: tcpShell{noPoweroff: true}, want: failure.Timeout, hint: "did not power off"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := worldOf(t, withSystemd(255))
+			sh := tt.sh
+			sh.f = f
+			e := env(t, f, &sh)
+			if tt.lease {
+				e.H = dhcp{f}
+			}
+			s, err := image.Plan(f, "vm", "provision-base")
+			must(t, err)
+			_, err = s.Run(e)
+			if !failure.Is(err, tt.want) || !strings.Contains(err.Error(), tt.hint) || !strings.Contains(err.Error(), "domain and volumes are removed") {
+				t.Fatalf("Run = %v, want kind %s with %q", err, tt.want, tt.hint)
+			}
+			if _, err := f.Domain("vm-plain-20261102"); !failure.Is(err, failure.NotFound) {
+				t.Errorf("the temporary domain is left: %v", err)
+			}
+			if names, _ := f.Volumes("werft"); len(names) != 0 {
+				t.Errorf("volumes left: %q", names)
+			}
+		})
+	}
+}
+
+// TestPlan255NeedsALibvirtNetwork: the TCP login finds its address in a
+// libvirt DHCP lease, so a guest without such an interface is refused before
+// the revert. A vsock guest has no such need.
+func TestPlan255NeedsALibvirtNetwork(t *testing.T) {
+	const network = "<interface type='network'><mac address='52:54:00:00:00:01'/><source network='default'/></interface>"
+	for name, iface := range map[string]string{
+		"bridge":       "<interface type='bridge'><mac address='52:54:00:00:00:01'/><source bridge='br0'/></interface>",
+		"direct":       "<interface type='direct'><mac address='52:54:00:00:00:01'/><source dev='eth0' mode='bridge'/></interface>",
+		"no interface": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := worldOf(t, strings.Replace(withSystemd(255), network, iface, 1))
+			before := len(f.Calls())
+			if _, err := image.Plan(f, "vm", "provision-base"); !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "libvirt network") {
+				t.Fatalf("Plan = %v, want unsupported for the network", err)
+			}
+			for _, c := range f.Calls()[before:] {
+				if !readOnly(c) {
+					t.Errorf("Plan changed something: %s", c)
+				}
+			}
+			f = worldOf(t, strings.Replace(withSystemd(256), network, iface, 1))
+			if _, err := image.Plan(f, "vm", "provision-base"); err != nil {
+				t.Errorf("Plan at systemd 256 = %v", err)
+			}
+		})
+	}
+}
+
+// liveXMLTimeout fails the read of the running definition with a timeout.
+type liveXMLTimeout struct{ *virttest.Fake }
+
+func (l liveXMLTimeout) DomainXML(name string, inactive bool) (string, error) {
+	if !inactive {
+		return "", failure.New(failure.Timeout, "XML of %s: libvirt operation timeout", name)
+	}
+	return l.Fake.DomainXML(name, inactive)
+}
+
+// TestSealVsockAddressErrorHasNoLoginHint: a libvirt failure to read the CID
+// is no failed login, so it gets none of the login hints.
+func TestSealVsockAddressErrorHasNoLoginHint(t *testing.T) {
+	f := world(t)
+	e := env(t, f, &shell{f: f})
+	e.H = liveXMLTimeout{f}
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	_, err = s.Run(e)
+	if !failure.Is(err, failure.Timeout) || !strings.Contains(err.Error(), "libvirt operation timeout") {
+		t.Fatalf("Run = %v, want the libvirt timeout", err)
+	}
+	if strings.Contains(err.Error(), "records no systemd version") {
+		t.Errorf("Run = %v, has a login hint", err)
+	}
+}
+
+// TestSeal256KeepsTheVsockPath pins the credentials, the login and the
+// command of a guest with SSH over vsock.
+func TestSeal256KeepsTheVsockPath(t *testing.T) {
+	for _, xml := range []string{withSystemd(256), withSystemd(259), buildVM} {
+		f := worldOf(t, xml)
+		sh := &scriptShell{shell: shell{f: f}}
+		s, err := image.Plan(f, "vm", "provision-base")
+		must(t, err)
+		_, err = s.Run(env(t, f, sh))
+		must(t, err)
+		want := map[string]string{
+			"ssh.ephemeral-authorized_keys-all":       "ssh-ed25519 AAAAseal seal\n",
+			"systemd.unit-dropin.sshd-vsock@.service": "[Service]\nExecStartPre=/usr/bin/ssh-keygen -A\n",
+		}
+		if got := credentialsOf(t, sh.xml); !reflect.DeepEqual(got, want) {
+			t.Errorf("credentials = %q, want %q", got, want)
+		}
+		if got := strings.Join(sh.commands, ", "); got != "root@vsock/3 true, root@vsock/3 sh" {
+			t.Errorf("guest commands = %s", got)
+		}
+		if want := guest.ScriptCommand(assets.Seal, "tester", "ssh-ed25519 AAAAwerft"); sh.script != want {
+			t.Errorf("seal command = %s", sh.script)
+		}
+	}
+}
+
+// scriptShell is shell that keeps the seal command.
+type scriptShell struct {
+	shell
+	script string
+}
+
+func (s *scriptShell) Run(ctx context.Context, addr guest.Addr, cmd string, in io.Reader, stdout, stderr io.Writer) error {
+	if strings.HasPrefix(cmd, "sh -c") {
+		s.script = cmd
+	}
+	return s.shell.Run(ctx, addr, cmd, in, stdout, stderr)
+}
+
+// TestSealRefusesASystemdLineTheRevertChanged: the login path is planned from
+// the line of the reset point, so another line after the revert stops the
+// seal before any copy.
+func TestSealRefusesASystemdLineTheRevertChanged(t *testing.T) {
+	f := worldOf(t, withSystemd(255))
+	e := env(t, f, &shell{f: f})
+	e.H = redefine{f, withSystemd(259)}
+	s, err := image.Plan(f, "vm", "provision-base")
+	must(t, err)
+	if _, err := s.Run(e); !failure.Is(err, failure.Failed) || !strings.Contains(err.Error(), "systemd line") {
+		t.Fatalf("Run = %v, want failed for the systemd line", err)
+	}
+	for _, c := range f.Calls() {
+		if strings.HasPrefix(c, "CreateVolumeFrom ") || strings.HasPrefix(c, "StartDomain ") {
+			t.Errorf("Run went on after the changed line: %s", c)
+		}
 	}
 }
 

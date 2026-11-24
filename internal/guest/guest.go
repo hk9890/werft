@@ -26,6 +26,11 @@ type Addr struct {
 // the ssh.ephemeral-authorized_keys-all credential.
 const VsockSystemd = 256
 
+// TCPSystemd is the one systemd version below VsockSystemd that werft serves.
+// It imports tmpfiles.extra from SMBIOS, so werft logs in over TCP at the DHCP
+// address of the guest.
+const TCPSystemd = 255
+
 func (a Addr) String() string { return a.User + "@" + a.Host }
 
 // Shell runs cmd in the guest at addr, with stdin as its input; a nil stdin

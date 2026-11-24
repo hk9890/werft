@@ -195,7 +195,7 @@ and fails with `usage` outside these bounds:
      `<nvram template=… templateFormat='qcow2' format='qcow2'>` with the stock vars as template,
      so the lease keeps the installer's boot entries. libvirt makes the NVRAM file at the first
      start;
-   - `<vsock><cid auto='yes'/>`;
+   - `<vsock><cid auto='yes'/>`, except at systemd 255;
    - a serial or console device with a file source gets a pty, and every `<log>` goes: a file of
      the stock definition is one path for every lease, and the second lease that starts fails to
      open it;
@@ -205,9 +205,14 @@ and fails with `usage` outside these bounds:
      to `/home/<user>/.ssh/authorized_keys` at each boot, and a
      `systemd.unit-dropin.systemd-tmpfiles-setup.service` credential adds
      `ImportCredential=werft.*`, because `systemd-tmpfiles-setup` imports no other credential.
-     Known limits: unit drop-ins from credentials need systemd 256, so the TCP path does not reach
-     the key in an older guest (seal needs systemd 256 too, so no such image exists today); the key
-     line is appended again at each boot; the home directory is assumed to be `/home/<user>`;
+     Known limits: the key line is appended again at each boot; the home directory is assumed to
+     be `/home/<user>`;
+   - at systemd 255, these SMBIOS credentials replace the list above (`tcpCredentials` in
+     `internal/lease/lease.go`), because that version ignores `system.hostname` and unit drop-ins:
+     `system.machine_id`, and a `tmpfiles.extra` that holds the hostname (for `/etc/hostname`, the
+     kernel and `/etc/hosts`) and the lease key inline. Known limits: `/etc/hosts` and
+     `authorized_keys` get a new line at each boot; a name set with `hostnamectl` in the lease does
+     not stay in the kernel after a reboot;
    - werft metadata in namespace `https://github.com/hk9890/werft/lease`: owner, created, expiry
      (created plus `--for`, default 4 hours), stock version, and the state directory of the werft run.
 
@@ -221,6 +226,8 @@ and fails with `usage` outside these bounds:
    Write the lease `ssh_config`: `Host <id>` with that address, the image's user and the lease key.
 8. **Ready.** Probe SSH through the lease `ssh_config` until it answers or the boot timeout (5
    minutes) ends. Few attempts, with growing intervals.
+   `--desktop` at systemd 255 fails with `unsupported` in step 1, before any secret read: the guest
+   password would go to a TCP peer whose host key werft cannot check.
    With `--desktop`, then log the user in to the desktop (`steps.Desktop`): the provision steps
    `autologin` (Ubuntu only; Omarchy logs in by itself after the disk password), `upload`,
    `wait-session` and `unlock-keyring`, run without the pipeline runner. No cleanup runs:
@@ -295,7 +302,14 @@ owner, created, expiry (from the metadata), the state (from `DomainState`: runni
 shutting down, shut off, crashed or other), and the user, address, key, `ssh_config` and `ssh`
 command of the lease directory. A lease that still boots has no address yet. A lease that is not
 running lists no address: the address of its last boot is stale, and a start can give it a new
-one.
+one. `werft start` writes the new address to the lease `ssh_config` (`lease.Readdress`). A start
+outside werft does not. At a DHCP address, neither does a start whose guest shows no new lease in
+60 seconds, such as a LUKS guest that waits for its password: werft warns, and the file keeps the
+old address. A `werft start` of the running lease then repairs it. While libvirt lists the address
+in the file, werft takes the lease that expires last on that NIC, because libvirt can still list
+an old lease beside the current one, and another NIC does not take the lease over. When that NIC
+shows no newest lease, the file stays and werft warns. A guest that takes a second lease during boot is not handled: seal and lease keep trying
+the first one.
 
 `werft extend <lease-id> [--for duration]` (`lease.Extend`) adds `--for` (default 4 hours) to the
 expiry, under the global lock, and writes the metadata again with `SetDomainMetadata`. An expired
@@ -409,16 +423,19 @@ Both tiers run the same steps:
 1. Check before any change: the label exists, and the build VM is shut off and passes the
    raw-NVRAM guard. The revert brings back the definition the reset point holds, so check that one
    (`SnapshotXML`): one writable disk in a storage pool and a UEFI NVRAM. Read its LUKS marker
-   too. When its description records a systemd version below 256, refuse with `unsupported`: the
-   login of step 5 cannot work, so seal stops before the revert and before any copy. A reset point
-   without that line (taken before `detect-guest` recorded it) is not checked, and seal runs. Then
+   too. When its description records a systemd version below 255, refuse with `unsupported`: the
+   login of step 5 cannot work, so seal stops before the revert and before any copy. A recorded
+   version of exactly 255 selects the TCP login, and needs an interface on a libvirt network: seal
+   finds the address in its DHCP leases, so a definition without one fails with `unsupported`. A
+   reset point without that line (taken before
+   `detect-guest` recorded it) is not checked, and seal runs with the vsock login. Then
    confirm: the revert loses what the build VM wrote since the label. With the LUKS marker, read
    the disk password before the revert, as `provision` reads the guest password: from
    `guest_password` in the recipe of `--recipe`, else in the one that `config.toml` gives the
    image (keyring item, else `pass` entry), else at a TTY.
    Without both, seal fails with `secret_unavailable` and changes nothing.
-2. Revert the build VM to the label, and read its definition again. A disk or NVRAM that differs
-   from the checked definition fails the run before anything is copied.
+2. Revert the build VM to the label, and read its definition again. A disk, NVRAM, LUKS marker or
+   login path that differs from the checked definition fails the run before anything is copied.
 3. Under the global lock, pick the stock name: the first `<image>-<tier>-<YYYYMMDD>[-n]` past
    every name of that day that `images.toml` holds or names as pruned, that no volume of the pool
    and no domain has. So a pruned name never comes back with other content. `YYYYMMDD` is the UTC
@@ -428,22 +445,40 @@ Both tiers run the same steps:
    UUID and MAC, a vsock device, and SMBIOS credentials that replace those of the build VM. The
    credentials are a new key pair of the run as `ssh.ephemeral-authorized_keys-all`, and a
    `sshd-vsock@` drop-in that runs `ssh-keygen -A`, because a cloud image has no host keys.
+   At systemd 255, the domain and the stock definition have no vsock device, and the only
+   credential is a `tmpfiles.extra` that appends the public key of the run to
+   `/root/.ssh/authorized_keys`.
 4. Without the global lock, copy disk and NVRAM to the stock volumes with
    `StorageVolCreateXMLFrom`; the copy is flat, with no internal snapshots.
 5. Boot the temporary domain. With the LUKS marker, type the disk password once, as the `boot`
-   step does. Log in as root over vsock with the key of the run. This needs no guest password, and
-   needs systemd 256 or later. When the login times out, the `timeout` error adds a hint. When
+   step does. Log in as root with the key of the run: over vsock, or at systemd 255 at the DHCP
+   address of the new MAC. This needs no guest password. A guest at systemd 255 must bring its own
+   DHCP configuration for a new MAC: networkd starts before `systemd-tmpfiles-setup`, so a network
+   file from `tmpfiles.extra` takes effect only at the next boot. When the login times out, the
+   `timeout` error adds a hint. When
    the reset point has no systemd line, the hint says: run `werft prepare <vm>` and take the reset
    point again, so seal can check the version before the copy. With the LUKS marker, the hint
-   says that the disk can have refused the typed password.
-6. Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
-   systemd version; empty `/etc/machine-id`; delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
+   says that the disk can have refused the typed password. At systemd 255, the hint names the
+   DHCP configuration, or `PermitRootLogin` and the host keys. A libvirt error that stops the read
+   of the vsock CID gets no hint.
+   At a TCP address, the seal and lease `ssh` use `ServerAliveInterval 15` and
+   `ServerAliveCountMax 4`: a guest that dies sends no FIN or RST, and `ssh` ends after about one
+   minute. The vsock path and the build VM `ssh_config` do not change.
+6. At systemd 255, first run `internal/guest/assets/seal-tcp.sh`: check the version, remove the run
+   key from `/root/.ssh/authorized_keys` and verify the removal. It also removes the `127.0.1.1`
+   line of the build VM from `/etc/hosts`, and fails unless `$USER` has the home `/home/$USER` and
+   the primary group `$USER`: a 255 lease writes its key there.
+   Run the embedded seal script (`internal/guest/assets/seal.sh`): print the guest family and the
+   systemd version; empty `/etc/machine-id`; replace a regular `/var/lib/dbus/machine-id` with a
+   link to `/etc/machine-id`, because that file wins over the machine-id credential of a lease;
+   delete `/etc/hostname`, `/etc/ssh/ssh_host_*` and the
    werft key `prepare` installed for `$USER`; add the host-key regeneration (required: a guest
    without host keys accepts the vsock connection and closes it at once) as a `sshd-vsock@`
    drop-in and as a oneshot that `ssh` and `sshd` want; give `$USER` passwordless sudo; schedule
-   the poweroff 2 s later with `systemd-run`. It fails when the guest has no user `$USER`. The
-   tmpfiles line for `werft.ssh.authorized_keys` comes with the lease, which passes that
-   credential ([Lease lifecycle](#lease-lifecycle), step 5).
+   the poweroff 2 s later with `systemd-run`. It fails when the guest has no user `$USER`. At
+   systemd 256 or later, the tmpfiles line for `werft.ssh.authorized_keys` comes with the lease,
+   which passes that credential ([Lease lifecycle](#lease-lifecycle), step 5). At systemd 255, the
+   lease key is inline in `tmpfiles.extra`.
 7. Wait for the poweroff. No SSH login comes after the script: it would start a `sshd-vsock@`
    instance whose drop-in makes new host keys, and every lease of the image would share them.
    Undefine the temporary domain, keep the volumes under the stock name, and append the record to
@@ -743,10 +778,12 @@ The phased plan is in [PRODUCT.md](PRODUCT.md#roadmap). Technical constraints:
   explicit loader. `TestSecureBootMigrateLive` proves `migrate`, `snapshot` and `reset` on the shape
   of a virt-manager build VM: Secure Boot with enrolled keys, `OVMF_CODE_4M.ms.fd`, SMM.
 - **systemd versions.** vsock SSH and `ssh.ephemeral-authorized_keys-all` need systemd 256.
-  Ubuntu 24.04 has 255 and uses the TCP fallback. Seal has no TCP fallback, so it cannot seal
-  Ubuntu 24.04; it refuses a reset point whose recorded systemd version is below 256 before it
-  copies anything. A static `/etc/hostname` overrides the hostname
-  credential, so seal must delete it.
+  Ubuntu 24.04 has 255, so seal and lease use root and user login over TCP at its DHCP address,
+  with the identity and keys in `tmpfiles.extra`. Seal refuses a reset point whose recorded
+  systemd version is below 255 before it copies anything. A boot of the noble cloud image without
+  Secure Boot showed root login and `tmpfiles.extra` delivery. Two real 24.04 build VMs with Secure
+  Boot on sealed and leased with SMBIOS credentials and DHCP on a new MAC. LUKS at systemd 255 is
+  not proven. A static `/etc/hostname` overrides the hostname credential, so seal must delete it.
 - **Duplicate DHCP DUID.** Clones with one machine-id get one IP. The machine-id credential
   prevents it only if seal empties `/etc/machine-id`.
 - **Desktop internals.** Keyring unlock uses gnome-keyring's

@@ -4,16 +4,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/livetest"
@@ -44,6 +48,7 @@ func TestSealLive(t *testing.T) {
 	src.Boot()
 	addImageUser(src, u.Username, werftKey, ownKey.Public)
 	before := src.Run(identity)
+	regularDBusMachineID(src)
 	src.Poweroff()
 	werftJSON(t, 0, "snapshot", src.Name, "provision-base")
 	src.Boot()
@@ -59,7 +64,7 @@ func TestSealLive(t *testing.T) {
 		livetest.RemoveDomain(t, h, name)
 		livetest.DeleteVolumes(h, disk, nvram)
 	})
-	version := time.Now().Format("20060102")
+	version := time.Now().UTC().Format("20060102")
 	if name != src.Name+"-plain-"+version || doc["image"] != src.Name || doc["tier"] != "plain" || doc["version"] != version ||
 		doc["user"] != u.Username || doc["family"] != "ubuntu" || doc["disk"] != disk || doc["nvram"] != nvram || doc["pool"] != livetest.Pool {
 		t.Fatalf("seal = %v", doc)
@@ -129,11 +134,36 @@ echo %[4]s > /etc/hostname
 sync`, user, werftKey, ownKey, src.Name))
 }
 
-// inspectStockDisk reads the root file system of the stock disk without
-// root: it downloads the volume, converts it to raw, and lists /etc with
-// debugfs. The disk must hold no SSH host keys, no hostname and an empty
-// machine-id.
-func inspectStockDisk(t *testing.T, h virt.Hypervisor, disk string) {
+// regularDBusMachineID is the control of the D-Bus check of inspectStockDisk:
+// the source holds the regular file that seal must turn into a link.
+func regularDBusMachineID(src *livetest.Guest) {
+	src.Run("mkdir -p /var/lib/dbus && rm -f /var/lib/dbus/machine-id && cp /etc/machine-id /var/lib/dbus/machine-id && test -f /var/lib/dbus/machine-id && test ! -L /var/lib/dbus/machine-id && sync")
+}
+
+// inspectStockDisk reads the root file system of the stock disk. The disk
+// must hold no SSH host keys, no hostname and an empty machine-id. It returns
+// the debugfs reader of that file system.
+func inspectStockDisk(t *testing.T, h virt.Hypervisor, disk string) func(cmd string) string {
+	t.Helper()
+	debugfs := stockDebugfs(t, h, disk)
+	if ssh := debugfs("ls /etc/ssh"); !strings.Contains(ssh, "sshd_config") || strings.Contains(ssh, "ssh_host_") {
+		t.Errorf("/etc/ssh of the stock disk, want sshd_config and no host keys:\n%s", ssh)
+	}
+	if etc := debugfs("ls /etc"); !strings.Contains(etc, "machine-id") || strings.Contains(etc, " hostname ") {
+		t.Errorf("/etc of the stock disk, want machine-id and no hostname:\n%s", etc)
+	}
+	if id := debugfs("stat /etc/machine-id"); !strings.Contains(id, "Size: 0") {
+		t.Errorf("/etc/machine-id of the stock disk is not empty:\n%s", id)
+	}
+	if dbus := debugfs("stat /var/lib/dbus/machine-id"); strings.Contains(dbus, "Type: regular") {
+		t.Errorf("/var/lib/dbus/machine-id of the stock disk is a regular file:\n%s", dbus)
+	}
+	return debugfs
+}
+
+// stockDebugfs downloads the stock disk without root, converts it to raw, and
+// returns a function that runs a debugfs command on its largest partition.
+func stockDebugfs(t *testing.T, h virt.Hypervisor, disk string) func(cmd string) string {
 	t.Helper()
 	dir := t.TempDir()
 	qcow2, raw := filepath.Join(dir, "disk.qcow2"), filepath.Join(dir, "disk.raw")
@@ -164,20 +194,11 @@ func inspectStockDisk(t *testing.T, h virt.Hypervisor, disk string) {
 		}
 	}
 	fs := fmt.Sprintf("%s?offset=%d", raw, start*table.PartitionTable.SectorSize)
-	debugfs := func(cmd string) string {
+	return func(cmd string) string {
 		t.Helper()
 		out, err := exec.Command("/usr/sbin/debugfs", "-R", cmd, fs).CombinedOutput()
 		livetest.Must(t, err, "debugfs "+cmd)
 		return string(out)
-	}
-	if ssh := debugfs("ls /etc/ssh"); !strings.Contains(ssh, "sshd_config") || strings.Contains(ssh, "ssh_host_") {
-		t.Errorf("/etc/ssh of the stock disk, want sshd_config and no host keys:\n%s", ssh)
-	}
-	if etc := debugfs("ls /etc"); !strings.Contains(etc, "machine-id") || strings.Contains(etc, " hostname ") {
-		t.Errorf("/etc of the stock disk, want machine-id and no hostname:\n%s", etc)
-	}
-	if id := debugfs("stat /etc/machine-id"); !strings.Contains(id, "Size: 0") {
-		t.Errorf("/etc/machine-id of the stock disk is not empty:\n%s", id)
 	}
 }
 
@@ -262,7 +283,7 @@ func TestSealFullLive(t *testing.T) {
 		livetest.RemoveDomain(t, h, stock)
 		livetest.DeleteVolumes(h, stock+".qcow2", stock+"_VARS.qcow2")
 	})
-	version := time.Now().Format("20060102")
+	version := time.Now().UTC().Format("20060102")
 	if stock != img+"-full-"+version || doc["image"] != img || doc["tier"] != "full" || doc["source"] != src.Name || doc["label"] != "clean" {
 		t.Fatalf("seal = %v", doc)
 	}
@@ -282,4 +303,170 @@ func TestSealFullLive(t *testing.T) {
 	if len(lines) != 3 || len(lines[0]) != 32 || lines[0] == machineID || lines[1] != "at-clean" || lines[2] != "no-after-clean" {
 		t.Errorf("machine-id and files of the full lease:\n%s\nwant a machine-id other than %s, at-clean and no-after-clean", out, machineID)
 	}
+}
+
+// TestSeal255Live seals a scratch guest with systemd 255 and takes two leases
+// of it. The seal logs in as root at the DHCP address with a run key, so the
+// stock disk must hold no key but the one the guest had. Each lease must have
+// its own identity, no vsock device, and a login that survives a reboot.
+// Control: the root key of the source is still on the stock disk, so the read
+// that finds no run key reads the real file.
+func TestSeal255Live(t *testing.T) {
+	isolate(t)
+	h := livetest.Connect(t)
+	prefix := livetest.DomainPrefix + "s255-"
+	old := leasePrefix
+	leasePrefix = prefix
+	t.Cleanup(func() { leasePrefix = old })
+
+	src := livetest.NewTCPGuest(t, h, prefix+"src")
+	u, err := user.Current()
+	livetest.Must(t, err, "current user")
+	dir, err := state.Root()
+	livetest.Must(t, err, "state directory")
+	livetest.Must(t, guest.EnsureKey(dir.SSHKey()), "create the werft key")
+	src.Boot()
+	if v := strings.TrimSpace(src.Run(`systemctl --version | sed -n '1s/^systemd \([0-9]*\).*/\1/p'`)); v != "255" {
+		t.Fatalf("the test image has systemd %q, want 255", v)
+	}
+	addImageUser(src, u.Username, publicKey(dir.SSHKey()+".pub"), livetest.NewKey(t).Public)
+	regularDBusMachineID(src)
+	src.Poweroff()
+	livetest.Must(t, h.SetDomainDescription(src.Name, domxml.SystemdLine(255)), "set the systemd line")
+	werftJSON(t, 0, "snapshot", src.Name, "provision-base")
+
+	doc := werftJSON(t, 0, "seal", "--yes", src.Name, "provision-base")
+	stock, _ := doc["name"].(string)
+	t.Cleanup(func() {
+		livetest.RemoveDomain(t, h, stock)
+		livetest.DeleteVolumes(h, stock+".qcow2", stock+"_VARS.qcow2")
+	})
+	if v, _ := doc["systemd"].(float64); v != 255 {
+		t.Errorf("seal recorded systemd %v, want 255", doc["systemd"])
+	}
+
+	debugfs := inspectStockDisk(t, h, stock+".qcow2")
+	var rootKeys []string
+	for _, line := range strings.Split(debugfs("cat /root/.ssh/authorized_keys"), "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "ssh-") {
+			rootKeys = append(rootKeys, line)
+		}
+	}
+	// tmpfiles appends the key of the source at each of its boots.
+	if len(rootKeys) == 0 || slices.ContainsFunc(rootKeys, func(k string) bool { return k != src.Key.Public }) {
+		t.Errorf("root keys of the stock disk = %q, want only the key of the source", rootKeys)
+	}
+
+	docs := parallelLeases(t, h, prefix, []string{"lease", src.Name}, []string{"lease", src.Name})
+	var ids, hostKeys, ips []string
+	for _, l := range docs {
+		name, _ := l["domain"].(string)
+		ssh, _ := l["ssh"].(string)
+		address, _ := l["address"].(string)
+		if net.ParseIP(address) == nil {
+			t.Errorf("address of %s = %q, want an IP", name, address)
+		}
+		if got := leaseSSH(t, ssh, "hostname"); got != name {
+			t.Errorf("hostname of the lease = %q, want %s", got, name)
+		}
+		if got := leaseSSH(t, ssh, "sudo -n true 2>&1"); got != "" {
+			t.Errorf("sudo -n true in %s printed %q", name, got)
+		}
+		text, err := h.DomainXML(name, false)
+		livetest.Must(t, err, "live XML of "+name)
+		d, err := domxml.Parse(text)
+		livetest.Must(t, err, "parse the live XML of "+name)
+		if d.Devices != nil && d.Devices.VSock != nil {
+			t.Errorf("%s has a vsock device", name)
+		}
+		if got := listEntry(t, name)["address"]; got != address {
+			t.Errorf("werft list shows the address %v of %s, want %s", got, name, address)
+		}
+		ids = append(ids, leaseSSH(t, ssh, "cat /etc/machine-id"))
+		hostKeys = append(hostKeys, leaseSSH(t, ssh, "cat /etc/ssh/ssh_host_ed25519_key.pub"))
+		ips = append(ips, address)
+
+		rebootLease(t, name, ssh)
+		if got := leaseSSH(t, ssh, "hostname"); got != name {
+			t.Errorf("hostname of the lease after a reboot = %q, want %s", got, name)
+		}
+	}
+	for what, pair := range map[string][]string{"machine-id": ids, "host key": hostKeys, "IP": ips} {
+		if pair[0] == "" || pair[0] == pair[1] {
+			t.Errorf("the two leases have the %s %q and %q, want two different ones", what, pair[0], pair[1])
+		}
+	}
+	startRepairsTheAddress(t, docs[0])
+}
+
+// startRepairsTheAddress breaks the address in the ssh_config of a 255 lease
+// and wants werft start to repair it, after a stop and on the running lease.
+// Control: the broken file gives no login to the running guest.
+func startRepairsTheAddress(t *testing.T, l map[string]any) {
+	t.Helper()
+	name, _ := l["domain"].(string)
+	ssh, _ := l["ssh"].(string)
+	id, _ := l["id"].(string)
+	config, _ := l["ssh_config"].(string)
+	user, _ := l["user"].(string)
+	key, _ := l["key"].(string)
+	breakAddress := func() {
+		t.Helper()
+		livetest.Must(t, guest.WriteHostConfig(config, id, guest.Addr{User: user, Host: "192.0.2.1"}, key), "write a stale ssh_config")
+	}
+	waitLogin := func(when string) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Minute)
+		for {
+			got, err := leaseAttempt(ssh, "hostname")
+			if err == nil && got == name {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no login to %s %s within 3m: %q, %v", name, when, got, err)
+			}
+			time.Sleep(3 * time.Second)
+		}
+	}
+
+	werftJSON(t, 0, "stop", name)
+	breakAddress()
+	werftJSON(t, 0, "start", name)
+	waitLogin("after a stop and start")
+
+	breakAddress()
+	if got, err := leaseAttempt(ssh, "hostname"); err == nil {
+		t.Fatalf("the broken ssh_config gave a login: %q", got)
+	}
+	werftJSON(t, 0, "start", name)
+	waitLogin("after a start of the running lease")
+}
+
+// rebootLease reboots the lease from inside and waits for a login to the new
+// boot through the same ssh command.
+func rebootLease(t *testing.T, name, ssh string) {
+	t.Helper()
+	const bootID = "cat /proc/sys/kernel/random/boot_id"
+	before := leaseSSH(t, ssh, bootID)
+	_, _ = leaseAttempt(ssh, "sudo -n systemctl reboot")
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		now, err := leaseAttempt(ssh, bootID)
+		if err == nil && now != "" && now != before {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the ssh command of %s gives no login to a new boot within 3m: %v", name, err)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// leaseAttempt runs cmd with a time limit: a connection that the reboot cut
+// gets no reset from the guest, and ssh would wait on it for minutes.
+func leaseAttempt(ssh, cmd string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ssh", append(strings.Fields(ssh)[1:], "--", cmd)...).Output()
+	return strings.TrimSpace(string(out)), err
 }

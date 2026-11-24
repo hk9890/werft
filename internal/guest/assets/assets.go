@@ -25,6 +25,10 @@ var (
 	// image for user $1, without the werft key $2.
 	//go:embed seal.sh
 	Seal string
+	// SealTCP runs before Seal on a systemd 255 guest. It takes the arguments
+	// of Seal, and the public key of the seal run as $3.
+	//go:embed seal-tcp.sh
+	SealTCP string
 )
 
 // Helpers are the files the upload step puts into the guest directory.

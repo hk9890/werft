@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/hk9890/werft/internal/failure"
+	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/state"
 	"github.com/hk9890/werft/internal/virt"
 )
@@ -170,6 +172,49 @@ func withState(e Env, l Lease) (Lease, error) {
 		l.Address = ""
 	}
 	return l, nil
+}
+
+// Readdress brings the lease ssh_config up to date after a start of domain.
+// addr is the address that start saw, or empty. A vsock CID of the running
+// domain goes first. While libvirt still lists the address in the file, the
+// newest lease of that NIC counts, so another NIC does not take the lease
+// over. A domain that is no lease of this state directory, or that has no
+// ssh_config yet, stays as it is.
+func Readdress(e Env, domain, addr string) error {
+	if !namePattern(e.Prefix).MatchString(domain) {
+		return nil
+	}
+	all, err := scan(e)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(all, func(f found) bool { return f.Domain == domain })
+	if i < 0 || all[i].owner == foreign || all[i].User == "" {
+		return nil
+	}
+	f := all[i]
+	if cid, _ := virt.DomainAddresses(e.H, domain); cid != "" {
+		addr = cid
+	} else if addr != "" {
+		leases, err := virt.DomainLeases(e.H, domain)
+		if err != nil {
+			return err
+		}
+		if held := slices.IndexFunc(leases, func(l virt.DHCPLease) bool { return l.IP == f.Address }); held >= 0 {
+			addr = virt.NewestLease(virt.LeasesOfMAC(leases, leases[held].MAC))
+		}
+	}
+	if addr == "" {
+		e.printf("warning: no new address for lease %s; its ssh_config can hold an old one", f.ID)
+		return nil
+	}
+	if addr == f.Address {
+		return nil
+	}
+	if err := guest.WriteHostConfig(f.SSHConfig, f.ID, guest.Addr{User: f.User, Host: addr}, f.Key); err != nil {
+		return failure.Wrap(failure.Failed, err, "write the ssh_config of lease %s", f.ID)
+	}
+	return nil
 }
 
 // expired is true from the expiry on. A lease without a readable expiry
