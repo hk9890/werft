@@ -6,6 +6,15 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.9.1
+
+- **`werft lease --desktop` works on an image with systemd 255, such as
+  Ubuntu 24.04.** The lease logs the user in to the desktop and unlocks
+  the keyring, as on a later systemd. It prints a warning first: on these
+  images werft sends the guest password over SSH to the IP address of the
+  VM, and cannot check the SSH host key there. Before, `--desktop` failed
+  at once with `unsupported`.
+
 ## v0.9.0
 
 - **Action required: flags go before the VM name in `werft provision`,
