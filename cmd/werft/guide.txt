@@ -69,8 +69,9 @@ Rules:
   password. It reads the guest password from the user's keyring or pass,
   as for an encrypted disk; you never see it. The lease takes up to 6 minutes more,
   and --for is at least 30m. After a reboot, an Ubuntu VM logs the user in
-  again, but leaves the keyring locked. --desktop needs systemd 256 or
-  later in the image; on systemd 255 it fails with unsupported.
+  again, but leaves the keyring locked. On an image with systemd 255, such
+  as ubuntu-24-04, --desktop prints a warning: there, the SSH host key of
+  the VM is not checked. The lease goes on.
 
   The JSON document has these fields:
 

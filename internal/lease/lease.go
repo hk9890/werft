@@ -179,8 +179,7 @@ func Start(e Env, rec image.Record, o Options) (l Lease, err error) {
 		return Lease{}, failure.New(failure.Unsupported, "%s is a %q guest; --desktop logs in only to an ubuntu or omarchy guest", rec.Name, rec.Family)
 	}
 	if o.Desktop && rec.Systemd == guest.TCPSystemd {
-		return Lease{}, failure.New(failure.Unsupported, "%s has systemd %d; --desktop sends the guest password over SSH, and on this guest werft cannot check the host key of its TCP address; it needs systemd %d or later",
-			rec.Name, rec.Systemd, guest.VsockSystemd)
+		e.printf("warning: %s has systemd %d; --desktop sends the guest password over SSH to its TCP address, whose host key werft cannot check", rec.Name, rec.Systemd)
 	}
 	password, err := diskPassword(e, rec)
 	if err != nil {

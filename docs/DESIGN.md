@@ -226,8 +226,9 @@ and fails with `usage` outside these bounds:
    Write the lease `ssh_config`: `Host <id>` with that address, the image's user and the lease key.
 8. **Ready.** Probe SSH through the lease `ssh_config` until it answers or the boot timeout (5
    minutes) ends. Few attempts, with growing intervals.
-   `--desktop` at systemd 255 fails with `unsupported` in step 1, before any secret read: the guest
-   password would go to a TCP peer whose host key werft cannot check.
+   `--desktop` at systemd 255 prints a warning in step 1 and goes on: the guest password goes to a
+   TCP peer whose host key werft cannot check. Only a VM on the libvirt network can take the
+   address, and the password is that of the guest.
    With `--desktop`, then log the user in to the desktop (`steps.Desktop`): the provision steps
    `autologin` (Ubuntu only; Omarchy logs in by itself after the disk password), `upload`,
    `wait-session` and `unlock-keyring`, run without the pipeline runner. No cleanup runs:

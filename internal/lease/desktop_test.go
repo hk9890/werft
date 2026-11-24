@@ -10,11 +10,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hk9890/werft/internal/domxml"
 	"github.com/hk9890/werft/internal/failure"
 	"github.com/hk9890/werft/internal/guest"
 	"github.com/hk9890/werft/internal/lease"
 	"github.com/hk9890/werft/internal/secret"
+	"github.com/hk9890/werft/internal/virt"
 	"github.com/hk9890/werft/internal/virttest"
 )
 
@@ -101,6 +104,43 @@ func TestStartDesktopLogsInOnUbuntu(t *testing.T) {
 		if strings.Contains(c, "gpw") {
 			t.Errorf("the guest password is on a command line: %q", c)
 		}
+	}
+}
+
+// TestStartDesktopOnSystemd255: at systemd 255 the lease reaches the guest
+// at its DHCP address, logs in to the desktop as on a later systemd, and
+// warns that the guest password goes to a TCP peer with an unchecked host
+// key.
+func TestStartDesktopOnSystemd255(t *testing.T) {
+	f := world(t)
+	sh := &desktopShell{session: true}
+	e := desktopEnv(t, f, sh)
+	var out bytes.Buffer
+	e.Out = &out
+	e.Secrets, e.Terminal = store{"service=werft username=tester": "gpw"}, noTerminal{}
+	added := false
+	e.Sleep = func(time.Duration) {
+		if !added {
+			added = true
+			names, _ := f.Domains()
+			text, _ := f.DomainXML(names[0].Name, true)
+			d, _ := domxml.Parse(text)
+			f.AddDHCPLease("default", virt.DHCPLease{MAC: domxml.Interfaces(d)[0].MAC, IP: "192.168.122.40"})
+		}
+	}
+	rec := record()
+	rec.Systemd = 255
+	l, err := lease.Start(e, rec, lease.Options{Owner: "agent", Desktop: true, GuestPassword: guestPassword})
+	must(t, err)
+	if l.Address != "192.168.122.40" {
+		t.Errorf("address = %s, want the DHCP address", l.Address)
+	}
+	if !strings.Contains(out.String(), "warning:") || !strings.Contains(out.String(), "host key") {
+		t.Errorf("output = %q, want a warning about the unchecked host key", out.String())
+	}
+	unlock := sh.ran("unlock-keyring.js")
+	if sh.ran("AutomaticLoginEnable=true") == "" || sh.stdin[unlock] != "gpw\n" {
+		t.Errorf("commands = %q, want autologin and the keyring unlocked with the guest password", sh.cmds)
 	}
 }
 

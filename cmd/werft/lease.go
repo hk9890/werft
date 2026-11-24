@@ -140,7 +140,7 @@ func (c *cli) cmdLease(args []string) error {
 		}
 	}
 	opts := lease.Options{Owner: leaseOwner(*owner), Memory: *memory << 20, CPUs: *cpus, Lifetime: *lifetime, Desktop: *desktop}
-	if *desktop && !rec.LUKS && rec.Systemd != guest.TCPSystemd {
+	if *desktop && !rec.LUKS {
 		if opts.GuestPassword, err = guestPasswordSpec(cfg, rec.Image); err != nil {
 			return err
 		}

@@ -766,9 +766,10 @@ func TestStartWritesTheNewAddressOfALease(t *testing.T) {
 	}
 }
 
-// TestLeaseDesktopAt255IgnoresAMissingRecipe: --desktop at systemd 255 fails
-// with unsupported, also when the recipe config.toml names does not exist.
-func TestLeaseDesktopAt255IgnoresAMissingRecipe(t *testing.T) {
+// TestLeaseDesktopAt255ReadsTheRecipeGuestPassword: --desktop at systemd
+// 255 reads the guest password where the recipe says, as on a later
+// systemd, before it makes a volume or a domain.
+func TestLeaseDesktopAt255ReadsTheRecipeGuestPassword(t *testing.T) {
 	lh := stockHost(t, 0)
 	images := filepath.Join(os.Getenv("XDG_STATE_HOME"), "werft", "images.toml")
 	content, err := os.ReadFile(images)
@@ -779,12 +780,21 @@ func TestLeaseDesktopAt255IgnoresAMissingRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "werft")
-	missing := filepath.Join(config, "missing.toml")
-	if err := os.WriteFile(filepath.Join(config, "config.toml"), []byte("recipe = \""+missing+"\"\n"), 0o600); err != nil {
+	recipe := filepath.Join(config, "recipe.toml")
+	if err := os.WriteFile(recipe, []byte("[guest_password]\nkeyring = { service = \"werft\", username = \"tester\" }\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(config, "config.toml"), []byte("recipe = \""+recipe+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := len(lh.fake.Calls())
 	r := lh.run("--json", "lease", "ubuntu-26-04", "--desktop")
-	if r.code != 9 || !strings.Contains(r.stdout, "systemd 255") {
-		t.Fatalf("lease --desktop = %+v, want exit 9 that names systemd 255", r)
+	if r.code != 10 || !strings.Contains(r.stdout, "service=werft username=tester") {
+		t.Fatalf("lease --desktop = %+v, want exit 10 that names the keyring item of the recipe", r)
+	}
+	if calls := lh.fake.Calls()[before:]; slices.ContainsFunc(calls, func(c string) bool {
+		return strings.HasPrefix(c, "CreateVolume") || strings.HasPrefix(c, "DefineDomain")
+	}) {
+		t.Errorf("a lease without the guest password made a volume or a domain: %v", calls)
 	}
 }

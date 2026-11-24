@@ -276,46 +276,6 @@ func credentialsOf(t *testing.T, text string) map[string]string {
 	return creds
 }
 
-// TestStartRefusesDesktopOnSystemd255: the guest password would go to a TCP
-// peer whose host key werft cannot check. The refusal comes before any secret
-// read and before the lease reserves anything.
-func TestStartRefusesDesktopOnSystemd255(t *testing.T) {
-	f := world(t)
-	rec := luksRecord()
-	rec.Systemd = 255
-	e := env(t, f, &shell{up: true})
-	e.Secrets, e.Terminal = failingSecrets{t}, failingSecrets{t}
-	before := len(f.Calls())
-	_, err := lease.Start(e, rec, lease.Options{Owner: "agent", Desktop: true})
-	if !failure.Is(err, failure.Unsupported) || !strings.Contains(err.Error(), "--desktop") {
-		t.Fatalf("Start = %v, want unsupported for --desktop", err)
-	}
-	if calls := f.Calls()[before:]; len(calls) != 0 {
-		t.Errorf("Start touched libvirt: %q", calls)
-	}
-	if entries, _ := os.ReadDir(e.Dir.Leases()); len(entries) != 0 {
-		t.Errorf("lease directories left: %v", entries)
-	}
-}
-
-// failingSecrets fails the test on any secret read.
-type failingSecrets struct{ t *testing.T }
-
-func (s failingSecrets) Lookup(map[string]string) (string, error) {
-	s.t.Error("Start read the keyring")
-	return "", failure.New(failure.SecretUnavailable, "no read")
-}
-
-func (s failingSecrets) Show(string) (string, error) {
-	s.t.Error("Start read pass")
-	return "", failure.New(failure.SecretUnavailable, "no read")
-}
-
-func (s failingSecrets) ReadSecret(string) (string, error) {
-	s.t.Error("Start read the terminal")
-	return "", failure.New(failure.SecretUnavailable, "no read")
-}
-
 // TestStartKeepsTheCredentialsAt259 pins the credentials of a guest with SSH
 // over vsock.
 func TestStartKeepsTheCredentialsAt259(t *testing.T) {
