@@ -6,6 +6,50 @@ history readable from a checkout with no network.
 Each section is also the text of its release on the
 [GitHub Releases](https://github.com/hk9890/werft/releases) page.
 
+## v0.9.0
+
+- **Action required: flags go before the VM name in `werft provision`,
+  `prepare`, `seal`, `migrate`, `reset`, `snapshot`, `start` and
+  `stop`.** Write `werft reset -y vm`, not `werft reset vm -y`. Before,
+  werft read a flag after the name as a second name. Now the command fails
+  with `usage` and says "flags go before the name".
+- **`werft seal` and `werft lease` work on a guest with systemd 255, such
+  as Ubuntu 24.04.** These guests have no SSH over vsock, so werft
+  reaches a lease at its IP address. Before, seal refused such a guest. A
+  stock image with systemd 255 needs this release to lease: the lease of
+  v0.8.0 boots it, but SSH never answers and the lease ends with
+  `timeout`.
+- **`werft lease --desktop` of a systemd 255 image fails at once with
+  `unsupported`.** It reads no recipe and no password first. Lease the
+  image without `--desktop`, or take an image with systemd 256 or later.
+- **Two leases of one stock image no longer share a machine ID and an IP
+  address.** Before, this happened when the build VM had a regular file
+  at `/var/lib/dbus/machine-id`. Seal the image again to get the fix.
+- **`werft start` of a lease writes its current address to the lease
+  `ssh_config`, also when the lease runs already.** `werft start` and
+  `werft list` show the newest DHCP address of a VM. Before, they could
+  show an old one.
+- **The DATE column of `werft images` is in UTC, and its header says
+  `DATE (UTC)`.** Before, it showed the local date, which could differ by
+  a day from the date in the version name.
+- **werft refuses to change an `images.toml` that a newer werft wrote.**
+  `seal` and `images --prune` fail with `unsupported` before any question,
+  password or revert, and name each key they do not know. Before, an older
+  werft could drop the keys of a newer one.
+- **After a restart of libvirtd, werft says that it lost the connection
+  to libvirt.** Before, a step could say that the VM is not running.
+  `poweroff` and `reset` now fail at once in this case, with no wait and
+  no forced power-off.
+- **`werft provision` with no terminal fails with one error before any
+  question, keyring read or `pass` read.** The error lists each question
+  that needs `--yes` and each secret that only a terminal gives.
+- **`werft start` and `provision` of an encrypted (LUKS) VM skip the
+  typing when the disk was opened by hand.** They also warn when a viewer
+  of an earlier run is still open.
+- **A USB stick that the host desktop mounted by itself counts as
+  mounted.** Before, the mount step of the stick passthrough could fail
+  when the automount came first.
+
 ## v0.8.0
 
 - **`werft lease --desktop` gives a VM with its user logged in to the
